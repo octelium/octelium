@@ -24,12 +24,16 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -148,13 +152,44 @@ func TestRunWithoutOpts(t *testing.T) {
 
 type tstClusterConfigClient struct {
 	octeliumc.ClientInterface
-	cc *corev1.ClusterConfig
+	cc     *corev1.ClusterConfig
+	events chan *rmetav1.WatchEvent
 }
 
 func (c *tstClusterConfigClient) CoreV1Utils() octeliumc.CoreV1Utils { return c }
 
+func (c *tstClusterConfigClient) CoreC() rcorev1.ResourceServiceClient {
+	return &tstClusterConfigWatchClient{events: c.events}
+}
+
 func (c *tstClusterConfigClient) GetClusterConfig(ctx context.Context) (*corev1.ClusterConfig, error) {
 	return c.cc, nil
+}
+
+type tstClusterConfigWatchClient struct {
+	rcorev1.ResourceServiceClient
+	events <-chan *rmetav1.WatchEvent
+}
+
+func (c *tstClusterConfigWatchClient) WatchClusterConfig(ctx context.Context, opts *rmetav1.WatchOptions,
+	callOpts ...grpc.CallOption) (grpc.ServerStreamingClient[rmetav1.WatchEvent], error) {
+	return &tstClusterConfigStream{ctx: ctx, events: c.events}, nil
+}
+
+type tstClusterConfigStream struct {
+	grpc.ServerStreamingClient[rmetav1.WatchEvent]
+	ctx    context.Context
+	events <-chan *rmetav1.WatchEvent
+}
+
+func (s *tstClusterConfigStream) RecvMsg(m any) error {
+	select {
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	case ev := <-s.events:
+		proto.Merge(m.(*rmetav1.WatchEvent), ev)
+		return nil
+	}
 }
 
 type tstClusterConfigUpdates struct {
@@ -186,60 +221,116 @@ func TestNewDoesNotShareInitialClusterConfig(t *testing.T) {
 	assert.Equal(t, "example.com", c.Get().Status.Domain)
 }
 
-func TestRunReconcilesUpdateBeforeWatchStarts(t *testing.T) {
+func TestRunDoesNotShareUpdatedClusterConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	tst, err := tests.Initialize(nil)
-	require.Nil(t, err)
-	t.Cleanup(func() { tst.Destroy() })
-
-	initial, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
-	require.Nil(t, err)
-
+	initial := &corev1.ClusterConfig{
+		Metadata: &metav1.Metadata{Name: "default", Uid: "cluster-config", ResourceVersion: "initial"},
+		Status: &corev1.ClusterConfig_Status{
+			Domain:  "example.com",
+			Network: &corev1.ClusterConfig_Status_Network{V6RangePrefix: []byte{1, 2, 3, 4}},
+		},
+	}
+	client := &tstClusterConfigClient{cc: initial, events: make(chan *rmetav1.WatchEvent, 1)}
 	updates := &tstClusterConfigUpdates{}
-	c, err := ccctl.New(ctx, &tstClusterConfigClient{ClientInterface: tst.C.OcteliumC, cc: initial},
-		&ccctl.Opts{OnUpdate: updates.onUpdate})
+	c, err := ccctl.New(ctx, client, &ccctl.Opts{OnUpdate: updates.onUpdate})
 	require.Nil(t, err)
 
 	cc := proto.Clone(initial).(*corev1.ClusterConfig)
-	cc.Status.Domain = utilrand.GetRandomStringLowercase(10)
-	cc, err = tst.C.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
-	require.Nil(t, err)
-
+	cc.Metadata.ResourceVersion = "updated"
+	cc.Metadata.LastResourceVersion = initial.Metadata.ResourceVersion
+	cc.Status.Domain = "updated.example.com"
+	client.events <- &rmetav1.WatchEvent{
+		Event: &rmetav1.WatchEvent_Event{
+			Type: &rmetav1.WatchEvent_Event_Update_{
+				Update: &rmetav1.WatchEvent_Event_Update{
+					NewItem: pbutils.MessageToAnyMust(cc),
+					OldItem: pbutils.MessageToAnyMust(initial),
+				},
+			},
+		},
+	}
 	require.Nil(t, c.Run(ctx))
 
-	require.Eventually(t, func() bool {
-		return c.Get().Status.Domain == cc.Status.Domain
-	}, 30*time.Second, 50*time.Millisecond)
 	require.Eventually(t, func() bool { return len(updates.get()) == 1 }, 5*time.Second, 50*time.Millisecond)
 	update := updates.get()[0]
-	assert.Equal(t, cc.Status.Domain, update[0].Status.Domain)
-	assert.Equal(t, initial.Status.Domain, update[1].Status.Domain)
-	assert.Equal(t, initial.Metadata.ResourceVersion, update[1].Metadata.ResourceVersion)
+	assert.True(t, proto.Equal(cc, update[0]))
+	assert.True(t, proto.Equal(initial, update[1]))
+	assert.True(t, proto.Equal(cc, c.Get()))
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 1000 {
+			got := c.Get()
+			assert.True(t, proto.Equal(cc, got))
+			got.Status.Domain = "reader.example.com"
+			got.Status.Network.V6RangePrefix[0]++
+		}
+	})
+	for range 1000 {
+		update[0].Status.Domain = "callback.example.com"
+		update[0].Status.Network.V6RangePrefix[0]++
+		update[1].Status.Domain = "old.example.com"
+		update[1].Status.Network.V6RangePrefix[0]++
+	}
+	wg.Wait()
+	assert.True(t, proto.Equal(cc, c.Get()))
 }
 
 func TestRunIgnoresUnchangedInitialClusterConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	tst, err := tests.Initialize(nil)
-	require.Nil(t, err)
-	t.Cleanup(func() { tst.Destroy() })
-
+	initial := &corev1.ClusterConfig{
+		Metadata: &metav1.Metadata{Name: "default", Uid: "cluster-config", ResourceVersion: "initial"},
+		Status:   &corev1.ClusterConfig_Status{Domain: "example.com"},
+	}
+	other := proto.Clone(initial).(*corev1.ClusterConfig)
+	other.Metadata.Uid = "other-cluster-config"
+	other.Status.Domain = "other.example.com"
+	client := &tstClusterConfigClient{cc: initial, events: make(chan *rmetav1.WatchEvent, 3)}
+	for _, cc := range []*corev1.ClusterConfig{initial, other} {
+		client.events <- &rmetav1.WatchEvent{
+			Event: &rmetav1.WatchEvent_Event{
+				Type: &rmetav1.WatchEvent_Event_Create_{
+					Create: &rmetav1.WatchEvent_Event_Create{Item: pbutils.MessageToAnyMust(cc)},
+				},
+			},
+		}
+	}
+	client.events <- &rmetav1.WatchEvent{
+		Event: &rmetav1.WatchEvent_Event{
+			Type: &rmetav1.WatchEvent_Event_Delete_{
+				Delete: &rmetav1.WatchEvent_Event_Delete{Item: pbutils.MessageToAnyMust(other)},
+			},
+		},
+	}
 	updates := &tstClusterConfigUpdates{}
-	c, err := ccctl.New(ctx, tst.C.OcteliumC, &ccctl.Opts{OnUpdate: updates.onUpdate})
+	c, err := ccctl.New(ctx, client, &ccctl.Opts{OnUpdate: updates.onUpdate})
 	require.Nil(t, err)
 	require.Nil(t, c.Run(ctx))
 
 	assert.Never(t, func() bool { return len(updates.get()) > 0 }, 2*time.Second, 50*time.Millisecond)
+	assert.True(t, proto.Equal(initial, c.Get()))
 
-	cc, err := tst.C.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
-	require.Nil(t, err)
-	cc.Status.Domain = utilrand.GetRandomStringLowercase(10)
-	_, err = tst.C.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
-	require.Nil(t, err)
+	cc := proto.Clone(initial).(*corev1.ClusterConfig)
+	cc.Metadata.ResourceVersion = "updated"
+	cc.Metadata.LastResourceVersion = initial.Metadata.ResourceVersion
+	cc.Status.Domain = "updated.example.com"
+	client.events <- &rmetav1.WatchEvent{
+		Event: &rmetav1.WatchEvent_Event{
+			Type: &rmetav1.WatchEvent_Event_Update_{
+				Update: &rmetav1.WatchEvent_Event_Update{
+					NewItem: pbutils.MessageToAnyMust(cc),
+					OldItem: pbutils.MessageToAnyMust(initial),
+				},
+			},
+		},
+	}
 
-	require.Eventually(t, func() bool { return len(updates.get()) == 1 }, 30*time.Second, 50*time.Millisecond)
-	assert.Equal(t, cc.Status.Domain, updates.get()[0][0].Status.Domain)
+	require.Eventually(t, func() bool { return len(updates.get()) == 1 }, 5*time.Second, 50*time.Millisecond)
+	assert.True(t, proto.Equal(cc, updates.get()[0][0]))
+	assert.True(t, proto.Equal(initial, updates.get()[0][1]))
+	assert.True(t, proto.Equal(cc, c.Get()))
 }
