@@ -46,6 +46,11 @@ type CtlI interface {
 	SendMessage(msg *userv1.ConnectResponse, sessUID string) error
 }
 
+type connectionCtlI interface {
+	SendMessageToConnection(msg *userv1.ConnectResponse, sessUID string,
+		conn *corev1.Session_Status_Connection) error
+}
+
 func (c *Controller) OnAdd(ctx context.Context, sess *corev1.Session) error {
 	return nil
 }
@@ -56,7 +61,7 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Session) err
 	}
 
 	if !new.Status.IsConnected && old.Status.IsConnected {
-		if err := c.sendDisconnect(new, new.Metadata.UpdatedAt); err != nil {
+		if err := c.sendDisconnectToConnection(new, old.Status.Connection, new.Metadata.UpdatedAt); err != nil {
 			zap.L().Warn("Could not sendDisconnect", zap.Error(err))
 		}
 	}
@@ -199,4 +204,20 @@ func (c *Controller) sendDisconnect(sess *corev1.Session, ts *timestamppb.Timest
 			Disconnect: &userv1.ConnectResponse_Disconnect{},
 		},
 	}, sess.Metadata.Uid)
+}
+
+func (c *Controller) sendDisconnectToConnection(sess *corev1.Session,
+	conn *corev1.Session_Status_Connection, ts *timestamppb.Timestamp) error {
+	ctlI, ok := c.ctlI.(connectionCtlI)
+	if !ok || conn == nil {
+		return c.sendDisconnect(sess, ts)
+	}
+
+	zap.L().Debug("Sending doDisconnect msg to the disconnected Connection", zap.String("sessName", sess.Metadata.Name))
+	return ctlI.SendMessageToConnection(&userv1.ConnectResponse{
+		CreatedAt: ts,
+		Event: &userv1.ConnectResponse_Disconnect_{
+			Disconnect: &userv1.ConnectResponse_Disconnect{},
+		},
+	}, sess.Metadata.Uid, conn)
 }

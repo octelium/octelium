@@ -31,6 +31,7 @@ import (
 	sesscontroller "github.com/octelium/octelium/cluster/apiserver/apiserver/controllers/sessions"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -228,6 +229,209 @@ func TestConnectRepeatedOverlappingReconnectsDoNotLeakAddresses(t *testing.T) {
 	s.connServer.RLock()
 	assert.NotContains(t, s.connServer.connectedSessMap, usr.Session.Metadata.Uid)
 	s.connServer.RUnlock()
+}
+
+func requireTestReliabilityMarkerFirst(t *testing.T, s *Server, sessUID string, stream *fakeConnectStream) {
+	t.Helper()
+	marker := &userv1.ConnectResponse{Event: &userv1.ConnectResponse_AddService_{
+		AddService: &userv1.ConnectResponse_AddService{},
+	}}
+	require.NoError(t, s.connServer.SendMessage(marker, sessUID))
+	select {
+	case msg := <-stream.sent:
+		require.Same(t, marker, msg, "the stream received a message that was not addressed to its Connection: %v", msg)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the marker was not delivered")
+	}
+}
+
+func requireTestReliabilityDisconnect(t *testing.T, stream *fakeConnectStream) *userv1.ConnectResponse {
+	t.Helper()
+	select {
+	case msg := <-stream.sent:
+		require.NotNil(t, msg.GetDisconnect(), "%v", msg)
+		return msg
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the stream did not receive a Disconnect")
+		return nil
+	}
+}
+
+func newTestReliabilityDisconnect() *userv1.ConnectResponse {
+	return &userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{
+		Disconnect: &userv1.ConnectResponse_Disconnect{},
+	}}
+}
+
+func TestSendMessageToConnectionOnlyReachesThatConnection(t *testing.T) {
+	s := NewServer(nil)
+	uid := utilrand.GetRandomStringCanonical(8)
+	cur, prev, _, _ := newTestReliabilitySessions(uid)
+	stream := newTestReliabilityStream(t, t.Context(), uid, s, cur)
+	require.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), uid, prev))
+	require.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), uid, nil))
+	require.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), uid,
+		&corev1.Session_Status_Connection{StartedAt: cur.StartedAt, X25519PublicKey: prev.X25519PublicKey}))
+	requireTestReliabilityMarkerFirst(t, s, uid, stream)
+	require.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), uid,
+		&corev1.Session_Status_Connection{StartedAt: prev.StartedAt, X25519PublicKey: bytes.Clone(cur.X25519PublicKey)}))
+	msg := requireTestReliabilityDisconnect(t, stream)
+	assert.NotNil(t, msg.CreatedAt)
+	createdAt := timestamppb.New(time.Now().Add(-time.Hour))
+	msg = newTestReliabilityDisconnect()
+	msg.CreatedAt = createdAt
+	require.NoError(t, s.connServer.SendMessageToConnection(msg, uid, cur))
+	assert.True(t, pbutils.IsEqual(createdAt, requireTestReliabilityDisconnect(t, stream).CreatedAt))
+	assert.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), "missing", cur))
+}
+
+func TestSendMessageToConnectionWithoutKeysMatchesStartedAt(t *testing.T) {
+	s := NewServer(nil)
+	uid := utilrand.GetRandomStringCanonical(8)
+	conn := &corev1.Session_Status_Connection{StartedAt: pbutils.Now()}
+	stream := newTestReliabilityStream(t, t.Context(), uid, s, conn)
+	require.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), uid,
+		&corev1.Session_Status_Connection{StartedAt: timestamppb.New(conn.StartedAt.AsTime().Add(time.Nanosecond))}))
+	requireTestReliabilityMarkerFirst(t, s, uid, stream)
+	require.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), uid,
+		&corev1.Session_Status_Connection{StartedAt: timestamppb.New(conn.StartedAt.AsTime())}))
+	requireTestReliabilityDisconnect(t, stream)
+}
+
+func TestSendMessageToDisplacedConnectionDoesNotReachItsReplacement(t *testing.T) {
+	s := NewServer(nil)
+	uid := utilrand.GetRandomStringCanonical(8)
+	cur, prev, _, _ := newTestReliabilitySessions(uid)
+	prevStream := newTestReliabilityStream(t, t.Context(), uid, s, prev)
+	curStream := newTestReliabilityStream(t, t.Context(), uid, s, cur)
+	requireTestReliabilityDisconnect(t, prevStream)
+	require.NoError(t, s.connServer.SendMessageToConnection(newTestReliabilityDisconnect(), uid, prev))
+	requireTestReliabilityMarkerFirst(t, s, uid, curStream)
+}
+
+func TestSessionDisconnectAcrossReplicasOnlyReachesTheEndedConnection(t *testing.T) {
+	for _, skew := range []time.Duration{-time.Hour, -50 * time.Millisecond, 0, 50 * time.Millisecond, time.Hour} {
+		t.Run(skew.String(), func(t *testing.T) {
+			replicaA, replicaB := NewServer(nil), NewServer(nil)
+			ctlA := sesscontroller.NewController(nil, replicaA.ConnServer())
+			ctlB := sesscontroller.NewController(nil, replicaB.ConnServer())
+			uid := utilrand.GetRandomStringCanonical(8)
+			cur, prev, old, disconnected := newTestReliabilitySessions(uid)
+			disconnected.Metadata.UpdatedAt = timestamppb.New(cur.StartedAt.AsTime().Add(skew))
+			prevStream := newTestReliabilityStream(t, t.Context(), uid, replicaA, prev)
+			curStream := newTestReliabilityStream(t, t.Context(), uid, replicaB, cur)
+			require.NoError(t, ctlA.OnUpdate(t.Context(), disconnected, old))
+			require.NoError(t, ctlB.OnUpdate(t.Context(), disconnected, old))
+			msg := requireTestReliabilityDisconnect(t, prevStream)
+			assert.True(t, pbutils.IsEqual(disconnected.Metadata.UpdatedAt, msg.CreatedAt))
+			requireTestReliabilityMarkerFirst(t, replicaB, uid, curStream)
+			deleted := pbutils.Clone(old).(*corev1.Session)
+			deleted.Status.Connection = cur
+			require.NoError(t, ctlB.OnDelete(t.Context(), deleted))
+			requireTestReliabilityDisconnect(t, curStream)
+		})
+	}
+}
+
+func TestSessionDisconnectWithoutEndedConnectionKeepsSessionDelivery(t *testing.T) {
+	s := NewServer(nil)
+	ctl := sesscontroller.NewController(nil, s.ConnServer())
+	uid := utilrand.GetRandomStringCanonical(8)
+	cur, _, old, disconnected := newTestReliabilitySessions(uid)
+	old.Status.Connection = nil
+	stream := newTestReliabilityStream(t, t.Context(), uid, s, cur)
+	require.NoError(t, ctl.OnUpdate(t.Context(), disconnected, old))
+	msg := requireTestReliabilityDisconnect(t, stream)
+	assert.True(t, pbutils.IsEqual(disconnected.Metadata.UpdatedAt, msg.CreatedAt))
+}
+
+func TestConnectReconnectAcrossReplicasKeepsNewConnection(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+	replicaA, adminS := newFakeServers(tst.C)
+	replicaB, _ := newFakeServers(tst.C)
+	usr, err := tstuser.NewUserWithType(tst.C.OcteliumC, adminS, replicaA, nil, corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+	require.Nil(t, err)
+	sessUID := usr.Session.Metadata.Uid
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	release := make(chan struct{})
+	connectedCh := make(chan *corev1.Session, 16)
+	endedCh := make(chan string, 4)
+	for name, s := range map[string]*Server{"A": replicaA, "B": replicaB} {
+		ctl := sesscontroller.NewController(tst.C.OcteliumC, s.ConnServer())
+		require.Nil(t, watchers.NewCoreV1(tst.C.OcteliumC).Session(ctx, nil,
+			func(ctx context.Context, sess *corev1.Session) error {
+				if sess.Metadata.Uid == sessUID && sess.Status.IsConnected {
+					connectedCh <- sess
+				}
+				return nil
+			},
+			func(ctx context.Context, new, old *corev1.Session) error {
+				if new.Metadata.Uid != sessUID {
+					return nil
+				}
+				isEnded := old.Status.IsConnected && !new.Status.IsConnected
+				if isEnded {
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return nil
+					}
+				}
+				err := ctl.OnUpdate(ctx, new, old)
+				if isEnded {
+					endedCh <- name
+				} else if new.Status.IsConnected {
+					connectedCh <- new
+				}
+				return err
+			}, nil))
+	}
+	first := startTestReliabilityConnect(t, replicaA, usr.Ctx())
+	usr.Resync()
+	require.NotNil(t, usr.Session.Status.Connection)
+	firstConn := usr.Session.Status.Connection
+	for seen := 0; seen < 2; {
+		select {
+		case sess := <-connectedCh:
+			if isSameConnection(sess.Status.Connection, firstConn) {
+				seen++
+			}
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "the Session watchers did not observe the first Connection")
+		}
+	}
+	second := startTestReliabilityConnect(t, replicaB, usr.Ctx())
+	stored, err := replicaB.octeliumC.CoreC().GetSession(t.Context(), &rmetav1.GetOptions{Uid: sessUID})
+	require.Nil(t, err)
+	require.NotNil(t, stored.Status.Connection)
+	require.False(t, isSameConnection(stored.Status.Connection, firstConn))
+	require.Eventually(t, func() bool {
+		replicaB.connServer.RLock()
+		defer replicaB.connServer.RUnlock()
+		cs, ok := replicaB.connServer.connectedSessMap[sessUID]
+		return ok && isSameConnection(cs.conn, stored.Status.Connection)
+	}, 10*time.Second, 10*time.Millisecond)
+	close(release)
+	var ended []string
+	for len(ended) < 2 {
+		select {
+		case name := <-endedCh:
+			ended = append(ended, name)
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "the Session watchers did not observe the end of the first Connection", "%v", ended)
+		}
+	}
+	assert.ElementsMatch(t, []string{"A", "B"}, ended)
+	requireTestReliabilityMarkerFirst(t, replicaB, sessUID, second.stream.fakeConnectStream)
+	requireTestReliabilityDisconnect(t, first.stream.fakeConnectStream)
+	first.stop(t)
+	stored, err = replicaB.octeliumC.CoreC().GetSession(t.Context(), &rmetav1.GetOptions{Uid: sessUID})
+	require.Nil(t, err)
+	assert.True(t, stored.Status.IsConnected, "the end of the first stream must not disconnect the second Connection")
+	second.stop(t)
 }
 
 func TestConnectReliabilityKnownIssues(t *testing.T) {

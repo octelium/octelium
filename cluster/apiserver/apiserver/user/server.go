@@ -58,10 +58,13 @@ type ConnServerI interface {
 	BroadcastMessage(msg *userv1.ConnectResponse) error
 	BroadcastMessageByL3Mode(fn func(l3Mode corev1.Session_Status_Connection_L3Mode) *userv1.ConnectResponse) error
 	SendMessage(msg *userv1.ConnectResponse, sessUID string) error
+	SendMessageToConnection(msg *userv1.ConnectResponse, sessUID string,
+		conn *corev1.Session_Status_Connection) error
 }
 
 type connectedSession struct {
 	sess   *corev1.Session
+	conn   *corev1.Session_Status_Connection
 	l3Mode corev1.Session_Status_Connection_L3Mode
 	stream userv1.MainService_ConnectServer
 
@@ -134,6 +137,7 @@ func (s *connServer) addConnectedSess(
 
 	cs := &connectedSession{
 		sess:   sess,
+		conn:   conn,
 		l3Mode: conn.GetL3Mode(),
 		stream: stream,
 		sendCh: make(chan *userv1.ConnectResponse, sessionSendQueueSize),
@@ -244,6 +248,34 @@ func (s *connServer) SendMessage(msg *userv1.ConnectResponse, sessUID string) er
 		zap.L().Warn("Session send queue is full. Dropping msg",
 			zap.String("sessUID", sessUID))
 		conn.cancel()
+	}
+
+	return nil
+}
+
+func (s *connServer) SendMessageToConnection(msg *userv1.ConnectResponse, sessUID string,
+	conn *corev1.Session_Status_Connection) error {
+	s.RLock()
+	cs, ok := s.connectedSessMap[sessUID]
+	s.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	if !isSameConnection(cs.conn, conn) {
+		zap.L().Debug("The Session stream belongs to another Connection. Skipping msg",
+			zap.String("sessUID", sessUID))
+		return nil
+	}
+
+	if msg.CreatedAt == nil {
+		msg.CreatedAt = pbutils.Now()
+	}
+
+	if !cs.enqueue(msg) {
+		zap.L().Warn("Session send queue is full. Dropping msg",
+			zap.String("sessUID", sessUID))
+		cs.cancel()
 	}
 
 	return nil
