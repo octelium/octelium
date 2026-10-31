@@ -15,8 +15,10 @@
 package controller
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/octelium/octelium/client/common/cliutils"
@@ -25,6 +27,11 @@ import (
 )
 
 var errLockBusy = errors.Errorf("The lock is held by another process")
+
+const (
+	fileLockWaitTimeout = 5 * time.Second
+	fileLockRetryDelay  = 50 * time.Millisecond
+)
 
 func getLockDirs() []string {
 	var ret []string
@@ -36,7 +43,22 @@ func getLockDirs() []string {
 }
 
 func acquireFileLock(name string) (*flock.Flock, error) {
-	for _, dir := range getLockDirs() {
+	return doAcquireFileLock(getLockDirs(), name, 0)
+}
+
+func waitFileLock(name string) *flock.Flock {
+	lock, err := doAcquireFileLock(getLockDirs(), name, fileLockWaitTimeout)
+	if err != nil {
+		zap.L().Warn("Could not acquire the lock file in time. Proceeding without a lock",
+			zap.String("name", name), zap.Error(err))
+		return nil
+	}
+
+	return lock
+}
+
+func doAcquireFileLock(dirs []string, name string, timeout time.Duration) (*flock.Flock, error) {
+	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			continue
 		}
@@ -48,6 +70,17 @@ func acquireFileLock(name string) (*flock.Flock, error) {
 			zap.L().Debug("Could not try to acquire the lock file",
 				zap.String("path", lock.Path()), zap.Error(err))
 			continue
+		}
+
+		if !locked && timeout > 0 {
+			zap.L().Debug("Waiting for the lock file", zap.String("path", lock.Path()))
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			locked, err = lock.TryLockContext(ctx, fileLockRetryDelay)
+			cancel()
+			if err != nil {
+				zap.L().Debug("Could not wait for the lock file",
+					zap.String("path", lock.Path()), zap.Error(err))
+			}
 		}
 
 		if !locked {

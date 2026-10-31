@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func startTestReliabilityCommandAPI(t *testing.T, socket string, srv *testCommandAPI) *grpc.Server {
@@ -382,4 +384,143 @@ func TestClientCleanupFailureE2E(t *testing.T) {
 			assertTestReliabilityCommandReleased(t, dnsAddr, publishedAddr)
 		})
 	}
+}
+
+func getTestReliabilityCommandPrivateTmpDir(t *testing.T, lockName string) string {
+	t.Helper()
+	shared := filepath.Join("/run", "octelium")
+	if err := os.MkdirAll(shared, 0755); err == nil {
+		if f, err := os.OpenFile(filepath.Join(shared, lockName), os.O_CREATE|os.O_RDONLY, 0644); err == nil {
+			f.Close()
+			t.Skip("the shared lock directory is usable by this user and cannot be isolated")
+		}
+	}
+	return t.TempDir()
+}
+
+func testReliabilityCommandSSHState(domain string) *userv1.ConnectResponse {
+	msg := testCommandInitialState()
+	msg.GetState().ServiceConfigs = []*userv1.ConnectionState_ServiceConfig{{
+		Type: &userv1.ConnectionState_ServiceConfig_Ssh{Ssh: &userv1.ConnectionState_ServiceConfig_SSH{
+			KnownHosts:     []string{"@cert-authority *." + domain + " ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample"},
+			AuthorizedKeys: []string{"cert-authority,principals=\"" + domain + "\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample"},
+		}},
+	}}
+	return msg
+}
+
+func TestClientSSHConfigLockE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("these tests force the Linux gVisor implementation and use Unix signals")
+	}
+	tmpDir := getTestReliabilityCommandPrivateTmpDir(t, "sshconfig.lock")
+	binary := filepath.Join(t.TempDir(), "octelium")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+
+	userHome := t.TempDir()
+	sshDir := filepath.Join(userHome, ".ssh")
+	require.NoError(t, os.MkdirAll(sshDir, 0700))
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	authorizedKeys := filepath.Join(sshDir, "authorized_keys")
+	original := "example.net ssh-ed25519 AAAA\n"
+	require.NoError(t, os.WriteFile(knownHosts, []byte(original), 0600))
+	require.NoError(t, os.WriteFile(authorizedKeys, []byte(original), 0600))
+	readFile := func(path string) string {
+		b, err := os.ReadFile(path)
+		require.NoError(t, err)
+		return string(b)
+	}
+
+	lockPath := filepath.Join(tmpDir, "octelium", "sshconfig.lock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(lockPath), 0755))
+	holdLock := func(d time.Duration) {
+		lock := flock.New(lockPath)
+		locked, err := lock.TryLock()
+		require.NoError(t, err)
+		require.True(t, locked)
+		timer := time.AfterFunc(d, func() { lock.Close() })
+		t.Cleanup(func() {
+			if timer.Stop() {
+				lock.Close()
+			}
+		})
+	}
+
+	type testClient struct {
+		domain   string
+		state    *userv1.ConnectResponse
+		attempts atomic.Int32
+		drops    chan struct{}
+		p        *testCommandProcess
+	}
+	var clients []*testClient
+	for _, domain := range []string{"example.com", "example.org"} {
+		cl := &testClient{domain: domain, state: testReliabilityCommandSSHState(domain), drops: make(chan struct{}, 1)}
+		srv := &testCommandAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+			cl.attempts.Add(1)
+			if _, err := stream.Recv(); err != nil {
+				return err
+			}
+			if err := stream.Send(proto.Clone(cl.state).(*userv1.ConnectResponse)); err != nil {
+				return err
+			}
+			select {
+			case <-cl.drops:
+				return status.Error(codes.Unavailable, "API Server restart")
+			case <-stream.Context().Done():
+				return nil
+			}
+		}}
+		socket := newTestCommandSocket(t)
+		startTestReliabilityCommandAPI(t, socket, srv)
+		cl.p = startTestCommand(t, binary,
+			[]string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket, "OCTELIUM_USER_HOME=" + userHome, "TMPDIR=" + tmpDir},
+			"connect", "--domain", domain, "--homedir", t.TempDir(), "--ip-mode", "v4",
+			"--no-dns", "--implementation", "gvisor")
+		clients = append(clients, cl)
+	}
+	isInstalled := func(attempts int32) bool {
+		knownHostsContent, authorizedKeysContent := readFile(knownHosts), readFile(authorizedKeys)
+		for _, cl := range clients {
+			cfg := cl.state.GetState().ServiceConfigs[0].GetSsh()
+			if cl.attempts.Load() != attempts ||
+				strings.Count(knownHostsContent, cfg.KnownHosts[0]) != 1 ||
+				strings.Count(authorizedKeysContent, cfg.AuthorizedKeys[0]) != 1 {
+				return false
+			}
+		}
+		return true
+	}
+
+	require.Eventually(t, func() bool {
+		return isInstalled(1)
+	}, 15*time.Second, 20*time.Millisecond, "both Connections must install their Cluster CA")
+
+	holdLock(1500 * time.Millisecond)
+	for _, cl := range clients {
+		cl.drops <- struct{}{}
+	}
+	require.Eventually(t, func() bool {
+		return isInstalled(2)
+	}, 20*time.Second, 20*time.Millisecond,
+		"both clients must reconnect and reinstall their Cluster CA after waiting for the SSH config lock")
+	for _, cl := range clients {
+		requireTestReliabilityCommandRunning(t, cl.p)
+	}
+
+	holdLock(time.Second)
+	for _, cl := range clients {
+		require.NoError(t, cl.p.cmd.Process.Signal(syscall.SIGTERM))
+	}
+	for _, cl := range clients {
+		assert.NoError(t, cl.p.wait(t, 10*time.Second), "%s: a briefly held SSH config lock must not fail the cleanup on exit", cl.domain)
+		assert.Equal(t, 2, strings.Count(cl.p.output.String(), "Connected successfully"), cl.domain)
+	}
+	assert.Equal(t, original, readFile(knownHosts))
+	assert.Equal(t, original, readFile(authorizedKeys))
 }

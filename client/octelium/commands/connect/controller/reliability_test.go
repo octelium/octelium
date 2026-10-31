@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -375,6 +376,193 @@ func TestControllerReconcileCleanupWithoutJournalDB(t *testing.T) {
 	require.Error(t, closeErr)
 	assert.NotPanics(t, c.ReconcileCleanup)
 	assert.Equal(t, closeErr, c.Close())
+}
+
+func setTestReliabilityPrivateLockDir(t *testing.T, name string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
+	dirs := getLockDirs()
+	if dirs[len(dirs)-1] != filepath.Join(dir, "octelium") {
+		t.Skip("the temporary directory cannot be overridden")
+	}
+	for _, shared := range dirs[:len(dirs)-1] {
+		if err := os.MkdirAll(shared, 0755); err != nil {
+			continue
+		}
+		f, err := os.OpenFile(filepath.Join(shared, name), os.O_CREATE|os.O_RDONLY, 0644)
+		if err != nil {
+			continue
+		}
+		f.Close()
+		t.Skip("the shared lock directory is usable by this user and cannot be isolated")
+	}
+}
+
+func holdTestReliabilityLock(t *testing.T, name string, d time.Duration) {
+	t.Helper()
+	lock, err := acquireFileLock(name)
+	require.NoError(t, err)
+	require.NotNil(t, lock)
+	timer := time.AfterFunc(d, func() { releaseFileLock(lock) })
+	t.Cleanup(func() {
+		if timer.Stop() {
+			releaseFileLock(lock)
+		}
+	})
+}
+
+func newTestReliabilitySSHConfig(domain string) *userv1.ConnectionState_ServiceConfig_SSH {
+	return &userv1.ConnectionState_ServiceConfig_SSH{
+		KnownHosts:     []string{fmt.Sprintf("@cert-authority *.%s ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample", domain)},
+		AuthorizedKeys: []string{fmt.Sprintf("cert-authority,principals=\"%s\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample", domain)},
+	}
+}
+
+func TestControllerSSHServiceConfigsWaitForBriefLockHolder(t *testing.T) {
+	setTestReliabilityPrivateLockDir(t, sshConfigLockName)
+	c, sshDir := newTestReliabilitySSHController(t)
+	dbC := newTestReliabilityCleanupDB(t, c)
+	c.prepareCleanup()
+	require.NotNil(t, c.cleanup)
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	authorizedKeys := filepath.Join(sshDir, "authorized_keys")
+	require.NoError(t, os.WriteFile(knownHosts, []byte("example.org ssh-ed25519 AAAA\n"), 0600))
+	cfg := newTestReliabilitySSHConfig("example.com")
+	readFile := func(path string) string {
+		b, err := os.ReadFile(path)
+		require.NoError(t, err)
+		return string(b)
+	}
+
+	holdTestReliabilityLock(t, sshConfigLockName, 300*time.Millisecond)
+	started := time.Now()
+	require.NoError(t, c.setServiceConfigSSH(cfg))
+	assert.GreaterOrEqual(t, time.Since(started), 250*time.Millisecond)
+	assert.Contains(t, readFile(knownHosts), cfg.KnownHosts[0])
+	assert.Contains(t, readFile(authorizedKeys), cfg.AuthorizedKeys[0])
+	journal, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.Equal(t, []string{knownHosts, authorizedKeys}, journal.GetSsh().GetFilePaths())
+
+	holdTestReliabilityLock(t, sshConfigLockName, 300*time.Millisecond)
+	started = time.Now()
+	require.NoError(t, c.unsetServiceConfigSSH())
+	assert.GreaterOrEqual(t, time.Since(started), 250*time.Millisecond)
+	assert.Equal(t, "example.org ssh-ed25519 AAAA\n", readFile(knownHosts))
+	assert.NotContains(t, readFile(authorizedKeys), "cert-authority")
+
+	require.NoError(t, c.setServiceConfigSSH(cfg))
+	holdTestReliabilityLock(t, sshConfigLockName, 300*time.Millisecond)
+	require.NoError(t, reconcileSSHCleanup(journal.GetSsh()))
+	assert.Equal(t, "example.org ssh-ed25519 AAAA\n", readFile(knownHosts))
+	assert.NotContains(t, readFile(authorizedKeys), "cert-authority")
+}
+
+func TestControllerSSHServiceConfigsProceedPastStuckLockHolder(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waiting for the SSH config lock to time out")
+	}
+	setTestReliabilityPrivateLockDir(t, sshConfigLockName)
+	c, sshDir := newTestReliabilitySSHController(t)
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	require.NoError(t, os.WriteFile(knownHosts, []byte("example.org ssh-ed25519 AAAA\n"), 0600))
+	cfg := newTestReliabilitySSHConfig("example.com")
+	holdTestReliabilityLock(t, sshConfigLockName, time.Hour)
+
+	started := time.Now()
+	require.NoError(t, c.setServiceConfigSSH(cfg))
+	elapsed := time.Since(started)
+	assert.GreaterOrEqual(t, elapsed, fileLockWaitTimeout)
+	assert.Less(t, elapsed, fileLockWaitTimeout+3*time.Second)
+	b, err := os.ReadFile(knownHosts)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), cfg.KnownHosts[0], "a stuck lock holder must not prevent installing the Cluster CA")
+
+	started = time.Now()
+	require.NoError(t, c.Close(), "a stuck lock holder must not make the controller cleanup fail")
+	assert.GreaterOrEqual(t, time.Since(started), fileLockWaitTimeout)
+	b, err = os.ReadFile(knownHosts)
+	require.NoError(t, err)
+	assert.Equal(t, "example.org ssh-ed25519 AAAA\n", string(b))
+}
+
+func TestControllerConcurrentSSHServiceConfigsKeepEveryDomain(t *testing.T) {
+	setTestReliabilityPrivateLockDir(t, sshConfigLockName)
+	userHome := t.TempDir()
+	sshDir := filepath.Join(userHome, ".ssh")
+	require.NoError(t, os.MkdirAll(sshDir, 0700))
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	authorizedKeys := filepath.Join(sshDir, "authorized_keys")
+	original := "example.org ssh-ed25519 AAAA\n"
+	require.NoError(t, os.WriteFile(knownHosts, []byte(original), 0600))
+	require.NoError(t, os.WriteFile(authorizedKeys, []byte(original), 0600))
+
+	var ctls []*Controller
+	var cfgs []*userv1.ConnectionState_ServiceConfig_SSH
+	for i := range 6 {
+		domain := fmt.Sprintf("cluster-%d.example.com", i)
+		c := newTestPlatformController(t, userv1.ConnectionState_V4)
+		c.c.Info.Cluster.Domain = domain
+		c.c.Preferences.UserHome = userHome
+		ctls = append(ctls, c)
+		cfgs = append(cfgs, newTestReliabilitySSHConfig(domain))
+	}
+
+	isSet := make([]bool, len(ctls))
+	for round := range 6 {
+		var wg sync.WaitGroup
+		for i, c := range ctls {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if isSet[i] {
+					assert.NoError(t, c.unsetServiceConfigSSH())
+				} else {
+					assert.NoError(t, c.setServiceConfigSSH(cfgs[i]))
+				}
+			}()
+		}
+		wg.Wait()
+
+		knownHostsContent, err := os.ReadFile(knownHosts)
+		require.NoError(t, err)
+		authorizedKeysContent, err := os.ReadFile(authorizedKeys)
+		require.NoError(t, err)
+		for i := range ctls {
+			isSet[i] = !isSet[i]
+			want := 0
+			if isSet[i] {
+				want = 1
+			}
+			assert.Equal(t, want, strings.Count(string(knownHostsContent), cfgs[i].KnownHosts[0]),
+				"round %d: Cluster %d in known_hosts", round, i)
+			assert.Equal(t, want, strings.Count(string(authorizedKeysContent), cfgs[i].AuthorizedKeys[0]),
+				"round %d: Cluster %d in authorized_keys", round, i)
+		}
+		assert.True(t, strings.HasPrefix(string(knownHostsContent), original), "round %d", round)
+		assert.True(t, strings.HasPrefix(string(authorizedKeysContent), original), "round %d", round)
+
+		if round%2 == 0 {
+			for i := 0; i < len(ctls); i += 2 {
+				require.NoError(t, ctls[i].unsetServiceConfigSSH())
+				isSet[i] = false
+			}
+		}
+	}
+
+	for i, c := range ctls {
+		require.NoError(t, c.unsetServiceConfigSSH())
+		isSet[i] = false
+	}
+	b, err := os.ReadFile(knownHosts)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(b))
+	b, err = os.ReadFile(authorizedKeys)
+	require.NoError(t, err)
+	assert.Equal(t, original, string(b))
 }
 
 func TestControllerReliabilityKnownIssues(t *testing.T) {

@@ -210,10 +210,7 @@ func reconcileSSHCleanup(cfg *cliconfigv1.ConnectionCleanup_SSH) error {
 	if cfg == nil || cfg.Marker == "" || len(cfg.FilePaths) == 0 {
 		return nil
 	}
-	lock, err := acquireFileLock(sshConfigLockName)
-	if err != nil {
-		return err
-	}
+	lock := waitFileLock(sshConfigLockName)
 	defer releaseFileLock(lock)
 
 	var retErr error

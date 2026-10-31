@@ -81,12 +81,7 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 		return nil
 	}
 
-	lock, err := acquireFileLock(sshConfigLockName)
-	if err != nil {
-		zap.L().Warn("Could not acquire the SSH config lock. Skipping the SSH service configs",
-			zap.Error(err))
-		return nil
-	}
+	lock := waitFileLock(sshConfigLockName)
 	defer releaseFileLock(lock)
 
 	zap.L().Debug("Setting SSH service configs", zap.String("sshDir", sshDir))
@@ -122,12 +117,7 @@ func (c *Controller) unsetServiceConfigSSH() error {
 		return nil
 	}
 
-	lock, err := acquireFileLock(sshConfigLockName)
-	if err != nil {
-		zap.L().Debug("Could not acquire the SSH config lock. Skipping the SSH config cleanup",
-			zap.Error(err))
-		return err
-	}
+	lock := waitFileLock(sshConfigLockName)
 	defer releaseFileLock(lock)
 
 	zap.L().Debug("Unsetting SSH service configs", zap.String("sshDir", sshDir))
