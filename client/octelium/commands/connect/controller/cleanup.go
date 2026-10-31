@@ -72,6 +72,19 @@ func ReconcileConnectionCleanup(dbC *db.DB, domain string) {
 	}
 }
 
+func (c *Controller) ReconcileCleanup() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.isClosed || c.closeErr == nil {
+		return
+	}
+
+	zap.L().Debug("Reconciling the connection cleanup state after an incomplete close")
+	ReconcileConnectionCleanup(c.dbC, c.cleanupDomain())
+	c.releaseResolvConfLock()
+}
+
 func (c *Controller) cleanupDomain() string {
 	if c.c.GetInfo().GetCluster() == nil {
 		return ""

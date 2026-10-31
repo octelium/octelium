@@ -21,17 +21,21 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/miekg/dns"
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"google.golang.org/protobuf/proto"
 )
 
 func newTestReliabilityGateway(t *testing.T, idx int) *userv1.Gateway {
@@ -218,6 +222,159 @@ func TestControllerSSHServiceConfigsAcrossReconnects(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "example.org ssh-ed25519 AAAA\n", string(b))
 	}
+}
+
+func newTestReliabilityCleanupDB(t *testing.T, c *Controller) *db.DB {
+	t.Helper()
+	dbC, err := db.Open("memory")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, dbC.Close()) })
+	c.dbC = dbC
+	return dbC
+}
+
+func TestControllerReconcileCleanupAfterTransientCloseFailure(t *testing.T) {
+	c, sshDir := newTestReliabilitySSHController(t)
+	dbC := newTestReliabilityCleanupDB(t, c)
+	c.prepareCleanup()
+	require.NotNil(t, c.cleanup)
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	authorizedKeys := filepath.Join(sshDir, "authorized_keys")
+	require.NoError(t, os.WriteFile(knownHosts, []byte("example.org ssh-ed25519 AAAA\n"), 0600))
+	require.NoError(t, c.setServiceConfigSSH(&userv1.ConnectionState_ServiceConfig_SSH{
+		KnownHosts:     []string{"@cert-authority * ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample"},
+		AuthorizedKeys: []string{"cert-authority ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample"},
+	}))
+	b, err := os.ReadFile(knownHosts)
+	require.NoError(t, err)
+	require.Contains(t, string(b), "@cert-authority")
+	moved := filepath.Join(t.TempDir(), "known_hosts")
+	require.NoError(t, os.Rename(knownHosts, moved))
+	require.NoError(t, os.Mkdir(knownHosts, 0700))
+	require.Error(t, c.Close())
+	b, err = os.ReadFile(authorizedKeys)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "cert-authority")
+	require.NoError(t, os.Remove(knownHosts))
+	require.NoError(t, os.Rename(moved, knownHosts))
+	journal, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.Equal(t, cliconfigv1.ConnectionCleanup_CLEANING, journal.Phase)
+	assert.Equal(t, []string{knownHosts, authorizedKeys}, journal.GetSsh().GetFilePaths())
+	c.ReconcileCleanup()
+	b, err = os.ReadFile(knownHosts)
+	require.NoError(t, err)
+	assert.Equal(t, "example.org ssh-ed25519 AAAA\n", string(b))
+	b, err = os.ReadFile(authorizedKeys)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "cert-authority")
+	_, err = dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+	c.ReconcileCleanup()
+	_, err = dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
+func TestControllerReconcileCleanupReleasesResolvConfLock(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("This test restores the Linux container resolv.conf")
+	}
+	c := newTestPlatformController(t, userv1.ConnectionState_V4)
+	c.isNetstack = false
+	c.isQUIC = false
+	c.c.Preferences.IgnoreDNS = false
+	c.c.Preferences.RuntimeMode = cliconfigv1.Connection_Preferences_CONTAINER
+	c.c.Preferences.DeviceName = fmt.Sprintf("octelium-%s", utilrand.GetRandomStringLowercase(6))
+	dbC := newTestReliabilityCleanupDB(t, c)
+	c.prepareCleanup()
+	require.NotNil(t, c.cleanup)
+	lockPath := filepath.Join(t.TempDir(), resolvConfLockName)
+	c.resolvConf.lock = flock.New(lockPath)
+	locked, err := c.resolvConf.lock.TryLock()
+	require.NoError(t, err)
+	require.True(t, locked)
+	original := []byte("nameserver 192.0.2.53\n")
+	require.NoError(t, os.WriteFile(c.resolvConf.path, original, 0644))
+	require.NoError(t, c.setResolvConf())
+	installed, err := os.ReadFile(c.resolvConf.path)
+	require.NoError(t, err)
+	require.NotEqual(t, original, installed)
+	require.NoError(t, os.Remove(c.resolvConf.path))
+	require.NoError(t, os.Mkdir(c.resolvConf.path, 0755))
+	require.Error(t, c.Close())
+	other := flock.New(lockPath)
+	locked, err = other.TryLock()
+	require.NoError(t, err)
+	require.False(t, locked, "the closed controller still holds the resolv.conf lock after a failed restore")
+	c.ReconcileCleanup()
+	locked, err = other.TryLock()
+	require.NoError(t, err)
+	assert.True(t, locked, "the next Connection of this process must be able to manage resolv.conf")
+	require.NoError(t, other.Close())
+	journal, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err, "a journal that could not be reconciled must be kept")
+	assert.Equal(t, cliconfigv1.ConnectionCleanup_CLEANING, journal.Phase)
+	assert.Equal(t, original, journal.GetDns().GetResolvConf().GetContent())
+	require.NoError(t, os.Remove(c.resolvConf.path))
+	require.NoError(t, os.WriteFile(c.resolvConf.path, installed, 0644))
+	c.ReconcileCleanup()
+	b, err := os.ReadFile(c.resolvConf.path)
+	require.NoError(t, err)
+	assert.Equal(t, original, b)
+	_, err = dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
+func TestControllerReconcileCleanupOnlyAfterFailedClose(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_V4)
+	dbC := newTestReliabilityCleanupDB(t, c)
+	stale := &cliconfigv1.ConnectionCleanup{
+		Id: "stale-cleanup", Phase: cliconfigv1.ConnectionCleanup_CLEANING,
+		Metadata: map[string]string{"pid": strconv.Itoa(os.Getpid())},
+	}
+	require.NoError(t, dbC.SetConnectionCleanup("example.com", stale))
+	c.ReconcileCleanup()
+	saved, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(stale, saved), "a running controller must not reconcile the cleanup state")
+	require.NoError(t, c.Close())
+	c.ReconcileCleanup()
+	saved, err = dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(stale, saved), "a cleanly closed controller must not reconcile the cleanup state")
+}
+
+func TestControllerReconcileCleanupKeepsJournalOfRunningProcess(t *testing.T) {
+	c, sshDir := newTestReliabilitySSHController(t)
+	dbC := newTestReliabilityCleanupDB(t, c)
+	owned := &cliconfigv1.ConnectionCleanup{
+		Id: "running-owner", Phase: cliconfigv1.ConnectionCleanup_ACTIVE,
+		Metadata: map[string]string{"pid": strconv.Itoa(os.Getppid())},
+		Ssh: &cliconfigv1.ConnectionCleanup_SSH{
+			Marker:    "octelium-managed:example.com",
+			FilePaths: []string{filepath.Join(sshDir, "authorized_keys")},
+		},
+	}
+	require.NoError(t, dbC.SetConnectionCleanup("example.com", owned))
+	c.prepareCleanup()
+	require.Nil(t, c.cleanup)
+	require.NoError(t, os.Mkdir(filepath.Join(sshDir, "known_hosts"), 0700))
+	require.Error(t, c.Close())
+	c.ReconcileCleanup()
+	saved, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(owned, saved), "the cleanup state of another running process must be left to that process")
+}
+
+func TestControllerReconcileCleanupWithoutJournalDB(t *testing.T) {
+	c, sshDir := newTestReliabilitySSHController(t)
+	require.NoError(t, os.Mkdir(filepath.Join(sshDir, "known_hosts"), 0700))
+	c.prepareCleanup()
+	require.Nil(t, c.cleanup)
+	closeErr := c.Close()
+	require.Error(t, closeErr)
+	assert.NotPanics(t, c.ReconcileCleanup)
+	assert.Equal(t, closeErr, c.Close())
 }
 
 func TestControllerReliabilityKnownIssues(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync/atomic"
@@ -183,6 +184,66 @@ func TestDaemonShutdownWhileReconnectingReleasesConnection(t *testing.T) {
 	stopped := attempts.Load()
 	time.Sleep(6 * time.Second)
 	assert.Equal(t, stopped, attempts.Load(), "a closed daemon must stop reconnecting")
+}
+
+func TestDaemonKeepsReconnectingWhenConnectionCleanupFails(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test forces the Linux gVisor implementation")
+	}
+	var attempts atomic.Int32
+	drop := make(chan struct{})
+	api := &testDaemonClusterAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testDaemonInitialState()); err != nil {
+			return err
+		}
+		if attempt == 1 {
+			select {
+			case <-drop:
+				return status.Error(codes.Unavailable, "API Server restart")
+			case <-stream.Context().Done():
+				return nil
+			}
+		}
+		<-stream.Context().Done()
+		return nil
+	}}
+	socket := setTestDaemonReliabilityAPISocket(t)
+	startTestDaemonReliabilityAPI(t, socket, api)
+	srv := newTestServer(t)
+	authenticateTestDaemonDomain(t, srv)
+	userHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(userHome, ".ssh", "known_hosts"), 0700))
+	srv.srv.principal.mu.Lock()
+	srv.srv.principal.homeDir = userHome
+	srv.srv.principal.mu.Unlock()
+	dbC := srv.srv.principal.dbC
+	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
+	defer cancel()
+	connectTestDaemonReliabilityDomain(t, ctx, srv)
+	connected := waitTestDaemonReliabilityState(t, ctx, srv, daemonv1.ConnectionStatus_CONNECTED, 10*time.Second)
+	first, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	close(drop)
+	reconnecting := waitTestDaemonReliabilityState(t, ctx, srv, daemonv1.ConnectionStatus_RECONNECTING, 10*time.Second)
+	require.NotNil(t, reconnecting.LastError)
+	assert.True(t, reconnecting.LastError.Retryable)
+	recovered := waitTestDaemonReliabilityState(t, ctx, srv, daemonv1.ConnectionStatus_CONNECTED, 15*time.Second)
+	assert.Nil(t, recovered.LastError)
+	assert.Equal(t, connected.Connection.ConnectedAt.AsTime(), recovered.Connection.ConnectedAt.AsTime())
+	assert.Equal(t, int32(2), attempts.Load())
+	second, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Id, second.Id, "the incomplete cleanup must be reconciled before the daemon reconnects")
+	assert.Equal(t, cliconfigv1.ConnectionCleanup_ACTIVE, second.Phase)
+	assert.Equal(t, strconv.Itoa(os.Getpid()), second.Metadata["pid"])
+	_, err = srv.c.Disconnect(ctx, &daemonv1.DisconnectRequest{Domain: "example.com"})
+	require.NoError(t, err)
+	waitTestDaemonReliabilityState(t, ctx, srv, daemonv1.ConnectionStatus_DISCONNECTED, 10*time.Second)
+	assert.Equal(t, int32(2), attempts.Load())
 }
 
 func getTestDaemonDeadPID(t *testing.T) int {

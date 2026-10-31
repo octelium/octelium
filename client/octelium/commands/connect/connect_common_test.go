@@ -1652,11 +1652,14 @@ func TestRunGRPCStateUpdateFailureHonorsCancellation(t *testing.T) {
 	assert.True(t, dbC.ErrorIsNotFound(err))
 }
 
-func TestRunGRPCStateUpdateFailureStopsIfCleanupFails(t *testing.T) {
+func TestRunGRPCStateUpdateFailureReconnectsIfCleanupFails(t *testing.T) {
 	var attempts atomic.Int32
-	ready := make(chan struct{})
+	ready := make(chan struct{}, 1)
 	c, dbC := newTestRunningConnector(t, &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
-		attempts.Add(1)
+		attempt := attempts.Add(1)
+		if attempt > 2 {
+			return status.Error(codes.Internal, "unexpected extra connection")
+		}
 		if _, err := stream.Recv(); err != nil {
 			return err
 		}
@@ -1668,26 +1671,38 @@ func TestRunGRPCStateUpdateFailureStopsIfCleanupFails(t *testing.T) {
 		case <-stream.Context().Done():
 			return nil
 		}
-		if err := stream.Send(testInvalidStateUpdate()); err != nil {
+		msg := testInvalidStateUpdate()
+		if attempt == 2 {
+			msg = &userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{
+				Disconnect: &userv1.ConnectResponse_Disconnect{},
+			}}
+		}
+		if err := stream.Send(msg); err != nil {
 			return err
 		}
 		<-stream.Context().Done()
 		return nil
 	}})
 	require.NoError(t, os.MkdirAll(filepath.Join(c.opts.UserHome, ".ssh", "known_hosts"), 0700))
-	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 5*time.Second)
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 15*time.Second)
 	defer cancel()
 	var events []EventType
 	c.opts.OnEvent = func(ev *Event) {
 		events = append(events, ev.Type)
 		if ev.Type == EventTypeConnected {
-			close(ready)
+			ready <- struct{}{}
+		}
+		if ev.Type == EventTypeReconnecting {
+			assert.ErrorContains(t, ev.Err, "Could not apply connection state")
+			_, err := dbC.GetConnectionCleanup("example.com")
+			assert.True(t, dbC.ErrorIsNotFound(err), "the incomplete cleanup must be reconciled before reconnecting")
 		}
 	}
 	err := c.Run(ctx)
-	assert.ErrorContains(t, err, "Could not apply connection state")
-	assert.Equal(t, int32(1), attempts.Load())
-	assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeDisconnected}, events)
+	assert.ErrorContains(t, err, "Could not cleanly close the controller")
+	assert.NoError(t, ctx.Err())
+	assert.Equal(t, int32(2), attempts.Load())
+	assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeReconnecting, EventTypeConnected, EventTypeDisconnected}, events)
 	journal, err := dbC.GetConnectionCleanup("example.com")
 	require.NoError(t, err)
 	assert.Equal(t, cliconfigv1.ConnectionCleanup_CLEANING, journal.Phase)

@@ -20,15 +20,19 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/db"
+	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -425,6 +429,342 @@ func TestRunGRPCStaleDisconnectAfterReconnectIsIgnored(t *testing.T) {
 		require.FailNow(t, "a Disconnect of the current connection did not stop the client")
 	}
 	assert.Equal(t, int32(2), attempts.Load())
+}
+
+func testReliabilitySSHState() *userv1.ConnectResponse {
+	msg := testConnectInitialState()
+	msg.GetState().ServiceConfigs = []*userv1.ConnectionState_ServiceConfig{{
+		Type: &userv1.ConnectionState_ServiceConfig_Ssh{Ssh: &userv1.ConnectionState_ServiceConfig_SSH{
+			KnownHosts:     []string{"@cert-authority * ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample"},
+			AuthorizedKeys: []string{"cert-authority ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample"},
+		}},
+	}}
+	return msg
+}
+
+func TestRunGRPCCleanupFailureKeepsReconnecting(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		setup func(t *testing.T, sshDir string)
+	}{
+		{"known-hosts-directory", func(t *testing.T, sshDir string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(sshDir, "known_hosts"), 0700))
+		}},
+		{"unreadable-known-hosts", func(t *testing.T, sshDir string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root can read files without read permissions")
+			}
+			require.NoError(t, os.MkdirAll(sshDir, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(sshDir, "known_hosts"), []byte("example.org ssh-ed25519 AAAA\n"), 0))
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			connected := make(chan struct{}, 1)
+			srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+				attempt := attempts.Add(1)
+				if attempt > 2 {
+					return status.Error(codes.Internal, "unexpected extra connection")
+				}
+				if _, err := stream.Recv(); err != nil {
+					return err
+				}
+				if err := stream.Send(testConnectInitialState()); err != nil {
+					return err
+				}
+				select {
+				case <-connected:
+				case <-stream.Context().Done():
+					return nil
+				}
+				if attempt == 1 {
+					return status.Error(codes.Unavailable, "API Server restart")
+				}
+				if err := stream.Send(&userv1.ConnectResponse{Event: &userv1.ConnectResponse_Disconnect_{
+					Disconnect: &userv1.ConnectResponse_Disconnect{},
+				}}); err != nil {
+					return err
+				}
+				<-stream.Context().Done()
+				return nil
+			}}
+			c, dbC, socket := newTestReliabilityConnector(t, &Opts{})
+			tt.setup(t, filepath.Join(c.opts.UserHome, ".ssh"))
+			startTestReliabilityAPI(t, socket, srv)
+			ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 20*time.Second)
+			defer cancel()
+			var events []EventType
+			var journalIDs []string
+			c.opts.OnEvent = func(ev *Event) {
+				events = append(events, ev.Type)
+				switch ev.Type {
+				case EventTypeConnected:
+					journal, err := dbC.GetConnectionCleanup("example.com")
+					if assert.NoError(t, err, "every Connection must have its own cleanup state") {
+						assert.Equal(t, cliconfigv1.ConnectionCleanup_ACTIVE, journal.Phase)
+						assert.Equal(t, strconv.Itoa(os.Getpid()), journal.Metadata["pid"])
+						journalIDs = append(journalIDs, journal.Id)
+					}
+					connected <- struct{}{}
+				case EventTypeReconnecting:
+					assert.Equal(t, codes.Unavailable, status.Code(ev.Err))
+					_, err := dbC.GetConnectionCleanup("example.com")
+					assert.True(t, dbC.ErrorIsNotFound(err), "the incomplete cleanup must be reconciled before reconnecting")
+				}
+			}
+			err := c.Run(ctx)
+			assert.ErrorContains(t, err, "Could not cleanly close the controller")
+			assert.NoError(t, ctx.Err())
+			assert.Equal(t, int32(2), attempts.Load())
+			assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeReconnecting,
+				EventTypeConnected, EventTypeDisconnected}, events)
+			require.Len(t, journalIDs, 2)
+			assert.NotEqual(t, journalIDs[0], journalIDs[1])
+			journal, err := dbC.GetConnectionCleanup("example.com")
+			require.NoError(t, err, "a cleanup failure on exit must leave the cleanup state for the next launch")
+			assert.Equal(t, journalIDs[1], journal.Id)
+			assert.Equal(t, cliconfigv1.ConnectionCleanup_CLEANING, journal.Phase)
+		})
+	}
+}
+
+func TestRunGRPCPersistentCleanupFailureKeepsReconnecting(t *testing.T) {
+	var attempts atomic.Int32
+	connected := make(chan struct{}, 1)
+	started := make(chan time.Time, 4)
+	srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if attempt > 4 {
+			return status.Error(codes.Internal, "unexpected extra connection")
+		}
+		started <- time.Now()
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testReliabilitySSHState()); err != nil {
+			return err
+		}
+		select {
+		case <-connected:
+		case <-stream.Context().Done():
+			return nil
+		}
+		if attempt < 4 {
+			return status.Error(codes.Unavailable, "API Server restart")
+		}
+		<-stream.Context().Done()
+		return nil
+	}}
+	c, dbC, socket := newTestReliabilityConnector(t, &Opts{})
+	t.Setenv("TMPDIR", t.TempDir())
+	sshDir := filepath.Join(c.opts.UserHome, ".ssh")
+	require.NoError(t, os.MkdirAll(filepath.Join(sshDir, "known_hosts"), 0700))
+	authorizedKeys := filepath.Join(sshDir, "authorized_keys")
+	startTestReliabilityAPI(t, socket, srv)
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 30*time.Second)
+	defer cancel()
+	var connections, reconnections int
+	var pendingID string
+	c.opts.OnEvent = func(ev *Event) {
+		switch ev.Type {
+		case EventTypeConnected:
+			connections++
+			b, err := os.ReadFile(authorizedKeys)
+			if assert.NoError(t, err) {
+				assert.Equal(t, 1, strings.Count(string(b), "cert-authority"),
+					"every Connection must install the Cluster CA exactly once")
+			}
+			journal, err := dbC.GetConnectionCleanup("example.com")
+			if assert.NoError(t, err) {
+				if pendingID == "" {
+					pendingID = journal.Id
+				}
+				assert.Equal(t, pendingID, journal.Id, "a pending cleanup state must never be overwritten")
+			}
+			if connections == 4 {
+				cancel()
+				return
+			}
+			connected <- struct{}{}
+		case EventTypeReconnecting:
+			reconnections++
+			assert.Equal(t, codes.Unavailable, status.Code(ev.Err))
+			b, err := os.ReadFile(authorizedKeys)
+			if assert.NoError(t, err) {
+				assert.NotContains(t, string(b), "cert-authority",
+					"the parts of the cleanup that can succeed must still be applied")
+			}
+			journal, err := dbC.GetConnectionCleanup("example.com")
+			if assert.NoError(t, err, "a cleanup state that could not be reconciled must be kept") {
+				assert.Equal(t, pendingID, journal.Id)
+				assert.Equal(t, cliconfigv1.ConnectionCleanup_CLEANING, journal.Phase)
+			}
+		}
+	}
+	assert.Error(t, c.Run(ctx), "a cleanup failure on exit must be reported")
+	assert.Equal(t, int32(4), attempts.Load())
+	assert.Equal(t, 4, connections)
+	assert.Equal(t, 3, reconnections)
+	require.Len(t, started, 4)
+	previous := <-started
+	for range 3 {
+		current := <-started
+		assert.GreaterOrEqual(t, current.Sub(previous), reconnectBackoffMin)
+		previous = current
+	}
+}
+
+func TestRunGRPCStartFailureWithCleanupFailureReconcilesBeforeRetrying(t *testing.T) {
+	var attempts atomic.Int32
+	srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempt := attempts.Add(1)
+		if attempt > 2 {
+			return status.Error(codes.Internal, "unexpected extra connection")
+		}
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		state := testConnectInitialState()
+		if attempt == 1 {
+			state.GetState().Addresses[0].V4 = "invalid"
+		}
+		if err := stream.Send(state); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}}
+	c, dbC, socket := newTestReliabilityConnector(t, &Opts{})
+	require.NoError(t, os.MkdirAll(filepath.Join(c.opts.UserHome, ".ssh", "known_hosts"), 0700))
+	startTestReliabilityAPI(t, socket, srv)
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 20*time.Second)
+	defer cancel()
+	var events []EventType
+	c.opts.OnEvent = func(ev *Event) {
+		events = append(events, ev.Type)
+		switch ev.Type {
+		case EventTypeConnecting:
+			if ev.Err == nil {
+				return
+			}
+			assert.ErrorContains(t, ev.Err, "Could not start controller")
+			_, err := dbC.GetConnectionCleanup("example.com")
+			assert.True(t, dbC.ErrorIsNotFound(err), "the incomplete cleanup must be reconciled before retrying")
+		case EventTypeConnected:
+			journal, err := dbC.GetConnectionCleanup("example.com")
+			if assert.NoError(t, err, "the retried Connection must have its own cleanup state") {
+				assert.Equal(t, cliconfigv1.ConnectionCleanup_ACTIVE, journal.Phase)
+				assert.Equal(t, strconv.Itoa(os.Getpid()), journal.Metadata["pid"])
+			}
+			cancel()
+		}
+	}
+	assert.Error(t, c.Run(ctx))
+	assert.Equal(t, int32(2), attempts.Load())
+	assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnecting, EventTypeConnected, EventTypeDisconnected}, events)
+}
+
+func TestRunGRPCCleanupFailureOnShutdownKeepsJournalForNextLaunch(t *testing.T) {
+	var attempts atomic.Int32
+	srv := &testConnectAPI{connectFn: func(stream userv1.MainService_ConnectServer) error {
+		attempts.Add(1)
+		if _, err := stream.Recv(); err != nil {
+			return err
+		}
+		if err := stream.Send(testConnectInitialState()); err != nil {
+			return err
+		}
+		<-stream.Context().Done()
+		return nil
+	}}
+	c, dbC, socket := newTestReliabilityConnector(t, &Opts{})
+	knownHosts := filepath.Join(c.opts.UserHome, ".ssh", "known_hosts")
+	require.NoError(t, os.MkdirAll(knownHosts, 0700))
+	startTestReliabilityAPI(t, socket, srv)
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 15*time.Second)
+	defer cancel()
+	var events []EventType
+	c.opts.OnEvent = func(ev *Event) {
+		events = append(events, ev.Type)
+		if ev.Type == EventTypeConnected {
+			cancel()
+		}
+	}
+	assert.ErrorContains(t, c.Run(ctx), "known_hosts")
+	assert.Equal(t, int32(1), attempts.Load())
+	assert.Equal(t, []EventType{EventTypeConnecting, EventTypeConnected, EventTypeDisconnected}, events)
+	journal, err := dbC.GetConnectionCleanup("example.com")
+	require.NoError(t, err, "a cleanup failure on exit must leave the cleanup state for the next launch")
+	assert.Equal(t, cliconfigv1.ConnectionCleanup_CLEANING, journal.Phase)
+	require.NoError(t, os.Remove(knownHosts))
+	controller.ReconcileConnectionCleanup(dbC, "example.com")
+	_, err = dbC.GetConnectionCleanup("example.com")
+	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
+func TestRunGRPCCleanupFailureRebuildsLocalListeners(t *testing.T) {
+	publishedAddr, dnsAddr := getTestReliabilityFreeAddrs(t)
+	_, publishedPortStr, err := net.SplitHostPort(publishedAddr)
+	require.NoError(t, err)
+	publishedPort, err := net.LookupPort("tcp", publishedPortStr)
+	require.NoError(t, err)
+	drop := make(chan struct{})
+	var attempts atomic.Int32
+	srv := &testConnectAPI{
+		connectFn: func(stream userv1.MainService_ConnectServer) error {
+			attempts.Add(1)
+			if _, err := stream.Recv(); err != nil {
+				return err
+			}
+			if err := stream.Send(testConnectInitialState()); err != nil {
+				return err
+			}
+			select {
+			case <-drop:
+				return status.Error(codes.Unavailable, "API Server restart")
+			case <-stream.Context().Done():
+				return nil
+			}
+		},
+		getServiceFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+			return testPublishedAPIService(req.Name, userv1.Service_Spec_TCP, 8080), nil
+		},
+	}
+	c, dbC, socket := newTestReliabilityConnector(t, &Opts{
+		UseLocalDNS:        true,
+		LocalDNSListenAddr: dnsAddr,
+		PublishServices:    []*PublishedService{{Name: "web", Address: "127.0.0.1", Port: publishedPort}},
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(c.opts.UserHome, ".ssh", "known_hosts"), 0700))
+	startTestReliabilityAPI(t, socket, srv)
+	baseline := runtime.NumGoroutine()
+	ctx, cancel := context.WithTimeout(cliutils.WithDB(t.Context(), dbC), 60*time.Second)
+	defer cancel()
+	events, done := runTestReliabilityConnector(t, ctx, c)
+	for cycle := range 3 {
+		waitTestReliabilityEvent(t, events, EventTypeConnected, 15*time.Second)
+		require.Eventually(t, func() bool {
+			return testReliabilityDNSReady(dnsAddr) && testReliabilityTCPListening(publishedAddr)
+		}, 5*time.Second, 20*time.Millisecond, "the local listeners must serve again after reconnection %d", cycle)
+		drop <- struct{}{}
+		ev := waitTestReliabilityEvent(t, events, EventTypeReconnecting, 10*time.Second)
+		assert.Equal(t, codes.Unavailable, status.Code(ev.Err))
+		assert.False(t, testReliabilityDNSReady(dnsAddr), "an incomplete cleanup must still release the local DNS server")
+		assert.False(t, testReliabilityTCPListening(publishedAddr), "an incomplete cleanup must still release the published port")
+	}
+	waitTestReliabilityEvent(t, events, EventTypeConnected, 15*time.Second)
+	assert.Equal(t, int32(4), attempts.Load())
+	cancel()
+	assert.ErrorContains(t, <-done, "known_hosts")
+	tcpLis, err := net.Listen("tcp", publishedAddr)
+	require.NoError(t, err, "a stopped client must release its published port")
+	assert.NoError(t, tcpLis.Close())
+	udpLis, err := net.ListenPacket("udp", dnsAddr)
+	require.NoError(t, err, "a stopped client must release its local DNS port")
+	assert.NoError(t, udpLis.Close())
+	assert.Eventually(t, func() bool {
+		return runtime.NumGoroutine() <= baseline+8
+	}, 10*time.Second, 50*time.Millisecond, "repeated reconnections after incomplete cleanups must not leak goroutines")
 }
 
 func TestReliabilityKnownIssues(t *testing.T) {

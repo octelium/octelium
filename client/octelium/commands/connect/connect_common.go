@@ -815,6 +815,9 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 
 	if err := ctl.start(ctx); err != nil {
 		zap.L().Warn("Could not start controller", zap.Error(err))
+		if ctx.Err() == nil {
+			ctl.devCtl.ReconcileCleanup()
+		}
 		return tryConnectRet{
 			err:            errors.Wrap(err, "Could not start controller"),
 			needsReconnect: ctx.Err() == nil,
@@ -824,9 +827,11 @@ func (c *Connector) tryConnect(ctx context.Context) (ret tryConnectRet) {
 		if err := ctl.close(); err != nil {
 			zap.L().Warn("Could not cleanly close the controller", zap.Error(err))
 			ret.cleanupErr = err
-			ret.needsReconnect = false
 			if ret.err == nil {
 				ret.err = errors.Errorf("Could not cleanly close the controller: %+v", err)
+			}
+			if ret.needsReconnect && ctx.Err() == nil {
+				ctl.devCtl.ReconcileCleanup()
 			}
 		}
 	}()

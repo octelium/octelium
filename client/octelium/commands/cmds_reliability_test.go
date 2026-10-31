@@ -303,3 +303,83 @@ func TestClientReliabilityE2E(t *testing.T) {
 		assertTestReliabilityCommandReleased(t, dnsAddr, "")
 	})
 }
+
+func TestClientCleanupFailureE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("building and exercising the client executable")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("these tests force the Linux gVisor implementation and use Unix signals")
+	}
+	binary := filepath.Join(t.TempDir(), "octelium")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "..")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	for _, tt := range []struct {
+		name  string
+		setup func(t *testing.T, sshDir string)
+	}{
+		{"KnownHostsDirectory", func(t *testing.T, sshDir string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(sshDir, "known_hosts"), 0700))
+		}},
+		{"UnreadableKnownHosts", func(t *testing.T, sshDir string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root can read files without read permissions")
+			}
+			require.NoError(t, os.MkdirAll(sshDir, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(sshDir, "known_hosts"), []byte("example.org ssh-ed25519 AAAA\n"), 0))
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			userHome := t.TempDir()
+			tt.setup(t, filepath.Join(userHome, ".ssh"))
+			dnsAddr, publishedAddr := getTestReliabilityCommandAddrs(t)
+			_, publishedPort, err := net.SplitHostPort(publishedAddr)
+			require.NoError(t, err)
+			var attempts atomic.Int32
+			drops := make(chan struct{})
+			srv := &testCommandAPI{
+				connectFn: func(stream userv1.MainService_ConnectServer) error {
+					attempts.Add(1)
+					if _, err := stream.Recv(); err != nil {
+						return err
+					}
+					if err := stream.Send(testCommandInitialState()); err != nil {
+						return err
+					}
+					select {
+					case <-drops:
+						return status.Error(codes.Unavailable, "API Server restart")
+					case <-stream.Context().Done():
+						return nil
+					}
+				},
+				getServiceFn: func(_ context.Context, req *metav1.GetOptions) (*userv1.Service, error) {
+					return testReliabilityCommandService(req), nil
+				},
+			}
+			socket := newTestCommandSocket(t)
+			startTestReliabilityCommandAPI(t, socket, srv)
+			p := startTestCommand(t, binary,
+				[]string{"OCTELIUM_AUTH_PROXY_SOCKET=" + socket, "OCTELIUM_USER_HOME=" + userHome},
+				"connect", "--domain", "example.com", "--homedir", t.TempDir(), "--ip-mode", "v4",
+				"--no-dns", "--implementation", "gvisor", "--localdns", "--localdns-addr", dnsAddr,
+				"-p", "web:127.0.0.1:"+publishedPort)
+			for cycle := range 2 {
+				require.Eventually(t, func() bool {
+					return attempts.Load() == int32(cycle+1) &&
+						testCommandDNSReady(dnsAddr) && testReliabilityCommandListening(publishedAddr)
+				}, 15*time.Second, 20*time.Millisecond, "cycle %d", cycle)
+				drops <- struct{}{}
+			}
+			require.Eventually(t, func() bool {
+				return attempts.Load() == 3 && testCommandDNSReady(dnsAddr) && testReliabilityCommandListening(publishedAddr)
+			}, 15*time.Second, 20*time.Millisecond, "an incomplete cleanup must not stop the client from reconnecting")
+			requireTestReliabilityCommandRunning(t, p)
+			require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
+			assert.Error(t, p.wait(t, 5*time.Second), "a cleanup failure on exit must still be reported")
+			assert.Equal(t, 3, strings.Count(p.output.String(), "Connected successfully"))
+			assertTestReliabilityCommandReleased(t, dnsAddr, publishedAddr)
+		})
+	}
+}
