@@ -44,3 +44,7 @@ func TestE2EVigilRegression(t *testing.T) {
 func TestE2EClientRegression(t *testing.T) {
 	suite.Run(t, suite.ClientRegressionPhases())
 }
+
+func TestE2EClientReliability(t *testing.T) {
+	suite.Run(t, suite.ClientReliabilityPhases())
+}
