@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -608,6 +609,114 @@ func TestGenerateCredentialToken(t *testing.T) {
 		})
 		assert.NotNil(t, err)
 		assert.True(t, grpcerr.IsInvalidArg(err), "%+v", err)
+	}
+}
+
+func TestCredentialSystemUser(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	srv := newFakeServer(tst.C)
+
+	sysUsr := tests.GenUser(nil)
+	sysUsr.Metadata.IsSystem = true
+	sysUsr, err = tst.C.OcteliumC.CoreC().CreateUser(ctx, sysUsr)
+	assert.Nil(t, err, "%+v", err)
+
+	usr := tstGenCredentialUser(ctx, t, srv, corev1.User_Spec_WORKLOAD)
+
+	credTypes := []corev1.Credential_Spec_Type{
+		corev1.Credential_Spec_AUTH_TOKEN,
+		corev1.Credential_Spec_OAUTH2,
+		corev1.Credential_Spec_ACCESS_TOKEN,
+	}
+
+	for _, typ := range credTypes {
+		_, err := srv.CreateCredential(ctx, tstGenCredential(sysUsr.Metadata.Name, typ))
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthorized(err), "%+v", err)
+	}
+
+	{
+		itemList, err := srv.ListCredential(ctx, &corev1.ListCredentialOptions{
+			UserRef: umetav1.GetObjectReference(sysUsr),
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, len(itemList.Items))
+	}
+
+	{
+		cred, err := srv.CreateCredential(ctx, tstGenCredential(usr.Metadata.Name, corev1.Credential_Spec_AUTH_TOKEN))
+		assert.Nil(t, err, "%+v", err)
+
+		item := tstCloneCredential(cred)
+		item.Spec.User = sysUsr.Metadata.Name
+		_, err = srv.UpdateCredential(ctx, item)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthorized(err), "%+v", err)
+
+		cred, err = srv.GetCredential(ctx, &metav1.GetOptions{Uid: cred.Metadata.Uid})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, usr.Metadata.Uid, cred.Status.UserRef.Uid)
+	}
+
+	for _, typ := range credTypes {
+		cred, err := tst.C.OcteliumC.CoreC().CreateCredential(ctx, &corev1.Credential{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Credential_Spec{
+				User: sysUsr.Metadata.Name,
+				Type: typ,
+			},
+			Status: &corev1.Credential_Status{
+				UserRef: umetav1.GetObjectReference(sysUsr),
+				Id:      utilrand.GetRandomStringCanonical(8),
+				TokenID: vutils.UUIDv4(),
+			},
+		})
+		assert.Nil(t, err, "%+v", err)
+
+		_, err = srv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
+			CredentialRef: umetav1.GetObjectReference(cred),
+		})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthorized(err), "%+v", err)
+
+		ret, err := srv.GetCredential(ctx, &metav1.GetOptions{Uid: cred.Metadata.Uid})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, cred.Status.TokenID, ret.Status.TokenID)
+		assert.Equal(t, uint32(0), ret.Status.TotalRotations)
+		assert.Nil(t, ret.Status.LastRotationAt)
+
+		sessList, err := srv.ListSession(ctx, &corev1.ListSessionOptions{
+			UserRef: umetav1.GetObjectReference(sysUsr),
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 0, len(sessList.Items))
+
+		item := tstCloneCredential(ret)
+		item.Spec.IsDisabled = true
+		_, err = srv.UpdateCredential(ctx, item)
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsUnauthorized(err), "%+v", err)
+
+		itemList, err := srv.ListCredential(ctx, &corev1.ListCredentialOptions{
+			UserRef: umetav1.GetObjectReference(sysUsr),
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, 1, len(itemList.Items))
+
+		_, err = srv.DeleteCredential(ctx, &metav1.DeleteOptions{Uid: cred.Metadata.Uid})
+		assert.Nil(t, err, "%+v", err)
+
+		_, err = srv.GetCredential(ctx, &metav1.GetOptions{Uid: cred.Metadata.Uid})
+		assert.NotNil(t, err)
+		assert.True(t, grpcerr.IsNotFound(err), "%+v", err)
 	}
 }
 

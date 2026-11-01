@@ -161,6 +161,15 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 		return nil, serr.Internal("The Credential has no User")
 	}
 
+	usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(cred.Status.UserRef))
+	if err != nil {
+		return nil, grpcutils.K8sNotFoundOrInternalWithErr(err)
+	}
+
+	if err := checkCredentialUser(usr); err != nil {
+		return nil, err
+	}
+
 	cred.Status.TokenID = vutils.UUIDv4()
 	cred.Status.LastRotationAt = pbutils.Now()
 	cred.Status.TotalRotations = cred.Status.TotalRotations + 1
@@ -213,10 +222,6 @@ func (s *Server) GenerateCredentialToken(ctx context.Context, req *corev1.Genera
 		})
 		if err != nil {
 			return nil, serr.InternalWithErr(err)
-		}
-		usr, err := s.octeliumC.CoreC().GetUser(ctx, apivalidation.ObjectReferenceToRGetOptions(cred.Status.UserRef))
-		if err != nil {
-			return nil, grpcutils.K8sNotFoundOrInternalWithErr(err)
 		}
 
 		if len(sessList.Items) > 0 && !ucorev1.ToSession(sessList.Items[0]).IsExpired() {
@@ -386,6 +391,10 @@ func (s *Server) validateCredential(ctx context.Context, req *corev1.Credential)
 		return serr.InternalWithErr(err)
 	}
 
+	if err := checkCredentialUser(usr); err != nil {
+		return err
+	}
+
 	if req.Spec.Type == corev1.Credential_Spec_OAUTH2 && usr.Spec.Type != corev1.User_Spec_WORKLOAD {
 		return grpcutils.InvalidArg("OAUTH2 Credentials can only be used with WORKLOAD Users")
 	}
@@ -398,6 +407,15 @@ func (s *Server) validateCredential(ctx context.Context, req *corev1.Credential)
 
 	if err := s.validatePolicyOwner(ctx, req.Spec.Authorization); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func checkCredentialUser(usr *corev1.User) error {
+	if usr.Metadata.IsSystem {
+		return grpcutils.Unauthorized("The User %s is a system User and cannot be used by Credentials",
+			usr.Metadata.Name)
 	}
 
 	return nil
