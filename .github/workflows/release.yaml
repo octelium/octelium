@@ -443,7 +443,7 @@ jobs:
 
   package-macos:
     name: Package macOS
-    runs-on: macos-14
+    runs-on: macos-latest
     needs: build
     permissions:
       contents: read
