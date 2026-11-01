@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/components"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -100,34 +101,19 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		return err
 	}
 
-	if err := g.installOcteliumResources(ctx, clusterCfg, regionV); err != nil {
-		return err
+	isDefaultRegion := ucorev1.ToRegion(regionV).IsDefault()
+
+	if isDefaultRegion {
+		if err := g.upgradeClusterResources(ctx, clusterCfg, regionV); err != nil {
+			return err
+		}
+	} else {
+		zap.L().Debug("Skipping upgrading the Cluster resources outside the default Region",
+			zap.String("region", regionName))
 	}
 
 	if err := g.updateServicesUpgradeUID(ctx, regionV); err != nil {
 		zap.L().Warn("Could not updateServicesUpgradeUID", zap.Error(err))
-	}
-
-	if err := g.installBuiltinPolicies(ctx); err != nil {
-		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
-	}
-
-	if err := func(ctx context.Context) error {
-		if _, err := octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
-			Name: "sys:ssh-svc-seed",
-		}); err == nil {
-			return nil
-		} else if !grpcerr.IsNotFound(err) {
-			return err
-		}
-
-		if err := g.createSSHServiceSeedSecret(ctx); err != nil {
-			return err
-		}
-
-		return nil
-	}(ctx); err != nil {
-		zap.L().Warn("Could not createSSHServiceSeedSecret", zap.Error(err))
 	}
 
 	region, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Uid: regionV.Metadata.Uid})
@@ -154,11 +140,43 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		return err
 	}
 
-	if err := g.doPostUpgrade(ctx); err != nil {
-		zap.L().Warn("Could not doPostUpgrade", zap.Error(err))
+	if isDefaultRegion {
+		if err := g.doPostUpgrade(ctx); err != nil {
+			zap.L().Warn("Could not doPostUpgrade", zap.Error(err))
+		}
 	}
 
 	zap.L().Info("Upgrade successfully completed...")
+
+	return nil
+}
+
+func (g *Genesis) upgradeClusterResources(ctx context.Context, clusterCfg *corev1.ClusterConfig, region *corev1.Region) error {
+	if err := g.installOcteliumResources(ctx, clusterCfg, region); err != nil {
+		return err
+	}
+
+	if err := g.installBuiltinPolicies(ctx); err != nil {
+		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
+	}
+
+	if err := func(ctx context.Context) error {
+		if _, err := g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+			Name: "sys:ssh-svc-seed",
+		}); err == nil {
+			return nil
+		} else if !grpcerr.IsNotFound(err) {
+			return err
+		}
+
+		if err := g.createSSHServiceSeedSecret(ctx); err != nil {
+			return err
+		}
+
+		return nil
+	}(ctx); err != nil {
+		zap.L().Warn("Could not createSSHServiceSeedSecret", zap.Error(err))
+	}
 
 	return nil
 }

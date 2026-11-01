@@ -32,6 +32,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/genesisutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -442,6 +443,195 @@ func TestRunInit(t *testing.T) {
 			})
 			assert.Nil(t, err)
 			assert.Equal(t, regionHostname, region.Status.PublicHostname)
+		}
+
+		{
+			t.Setenv("OCTELIUM_REGION_NAME", "default")
+
+			joinedRegion, err := g.octeliumC.CoreC().CreateRegion(ctx, &corev1.Region{
+				Metadata: &metav1.Metadata{
+					Name:     "region-1",
+					IsSystem: true,
+				},
+				Spec: &corev1.Region_Spec{},
+				Status: &corev1.Region_Status{
+					Index: 1,
+				},
+			})
+			assert.Nil(t, err)
+
+			err = genesisutils.CreateOrUpdateService(ctx, g.octeliumC, &corev1.Service{
+				Metadata: &metav1.Metadata{
+					Name: "svc1.default",
+				},
+				Spec: &corev1.Service_Spec{
+					Port:   8080,
+					Mode:   corev1.Service_Spec_HTTP,
+					Region: joinedRegion.Metadata.Name,
+					Config: &corev1.Service_Spec_Config{
+						Upstream: &corev1.Service_Spec_Config_Upstream{
+							Type: &corev1.Service_Spec_Config_Upstream_Url{
+								Url: "https://example.com",
+							},
+						},
+					},
+				},
+			})
+			assert.Nil(t, err, "%+v", err)
+
+			portal, err := g.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+				Name: "portal.default",
+			})
+			assert.Nil(t, err)
+			portalUpgradeID := portal.Metadata.SystemLabels[vutils.UpgradeIDKey]
+			assert.NotEmpty(t, portalUpgradeID)
+
+			portal.Metadata.DisplayName = "Modified Portal"
+			_, err = g.octeliumC.CoreC().UpdateService(ctx, portal)
+			assert.Nil(t, err)
+
+			pol, err := g.octeliumC.CoreC().GetPolicy(ctx, &rmetav1.GetOptions{
+				Name: "allow-all",
+			})
+			assert.Nil(t, err)
+			_, err = g.octeliumC.CoreC().DeletePolicy(ctx, &rmetav1.DeleteOptions{
+				Uid: pol.Metadata.Uid,
+			})
+			assert.Nil(t, err)
+
+			seed, err := g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+				Name: "sys:ssh-svc-seed",
+			})
+			assert.Nil(t, err)
+			_, err = g.octeliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{
+				Uid: seed.Metadata.Uid,
+			})
+			assert.Nil(t, err)
+
+			defaultRegion, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+				Name: "default",
+			})
+			assert.Nil(t, err)
+
+			initSecret, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+
+			cJoin := newFakeClient()
+			gJoin := &Genesis{
+				k8sC: cJoin.K8sC,
+				nadC: cJoin.NadC,
+			}
+
+			_, err = cJoin.K8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
+				ObjectMeta: k8smetav1.ObjectMeta{
+					Name:      "octelium-init",
+					Namespace: vutils.K8sNS,
+				},
+				Data: map[string][]byte{
+					"bootstrap": initSecret.Data["bootstrap"],
+					"region":    pbutils.MarshalMust(joinedRegion),
+				},
+			}, k8smetav1.CreateOptions{})
+			assert.Nil(t, err)
+
+			err = gJoin.RunUpgrade(ctx, nil)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, joinedRegion.Metadata.Name, os.Getenv("OCTELIUM_REGION_NAME"))
+
+			for _, name := range []string{"octelium-ingress", "octelium-ingress-dataplane"} {
+				_, err = g.k8sC.AppsV1().Deployments(vutils.K8sNS).Get(ctx, name, k8smetav1.GetOptions{})
+				assert.Nil(t, err)
+				_, err = g.k8sC.CoreV1().Services(vutils.K8sNS).Get(ctx, name, k8smetav1.GetOptions{})
+				assert.Nil(t, err)
+
+				_, err = cJoin.K8sC.AppsV1().Deployments(vutils.K8sNS).Get(ctx, name, k8smetav1.GetOptions{})
+				assert.True(t, k8serr.IsNotFound(err), "%s: %+v", name, err)
+				_, err = cJoin.K8sC.CoreV1().Services(vutils.K8sNS).Get(ctx, name, k8smetav1.GetOptions{})
+				assert.True(t, k8serr.IsNotFound(err), "%s: %+v", name, err)
+			}
+
+			_, err = cJoin.K8sC.CoreV1().ConfigMaps(vutils.K8sNS).Get(ctx,
+				"ingress-dataplane-envoy-config", k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+			_, err = cJoin.K8sC.NetworkingV1().NetworkPolicies(vutils.K8sNS).Get(ctx,
+				"octelium-ingress", k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+
+			for _, name := range []string{"octelium-rscserver", "octelium-nocturne", "octelium-octovigil"} {
+				_, err = cJoin.K8sC.AppsV1().Deployments(vutils.K8sNS).Get(ctx, name, k8smetav1.GetOptions{})
+				assert.Nil(t, err, "%s: %+v", name, err)
+			}
+
+			_, err = cJoin.K8sC.AppsV1().DaemonSets(vutils.K8sNS).Get(ctx, "octelium-gwagent", k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+			_, err = cJoin.K8sC.NetworkingV1().NetworkPolicies(vutils.K8sNS).Get(ctx, "svc-upstream", k8smetav1.GetOptions{})
+			assert.Nil(t, err)
+
+			portal, err = g.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+				Name: "portal.default",
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, "Modified Portal", portal.Metadata.DisplayName)
+			assert.Equal(t, portalUpgradeID, portal.Metadata.SystemLabels[vutils.UpgradeIDKey])
+
+			_, err = g.octeliumC.CoreC().GetPolicy(ctx, &rmetav1.GetOptions{
+				Name: "allow-all",
+			})
+			assert.True(t, grpcerr.IsNotFound(err), "%+v", err)
+
+			_, err = g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+				Name: "sys:ssh-svc-seed",
+			})
+			assert.True(t, grpcerr.IsNotFound(err), "%+v", err)
+
+			svc1, err := g.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+				Name: "svc1.default",
+			})
+			assert.Nil(t, err)
+			svc1UpgradeID := svc1.Metadata.SystemLabels[vutils.UpgradeIDKey]
+			assert.NotEmpty(t, svc1UpgradeID)
+
+			joinedRegion, err = g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+				Uid: joinedRegion.Metadata.Uid,
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, ldflags.GetVersion(), joinedRegion.Status.VersionInfoMap["octelium"].Version)
+			assert.Equal(t, fmt.Sprintf("octelium-region-%s", strings.Split(joinedRegion.Metadata.Uid, "-")[4]),
+				joinedRegion.Status.PublicHostname)
+
+			rgn, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{
+				Name: "default",
+			})
+			assert.Nil(t, err)
+			assert.True(t, pbutils.IsEqual(defaultRegion, rgn))
+
+			err = g.RunUpgrade(ctx, nil)
+			assert.Nil(t, err, "%+v", err)
+			assert.Equal(t, "default", os.Getenv("OCTELIUM_REGION_NAME"))
+
+			portal, err = g.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+				Name: "portal.default",
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, "Octelium Portal Dashboard", portal.Metadata.DisplayName)
+			assert.NotEmpty(t, portal.Metadata.SystemLabels[vutils.UpgradeIDKey])
+			assert.NotEqual(t, portalUpgradeID, portal.Metadata.SystemLabels[vutils.UpgradeIDKey])
+
+			_, err = g.octeliumC.CoreC().GetPolicy(ctx, &rmetav1.GetOptions{
+				Name: "allow-all",
+			})
+			assert.Nil(t, err)
+
+			_, err = g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
+				Name: "sys:ssh-svc-seed",
+			})
+			assert.Nil(t, err)
+
+			svc1, err = g.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
+				Name: "svc1.default",
+			})
+			assert.Nil(t, err)
+			assert.Equal(t, svc1UpgradeID, svc1.Metadata.SystemLabels[vutils.UpgradeIDKey])
 		}
 	}
 }

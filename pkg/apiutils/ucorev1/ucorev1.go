@@ -261,6 +261,12 @@ func ToDevice(a *corev1.Device) *Device {
 	}
 }
 
+func ToRegion(a *corev1.Region) *Region {
+	return &Region{
+		Region: a,
+	}
+}
+
 func (s *Service) Name() string {
 	args := strings.Split(s.Metadata.Name, ".")
 	if len(args) == 0 {
@@ -1247,7 +1253,7 @@ func (c *Secret) GetCertificateChainAndKey() ([]byte, []byte, error) {
 }
 
 func (r *Region) IsDefault() bool {
-	return r.Metadata.Name == "default"
+	return r.GetMetadata().GetName() == "default"
 }
 
 type Authenticator struct {

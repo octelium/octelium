@@ -300,3 +300,20 @@ func TestDeviceIsPostureUsable(t *testing.T) {
 		assert.False(t, ToDevice(dev).IsPostureUsable(now))
 	}
 }
+
+func TestRegionIsDefault(t *testing.T) {
+	assert.False(t, ToRegion(nil).IsDefault())
+	assert.False(t, ToRegion(&corev1.Region{}).IsDefault())
+
+	assert.True(t, ToRegion(&corev1.Region{
+		Metadata: &metav1.Metadata{
+			Name: "default",
+		},
+	}).IsDefault())
+
+	assert.False(t, ToRegion(&corev1.Region{
+		Metadata: &metav1.Metadata{
+			Name: "region-1",
+		},
+	}).IsDefault())
+}

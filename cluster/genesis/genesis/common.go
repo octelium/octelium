@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/components"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -94,8 +95,10 @@ func (g *Genesis) installComponents(ctx context.Context,
 		}
 	}
 
-	if err := components.CreateIngress(ctx, opts); err != nil {
-		return err
+	if ucorev1.ToRegion(region).IsDefault() {
+		if err := components.CreateIngress(ctx, opts); err != nil {
+			return err
+		}
 	}
 
 	if err := components.InstallCommon(ctx, opts); err != nil {
