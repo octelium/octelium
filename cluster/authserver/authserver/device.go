@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"net"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -705,7 +704,7 @@ func (s *server) getIssuableProbes(ctx context.Context,
 			continue
 		}
 
-		if len(p.OsTypes) > 0 && !slices.Contains(p.OsTypes, dev.Status.OsType) {
+		if p.OsType == corev1.Device_Status_OS_TYPE_UNKNOWN || p.OsType != dev.Status.OsType {
 			continue
 		}
 

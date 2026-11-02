@@ -1103,12 +1103,13 @@ func TestRunDeviceProbe(t *testing.T) {
 				{
 					Id:       "dm1-cmd",
 					OwnerRef: ownerRef("dm1"),
-					OsTypes:  []corev1.Device_Status_OSType{corev1.Device_Status_LINUX},
+					OsType:   corev1.Device_Status_LINUX,
 					Type:     runCommand,
 				},
 				{
 					Id:       "dm1-cond-false",
 					OwnerRef: ownerRef("dm1"),
+					OsType:   corev1.Device_Status_LINUX,
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_Match{
 							Match: `1 == 2`,
@@ -1119,6 +1120,7 @@ func TestRunDeviceProbe(t *testing.T) {
 				{
 					Id:       "dm1-cond-true",
 					OwnerRef: ownerRef("dm1"),
+					OsType:   corev1.Device_Status_LINUX,
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_Match{
 							Match: fmt.Sprintf(`ctx.user.metadata.name == "%s" && ctx.device.status.osType == "LINUX"`,
@@ -1130,6 +1132,7 @@ func TestRunDeviceProbe(t *testing.T) {
 				{
 					Id:       "dm1-cond-session",
 					OwnerRef: ownerRef("dm1"),
+					OsType:   corev1.Device_Status_LINUX,
 					Condition: &corev1.Condition{
 						Type: &corev1.Condition_Match{
 							Match: `ctx.session.metadata.name != ""`,
@@ -1140,13 +1143,13 @@ func TestRunDeviceProbe(t *testing.T) {
 				{
 					Id:       "dm1-windows",
 					OwnerRef: ownerRef("dm1"),
-					OsTypes:  []corev1.Device_Status_OSType{corev1.Device_Status_WINDOWS},
+					OsType:   corev1.Device_Status_WINDOWS,
 					Type:     runCommand,
 				},
 				{
 					Id:       "dm1-registry",
 					OwnerRef: ownerRef("dm1"),
-					OsTypes:  []corev1.Device_Status_OSType{corev1.Device_Status_WINDOWS},
+					OsType:   corev1.Device_Status_WINDOWS,
 					Type: &corev1.ClusterConfig_Status_Device_Probe_ReadRegistry_{
 						ReadRegistry: &corev1.ClusterConfig_Status_Device_Probe_ReadRegistry{
 							Key:  `HKLM\SOFTWARE\Key`,
@@ -1155,30 +1158,41 @@ func TestRunDeviceProbe(t *testing.T) {
 					},
 				},
 				{
+					Id:       "dm1-no-os",
+					OwnerRef: ownerRef("dm1"),
+					Type:     runCommand,
+				},
+				{
 					Id:       "dm1-cmd",
 					OwnerRef: ownerRef("dm1"),
+					OsType:   corev1.Device_Status_LINUX,
 					Type:     runCommand,
 				},
 				{
 					OwnerRef: ownerRef("dm1"),
+					OsType:   corev1.Device_Status_LINUX,
 					Type:     runCommand,
 				},
 				{
-					Id:   "no-owner",
-					Type: runCommand,
+					Id:     "no-owner",
+					OsType: corev1.Device_Status_LINUX,
+					Type:   runCommand,
 				},
 				{
 					Id:       "dm1-empty",
 					OwnerRef: ownerRef("dm1"),
+					OsType:   corev1.Device_Status_LINUX,
 				},
 				{
 					Id:       "dm2-id",
 					OwnerRef: ownerRef("dm2"),
+					OsType:   corev1.Device_Status_LINUX,
 					Type:     platformIdentifier,
 				},
 				{
 					Id:       "dm2-file",
 					OwnerRef: ownerRef("dm2"),
+					OsType:   corev1.Device_Status_LINUX,
 					Type: &corev1.ClusterConfig_Status_Device_Probe_ReadFile_{
 						ReadFile: &corev1.ClusterConfig_Status_Device_Probe_ReadFile{
 							Path:     "/etc/machine-id",
