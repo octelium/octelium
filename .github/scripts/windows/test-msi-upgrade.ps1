@@ -72,14 +72,14 @@ try {
             Copy-Item native-tests/controller.test.exe -Destination $installPath
             $executable = Join-Path $installPath 'controller.test.exe'
             $legacyTest = 'TestWindowsNativeLegacyWireGuardDriver'
-            $tests = & $executable -test.list "^$legacyTest`$"
+            $tests = & $executable "-test.list=^$legacyTest`$"
             if ($LASTEXITCODE -ne 0 -or $tests -notcontains $legacyTest) {
                 throw 'The legacy driver migration test is missing'
             }
             $env:OCTELIUM_TEST_WINDOWS_DRIVERS = '1'
             $env:OCTELIUM_TEST_WINDOWS_LEGACY_DRIVER = '1'
             try {
-                & $executable -test.v -test.timeout=2m -test.run "^$legacyTest`$"
+                & $executable '-test.v' '-test.timeout=2m' "-test.run=^$legacyTest`$"
                 if ($LASTEXITCODE -ne 0) {
                     throw "Legacy driver setup failed: $LASTEXITCODE"
                 }
@@ -96,7 +96,7 @@ try {
     }
     Copy-Item native-tests/controller.test.exe -Destination $installPath
     $env:OCTELIUM_TEST_WINDOWS_DRIVERS = '1'
-    & (Join-Path $installPath 'controller.test.exe') -test.v -test.timeout=5m -test.run '^TestWindowsNative'
+    & (Join-Path $installPath 'controller.test.exe') '-test.v' '-test.timeout=5m' '-test.run=^TestWindowsNative'
     if ($LASTEXITCODE -ne 0) {
         throw "Installed driver tests failed: $LASTEXITCODE"
     }

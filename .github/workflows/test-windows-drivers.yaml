@@ -119,7 +119,7 @@ jobs:
           OCTELIUM_TEST_WINDOWS_DRIVERS: '1'
         run: |
           $ErrorActionPreference = 'Stop'
-          & ./native-tests/controller.test.exe -test.v -test.timeout=5m -test.run '^TestWindows'
+          & ./native-tests/controller.test.exe '-test.v' '-test.timeout=5m' '-test.run=^TestWindows'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Test MSI driver upgrade
