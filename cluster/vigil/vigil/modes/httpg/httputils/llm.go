@@ -610,6 +610,40 @@ type llmToolGroup struct {
 	FunctionDeclarations []json.RawMessage `json:"functionDeclarations"`
 }
 
+type llmGeminiEnvelope struct {
+	SystemInstruction      *llmGeminiContent   `json:"systemInstruction" alias:"system_instruction"`
+	Contents               []llmGeminiContent  `json:"contents"`
+	Content                *llmGeminiContent   `json:"content"`
+	Requests               []llmGeminiEnvelope `json:"requests"`
+	GenerateContentRequest *llmGeminiEnvelope  `json:"generateContentRequest" alias:"generate_content_request"`
+	CachedContent          json.RawMessage     `json:"cachedContent" alias:"cached_content"`
+
+	GenerationConfig *struct {
+		MaxOutputTokens json.RawMessage `json:"maxOutputTokens" alias:"max_output_tokens"`
+		ThinkingConfig  *struct {
+			ThinkingBudget  json.RawMessage `json:"thinkingBudget" alias:"thinking_budget"`
+			IncludeThoughts json.RawMessage `json:"includeThoughts" alias:"include_thoughts"`
+		} `json:"thinkingConfig" alias:"thinking_config"`
+	} `json:"generationConfig" alias:"generation_config"`
+
+	Tools []struct {
+		FunctionDeclarations json.RawMessage `json:"functionDeclarations" alias:"function_declarations"`
+	} `json:"tools"`
+
+	ToolConfig *struct {
+		FunctionCallingConfig *struct {
+			AllowedFunctionNames json.RawMessage `json:"allowedFunctionNames" alias:"allowed_function_names"`
+		} `json:"functionCallingConfig" alias:"function_calling_config"`
+	} `json:"toolConfig" alias:"tool_config"`
+}
+
+type llmGeminiContent struct {
+	Parts []struct {
+		FunctionCall     json.RawMessage `json:"functionCall" alias:"function_call"`
+		FunctionResponse json.RawMessage `json:"functionResponse" alias:"function_response"`
+	} `json:"parts"`
+}
+
 type llmTool struct {
 	Name        string          `json:"name"`
 	Function    *llmToolFn      `json:"function"`
@@ -779,6 +813,12 @@ func ParseLLMRequest(req *http.Request,
 		return ret
 	}
 
+	if ret.Protocol == corev1.Service_Spec_Config_LLM_GEMINI &&
+		hasLLMMemberAlias(body, reflect.TypeFor[llmGeminiEnvelope]()) {
+		ret.HasInvalidMembers = true
+		return ret
+	}
+
 	if len(env.Model) > 0 && ret.Model == "" && !ret.IsModelTooLong {
 		var v string
 		if err := json.Unmarshal(env.Model, &v); err != nil {
@@ -935,6 +975,36 @@ func unmarshalLLMObject(raw json.RawMessage, v any) error {
 }
 
 func hasLLMMemberAlias(raw json.RawMessage, typ reflect.Type) bool {
+	return hasLLMMemberAliasDepth(raw, typ, 0)
+}
+
+func hasLLMMemberAliasDepth(raw json.RawMessage, typ reflect.Type, depth int) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if depth > maxLLMWalkDepth {
+		return true
+	}
+
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() == reflect.Slice && typ.Elem().Kind() == reflect.Struct {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return false
+		}
+		for _, item := range items {
+			if hasLLMMemberAliasDepth(item, typ.Elem(), depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	if typ.Kind() != reflect.Struct {
+		return false
+	}
+
 	obj := make(map[string]json.RawMessage)
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return false
@@ -943,15 +1013,16 @@ func hasLLMMemberAlias(raw json.RawMessage, typ reflect.Type) bool {
 	for i := range typ.NumField() {
 		field := typ.Field(i)
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		alias := field.Tag.Get("alias")
 
 		for k := range obj {
-			if k != name && strings.EqualFold(k, name) {
+			if k != name && strings.EqualFold(k, name) ||
+				alias != "" && strings.EqualFold(k, alias) {
 				return true
 			}
 		}
 
-		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct &&
-			hasLLMMemberAlias(obj[name], field.Type.Elem()) {
+		if hasLLMMemberAliasDepth(obj[name], field.Type, depth+1) {
 			return true
 		}
 	}
@@ -1497,7 +1568,7 @@ func (w *llmToolCallWalker) addName(val any) {
 	w.names[name] = struct{}{}
 }
 
-var llmToolCallKeys = []string{"function", "toolUse", "functionCall"}
+var llmToolCallKeys = []string{"function", "toolUse", "functionCall", "function_call"}
 
 func (r *LLMResponse) setFromEnvelope(env *llmResponseEnvelope) {
 	for _, raw := range []json.RawMessage{env.ID, env.ResponseID} {

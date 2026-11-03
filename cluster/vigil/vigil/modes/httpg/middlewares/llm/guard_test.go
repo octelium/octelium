@@ -118,6 +118,12 @@ func serveGuard(t *testing.T, method, path, body string,
 		if out.Error != nil {
 			ret.errType = out.Error.Type
 		}
+	case corev1.Service_Spec_Config_LLM_GEMINI:
+		out := &geminiErrorResponse{}
+		assert.Nil(t, json.Unmarshal(rw.Body.Bytes(), out))
+		if out.Error != nil {
+			ret.errType = out.Error.Status
+		}
 	default:
 		out := &openAIErrorResponse{}
 		assert.Nil(t, json.Unmarshal(rw.Body.Bytes(), out))
@@ -371,6 +377,88 @@ func TestRebuildInvalidMembers(t *testing.T) {
 	assert.False(t, isNext)
 	assert.True(t, reqCtx.LLM.HasInvalidMembers)
 	assert.Equal(t, http.StatusBadRequest, rw.Code)
+}
+
+func TestGuardGeminiMemberAliases(t *testing.T) {
+	cfg := &corev1.Service_Spec_Config_LLM{
+		Protocol: corev1.Service_Spec_Config_LLM_GEMINI,
+	}
+
+	for _, body := range []string{
+		`{"system_instruction":{"parts":[{"text":"secret"}]}}`,
+		`{"generation_config":{"max_output_tokens":100000}}`,
+		`{"generationConfig":{"max_output_tokens":100000}}`,
+		`{"tools":[{"function_declarations":[{"name":"delete_db"}]}]}`,
+		`{"tool_config":{"functionCallingConfig":{"mode":"ANY"}}}`,
+		`{"toolConfig":{"function_calling_config":{"allowed_function_names":["delete_db"]}}}`,
+		`{"cached_content":"cachedContents/secret"}`,
+		`{"generate_content_request":{"contents":[]}}`,
+		`{"generateContentRequest":{"system_instruction":{"parts":[{"text":"secret"}]}}}`,
+		`{"contents":[{"parts":[{"function_call":{"name":"delete_db","args":{}}}]}]}`,
+		`{"generationConfig":{"maxOutputTokens":1,"max_output_tokens":100000}}`,
+	} {
+		res := serveGuard(t, http.MethodPost, geminiPath, body, nil, cfg)
+
+		assert.False(t, res.isNext, body)
+		assert.Equal(t, http.StatusBadRequest, res.code, body)
+		out := &geminiErrorResponse{}
+		assert.Nil(t, json.Unmarshal([]byte(res.body), out))
+		if assert.NotNil(t, out.Error, body) {
+			assert.Equal(t, http.StatusBadRequest, out.Error.Code, body)
+			assert.Equal(t, "INVALID_ARGUMENT", out.Error.Status, body)
+			assert.Contains(t, out.Error.Message, "ambiguous or invalid members", body)
+		}
+	}
+
+	assert.True(t, serveGuard(t, http.MethodPost, geminiPath, geminiSystemBody,
+		nil, cfg).isNext)
+}
+
+func TestRebuildGeminiMemberAliases(t *testing.T) {
+	for _, body := range []string{
+		`{"system_instruction":{"parts":[{"text":"secret"}]}}`,
+		`{"generation_config":{"max_output_tokens":100000}}`,
+		`{"generationConfig":{"max_output_tokens":100000}}`,
+		`{"tools":[{"function_declarations":[{"name":"delete_db"}]}]}`,
+		`{"tool_config":{"functionCallingConfig":{"mode":"ANY"}}}`,
+		`{"cached_content":"cachedContents/secret"}`,
+		`{"generateContentRequest":{"system_instruction":{"parts":[{"text":"secret"}]}}}`,
+	} {
+		ctx := context.Background()
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com"+geminiPath, strings.NewReader(geminiBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			Service:   newService(),
+			ServiceConfig: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Llm{Llm: &corev1.Service_Spec_Config_LLM{
+					Protocol: corev1.Service_Spec_Config_LLM_GEMINI,
+				}},
+			},
+			Body: []byte(geminiBody),
+			LLM: httputils.ParseLLMRequest(req,
+				corev1.Service_Spec_Config_LLM_GEMINI, []byte(geminiBody)),
+		}
+		reqCtx.SetBodyDigest()
+		req = req.WithContext(context.WithValue(ctx, middlewares.CtxRequestContext, reqCtx))
+		reqCtx.Body = []byte(body)
+
+		var isNext bool
+		mdlwr, err := NewRebuild(ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			isNext = true
+		}))
+		assert.Nil(t, err)
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		assert.False(t, isNext, body)
+		assert.True(t, reqCtx.LLM.HasInvalidMembers, body)
+		assert.Equal(t, http.StatusBadRequest, rw.Code, body)
+		assert.Contains(t, rw.Body.String(), "INVALID_ARGUMENT", body)
+	}
 }
 
 func TestGuardModelTooLong(t *testing.T) {

@@ -1093,6 +1093,139 @@ func TestParseLLMRequestInvalidMembers(t *testing.T) {
 	}
 }
 
+func TestParseLLMRequestGeminiMemberAliases(t *testing.T) {
+
+	for _, tst := range []struct {
+		name string
+		body string
+	}{
+		{"SystemInstruction", `{"system_instruction":{"parts":[{"text":"secret"}]}}`},
+		{"GenerationConfig", `{"generation_config":{"maxOutputTokens":100000}}`},
+		{"MaxOutputTokens", `{"generationConfig":{"max_output_tokens":100000}}`},
+		{"GenerationConfigAndMaxOutputTokens", `{"generation_config":{"max_output_tokens":100000}}`},
+		{"FunctionDeclarations", `{"tools":[{"function_declarations":[{"name":"delete_db"}]}]}`},
+		{"ToolConfig", `{"tool_config":{"functionCallingConfig":{"mode":"ANY"}}}`},
+		{"FunctionCallingConfig", `{"toolConfig":{"function_calling_config":{"mode":"ANY"}}}`},
+		{"AllowedFunctionNames", `{"toolConfig":{"functionCallingConfig":{"allowed_function_names":["delete_db"]}}}`},
+		{"CachedContent", `{"cached_content":"cachedContents/secret"}`},
+		{"GenerateContentRequest", `{"generate_content_request":{"contents":[]}}`},
+		{"NestedSystemInstruction", `{"generateContentRequest":{"system_instruction":{"parts":[{"text":"secret"}]}}}`},
+		{"NestedMaxOutputTokens", `{"generateContentRequest":{"generationConfig":{"max_output_tokens":100000}}}`},
+		{"NestedFunctionDeclarations", `{"generateContentRequest":{"tools":[{"function_declarations":[{"name":"delete_db"}]}]}}`},
+		{"BatchRequest", `{"requests":[{"content":{"parts":[{"function_call":{"name":"delete_db","args":{}}}]}}]}`},
+		{"FunctionCall", `{"contents":[{"parts":[{"function_call":{"name":"delete_db","args":{}}}]}]}`},
+		{"FunctionResponse", `{"contents":[{"parts":[{"function_response":{"name":"delete_db","response":{}}}]}]}`},
+		{"InstructionFunctionCall", `{"systemInstruction":{"parts":[{"function_call":{"name":"delete_db"}}]}}`},
+		{"ThinkingConfig", `{"generationConfig":{"thinking_config":{"thinkingBudget":100000}}}`},
+		{"ThinkingBudget", `{"generationConfig":{"thinkingConfig":{"thinking_budget":100000}}}`},
+		{"IncludeThoughts", `{"generationConfig":{"thinkingConfig":{"include_thoughts":true}}}`},
+		{"EscapedAlias", `{"system\u005finstruction":{"parts":[{"text":"secret"}]}}`},
+		{"CaseVariantAlias", `{"SYSTEM_INSTRUCTION":{"parts":[{"text":"secret"}]}}`},
+		{"NullAlias", `{"system_instruction":null}`},
+		{"NullNestedAlias", `{"generationConfig":{"max_output_tokens":null}}`},
+		{"BothSystemInstructions", `{"systemInstruction":null,"system_instruction":{"parts":[{"text":"secret"}]}}`},
+		{"BothSystemInstructionsReversed", `{"system_instruction":{"parts":[{"text":"secret"}]},"systemInstruction":null}`},
+		{"BothGenerationConfigs", `{"generationConfig":{"maxOutputTokens":1},"generation_config":{"max_output_tokens":100000}}`},
+		{"BothMaxOutputTokens", `{"generationConfig":{"maxOutputTokens":1,"max_output_tokens":100000}}`},
+		{"BothFunctionDeclarations", `{"tools":[{"functionDeclarations":[{"name":"get_weather"}],"function_declarations":[{"name":"delete_db"}]}]}`},
+		{"BothToolConfigs", `{"toolConfig":{},"tool_config":{"functionCallingConfig":{"mode":"ANY"}}}`},
+		{"BothCachedContents", `{"cachedContent":null,"cached_content":"cachedContents/secret"}`},
+		{"BothGenerateContentRequests", `{"generateContentRequest":{},"generate_content_request":{"contents":[]}}`},
+		{"BothFunctionCalls", `{"contents":[{"parts":[{"functionCall":{"name":"get_weather"},"function_call":{"name":"delete_db"}}]}]}`},
+		{"LaterToolGroup", `{"tools":[{"functionDeclarations":[{"name":"get_weather"}]},{"function_declarations":[{"name":"delete_db"}]}]}`},
+		{"LaterContentPart", `{"contents":[{"parts":[{"text":"Hello"},{"function_call":{"name":"delete_db"}}]}]}`},
+	} {
+		t.Run(tst.name, func(t *testing.T) {
+			for _, path := range []string{
+				"/v1beta/models/gemini-2.5-pro:generateContent",
+				"/v1beta/models/gemini-2.5-pro:streamGenerateContent",
+				"/v1beta/models/gemini-2.5-pro:countTokens",
+			} {
+				llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+					http.MethodPost, path, tst.body)
+
+				assert.True(t, llmReq.IsKnownRoute, path)
+				assert.True(t, llmReq.IsBodyValid, path)
+				assert.True(t, llmReq.HasInvalidMembers, path)
+			}
+		})
+	}
+}
+
+func TestParseLLMRequestGeminiMemberAliasData(t *testing.T) {
+	for _, body := range []string{
+		`{"systemInstruction":{"parts":[{"text":"system_instruction generation_config max_output_tokens function_declarations"}]}}`,
+		`{"contents":[{"parts":[{"functionCall":{"name":"lookup","args":{"system_instruction":"data","generation_config":{"max_output_tokens":100000},"function_call":{}}}}]}]}`,
+		`{"contents":[{"parts":[{"functionResponse":{"name":"lookup","response":{"function_declarations":[],"tool_config":{},"cached_content":"data"}}}]}]}`,
+		`{"tools":[{"functionDeclarations":[{"name":"lookup","parameters":{"type":"object","properties":{"system_instruction":{"type":"string"},"generation_config":{"type":"object"},"function_call":{"type":"object"}}}}]}]}`,
+		`{"contents":[{"parts":[{"inline_data":{"mime_type":"image/png","data":"AAAA"}},{"file_data":{"mime_type":"audio/wav","file_uri":"gs://bucket/audio.wav"}}]}]}`,
+		`{"cachedContent":"cachedContents/abcd","toolConfig":{"functionCallingConfig":{"allowedFunctionNames":["lookup"]}},"generationConfig":{"thinkingConfig":{"thinkingBudget":100,"includeThoughts":true}}}`,
+		`{"generateContentRequest":{"systemInstruction":{"parts":[{"text":"Hello"}]},"contents":[{"parts":[{"text":"Hi"}]}],"tools":[{"functionDeclarations":[{"name":"lookup"}]}]}}`,
+		`{"systemInstruction":null,"contents":[],"generationConfig":null,"toolConfig":null,"tools":null,"generateContentRequest":null,"requests":[]}`,
+	} {
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent", body)
+
+		assert.True(t, llmReq.IsBodyValid, body)
+		assert.False(t, llmReq.HasInvalidMembers, body)
+	}
+
+	for _, tst := range []struct {
+		protocol corev1.Service_Spec_Config_LLM_Protocol
+		path     string
+		body     string
+	}{
+		{corev1.Service_Spec_Config_LLM_OPENAI, "/v1/chat/completions",
+			`{"model":"gpt-4o","messages":[],"system_instruction":"data","generation_config":{"max_output_tokens":100000}}`},
+		{corev1.Service_Spec_Config_LLM_ANTHROPIC, "/v1/messages",
+			`{"model":"claude","messages":[],"system_instruction":"data","tool_config":{}}`},
+		{corev1.Service_Spec_Config_LLM_BEDROCK, "/model/anthropic.claude-sonnet-4-5-v1:0/converse",
+			`{"messages":[],"system_instruction":"data","tool_config":{}}`},
+	} {
+		llmReq := parseLLM(t, tst.protocol, http.MethodPost, tst.path, tst.body)
+
+		assert.True(t, llmReq.IsBodyValid, tst.body)
+		assert.False(t, llmReq.HasInvalidMembers, tst.body)
+	}
+}
+
+func TestParseLLMRequestGeminiMemberAliasDepth(t *testing.T) {
+	for _, tst := range []struct {
+		depth     int
+		body      string
+		isInvalid bool
+	}{
+		{maxLLMWalkDepth, `{}`, false},
+		{maxLLMWalkDepth + 1, `{}`, true},
+		{maxLLMWalkDepth + 1, `{"system_instruction":{"parts":[{"text":"secret"}]}}`, true},
+	} {
+		body := strings.Repeat(`{"generateContentRequest":`, tst.depth) +
+			tst.body + strings.Repeat(`}`, tst.depth)
+		llmReq := parseLLM(t, corev1.Service_Spec_Config_LLM_GEMINI,
+			http.MethodPost, "/v1beta/models/gemini-2.5-pro:countTokens", body)
+
+		assert.True(t, llmReq.IsBodyValid)
+		assert.Equal(t, tst.isInvalid, llmReq.HasInvalidMembers)
+	}
+}
+
+func TestParseLLMResponseGeminiToolCallAliases(t *testing.T) {
+	for _, key := range []string{"functionCall", "function_call"} {
+		t.Run(key, func(t *testing.T) {
+			msg := ParseLLMResponse([]byte(fmt.Sprintf(
+				`{"candidates":[{"content":{"parts":[`+
+					`{%q:{"name":"lookup","args":{}}},`+
+					`{%q:{"name":"lookup","args":{}}},`+
+					`{%q:{"name":"search","args":{}}}]}}]}`, key, key, key)))
+
+			require.NotNil(t, msg)
+			assert.Equal(t, []string{"lookup", "search"}, msg.ToolNames)
+			assert.Equal(t, uint32(3), msg.ToolCallCount)
+			assert.False(t, msg.IsToolNamesTruncated)
+		})
+	}
+}
+
 func TestParseLLMRequestExactMembers(t *testing.T) {
 
 	{
