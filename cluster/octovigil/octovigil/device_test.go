@@ -248,4 +248,35 @@ func TestIsAuthorizedDevicePosture(t *testing.T) {
 
 	setDevice(getBinding(), getPosture(time.Now().Add(time.Hour)))
 	assert.True(t, isAuthorized())
+
+	svc.Spec.Authorization.InlinePolicies[0].Spec.Rules[0].Condition = &corev1.Condition{
+		Type: &corev1.Condition_Match{
+			Match: `has(ctx.device.status.posture) && ctx.device.status.binding.confidence == "HIGH" && ` +
+				`"SERIAL_NUMBER" in ctx.device.status.binding.evidence`,
+		},
+	}
+	svc, err = adminSrv.UpdateService(ctx, svc)
+	assert.Nil(t, err)
+	srv.cache.SetService(svc)
+
+	assert.False(t, isAuthorized())
+
+	{
+		b := getBinding()
+		b.Confidence = corev1.Device_Status_Binding_MEDIUM
+		b.Evidence = []corev1.Device_Status_Binding_Evidence{corev1.Device_Status_Binding_OWNER_EMAIL}
+		setDevice(b, getPosture(time.Now().Add(time.Hour)))
+		assert.False(t, isAuthorized())
+	}
+
+	{
+		b := getBinding()
+		b.Confidence = corev1.Device_Status_Binding_HIGH
+		b.Evidence = []corev1.Device_Status_Binding_Evidence{
+			corev1.Device_Status_Binding_OWNER_EMAIL,
+			corev1.Device_Status_Binding_SERIAL_NUMBER,
+		}
+		setDevice(b, getPosture(time.Now().Add(time.Hour)))
+		assert.True(t, isAuthorized())
+	}
 }
