@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/go-github/v88/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -120,7 +120,8 @@ func (c *Connector) HandleCallback(r *http.Request, _ *utils.GetLoginResponse) (
 	}
 
 	githubClient, err := github.NewClient(
-		github.WithHTTPClient(oauth2Config.Client(ctx, token)),
+		github.WithHTTPClient(oauth2.NewClient(ctx, nil)),
+		github.WithAuthToken(token.AccessToken),
 	)
 	if err != nil {
 		return nil, errors.Errorf("Could not create GitHub client: %v", err)

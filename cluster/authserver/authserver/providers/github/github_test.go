@@ -24,13 +24,15 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/google/go-github/v88/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 func newGithubTestSecret(t *testing.T, ctx context.Context, tst *tests.T) *corev1.Secret {
@@ -290,6 +292,219 @@ func TestGetVerifiedPrimaryEmail(t *testing.T) {
 			c, err := github.NewClient(github.WithHTTPClient(srv.Client()), github.WithURLs(&baseURL, &baseURL))
 			assert.Nil(t, err)
 			assert.Equal(t, tt.email, getVerifiedPrimaryEmail(context.Background(), c))
+		})
+	}
+}
+
+type githubTestTransport func(*http.Request) (*http.Response, error)
+
+func (f githubTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func githubTestResponse(r *http.Request, status int, body string) *http.Response {
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write([]byte(body))
+	ret := w.Result()
+	ret.Request = r
+	return ret
+}
+
+func newGithubCallbackTest(t *testing.T, transport http.RoundTripper) (*Connector, *http.Request) {
+	c := &Connector{
+		c: newGithubIDP("client-id", "client-secret"),
+		cc: &corev1.ClusterConfig{
+			Status: &corev1.ClusterConfig_Status{Domain: "example.com"},
+		},
+		secret: "secret-value",
+	}
+	r := httptest.NewRequestWithContext(t.Context(), "GET", "https://example.com/callback?code=authorization-code", nil)
+	r = r.WithContext(context.WithValue(r.Context(), oauth2.HTTPClient, &http.Client{Transport: transport}))
+	return c, r
+}
+
+func TestHandleCallback(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		tokenBody   string
+		userStatus  int
+		userBody    string
+		emailStatus int
+		emailBody   string
+		email       string
+		err         string
+	}{
+		{name: "VerifiedPrimary", emailBody: `[{"email":"secondary@example.com","verified":true},{"email":"primary@example.com","primary":true,"verified":true}]`, email: "primary@example.com"},
+		{name: "UnverifiedEmail", emailBody: `[{"email":"unverified@example.com","primary":true,"verified":false}]`},
+		{name: "EmailLookupFailure", emailStatus: http.StatusForbidden, emailBody: `{"message":"Forbidden"}`},
+		{name: "ExpiredToken", tokenBody: `{"access_token":"github-token","token_type":"bearer","expires_in":-1}`, err: "Invalid token"},
+		{name: "TokenExchangeFailure", tokenBody: `{"error":"bad_verification_code"}`, err: "Could not get token"},
+		{name: "UserLookupFailure", userStatus: http.StatusUnauthorized, userBody: `{"message":"Bad credentials"}`, err: "Could not get user"},
+		{name: "MalformedUser", userBody: `{"login":`, err: "Could not get user"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var userRequested, emailsRequested bool
+			transport := githubTestTransport(func(r *http.Request) (*http.Response, error) {
+				switch r.URL.Host + r.URL.Path {
+				case "github.com/login/oauth/access_token":
+					assert.Equal(t, "POST", r.Method)
+					require.NoError(t, r.ParseForm())
+					assert.Equal(t, "authorization-code", r.Form.Get("code"))
+					assert.Equal(t, "https://example.com/callback", r.Form.Get("redirect_uri"))
+					clientID, secret, ok := r.BasicAuth()
+					if !ok {
+						clientID, secret = r.Form.Get("client_id"), r.Form.Get("client_secret")
+					}
+					assert.Equal(t, "client-id", clientID)
+					assert.Equal(t, "secret-value", secret)
+					body := tt.tokenBody
+					if body == "" {
+						body = `{"access_token":"github-token","token_type":"bearer"}`
+					}
+					return githubTestResponse(r, http.StatusOK, body), nil
+				case "api.github.com/user":
+					userRequested = true
+					assert.Equal(t, "GET", r.Method)
+					assert.Equal(t, "Bearer github-token", r.Header.Get("Authorization"))
+					status := tt.userStatus
+					if status == 0 {
+						status = http.StatusOK
+					}
+					body := tt.userBody
+					if body == "" {
+						body = `{"login":"octocat","email":"unverified@example.com","avatar_url":"https://avatars.githubusercontent.com/octocat"}`
+					}
+					return githubTestResponse(r, status, body), nil
+				case "api.github.com/user/emails":
+					emailsRequested = true
+					assert.Equal(t, "GET", r.Method)
+					assert.Equal(t, "Bearer github-token", r.Header.Get("Authorization"))
+					assert.Equal(t, "100", r.URL.Query().Get("per_page"))
+					status := tt.emailStatus
+					if status == 0 {
+						status = http.StatusOK
+					}
+					return githubTestResponse(r, status, tt.emailBody), nil
+				default:
+					return nil, fmt.Errorf("unexpected GitHub request: %s", r.URL)
+				}
+			})
+			c, r := newGithubCallbackTest(t, transport)
+			ret, err := c.HandleCallback(r, nil)
+			if tt.err != "" {
+				require.ErrorContains(t, err, tt.err)
+				assert.Nil(t, ret)
+				assert.False(t, emailsRequested)
+				if tt.tokenBody != "" {
+					assert.False(t, userRequested)
+				}
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, ret)
+			assert.True(t, userRequested)
+			assert.True(t, emailsRequested)
+			assert.Equal(t, corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER, ret.Type)
+			info := ret.GetIdentityProvider()
+			require.NotNil(t, info)
+			assert.Equal(t, corev1.IdentityProvider_Status_GITHUB, info.Type)
+			assert.Equal(t, c.c.Metadata.Name, info.IdentityProviderRef.Name)
+			assert.Equal(t, "octocat", info.Identifier)
+			assert.Equal(t, tt.email, info.Email)
+			assert.Equal(t, "https://avatars.githubusercontent.com/octocat", info.PicURL)
+		})
+	}
+}
+
+func TestHandleCallbackRedirectCredentials(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		url        string
+		authorized bool
+	}{
+		{"APIOrigin", "https://api.github.com/redirected-user", true},
+		{"UploadOrigin", "https://uploads.github.com/redirected-user", true},
+		{"OtherHost", "https://example.net/redirected-user", false},
+		{"Subdomain", "https://sub.api.github.com/redirected-user", false},
+		{"OtherPort", "https://api.github.com:8443/redirected-user", false},
+		{"Downgrade", "http://api.github.com/redirected-user", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var redirected, emailsRequested bool
+			transport := githubTestTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.String() == tt.url {
+					redirected = true
+					if tt.authorized {
+						assert.Equal(t, "Bearer github-token", r.Header.Get("Authorization"))
+					} else {
+						assert.Empty(t, r.Header.Get("Authorization"))
+					}
+					return githubTestResponse(r, http.StatusOK, `{"login":"octocat"}`), nil
+				}
+				switch r.URL.String() {
+				case "https://github.com/login/oauth/access_token":
+					return githubTestResponse(r, http.StatusOK, `{"access_token":"github-token","token_type":"bearer"}`), nil
+				case "https://api.github.com/user":
+					assert.Equal(t, "Bearer github-token", r.Header.Get("Authorization"))
+					response := githubTestResponse(r, http.StatusFound, "")
+					response.Header.Set("Location", tt.url)
+					return response, nil
+				case "https://api.github.com/user/emails?per_page=100":
+					emailsRequested = true
+					assert.Equal(t, "Bearer github-token", r.Header.Get("Authorization"))
+					return githubTestResponse(r, http.StatusOK, `[{"email":"primary@example.com","primary":true,"verified":true}]`), nil
+				default:
+					return nil, fmt.Errorf("unexpected GitHub request: %s", r.URL)
+				}
+			})
+			c, r := newGithubCallbackTest(t, transport)
+			ret, err := c.HandleCallback(r, nil)
+			require.NoError(t, err)
+			require.NotNil(t, ret)
+			assert.True(t, redirected)
+			assert.True(t, emailsRequested)
+			assert.Equal(t, "octocat", ret.GetIdentityProvider().Identifier)
+			assert.Equal(t, "primary@example.com", ret.GetIdentityProvider().Email)
+		})
+	}
+}
+
+func TestHandleCallbackCancellation(t *testing.T) {
+	for _, path := range []string{"/login/oauth/access_token", "/user", "/user/emails"} {
+		t.Run(path, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var canceled bool
+			transport := githubTestTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == path {
+					canceled = true
+					cancel()
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				}
+				switch r.URL.Path {
+				case "/login/oauth/access_token":
+					return githubTestResponse(r, http.StatusOK, `{"access_token":"github-token","token_type":"bearer"}`), nil
+				case "/user":
+					return githubTestResponse(r, http.StatusOK, `{"login":"octocat","email":"unverified@example.com"}`), nil
+				default:
+					return nil, fmt.Errorf("unexpected GitHub request: %s", r.URL)
+				}
+			})
+			c, r := newGithubCallbackTest(t, transport)
+			r = r.WithContext(context.WithValue(ctx, oauth2.HTTPClient, r.Context().Value(oauth2.HTTPClient)))
+			ret, err := c.HandleCallback(r, nil)
+			assert.True(t, canceled)
+			if path == "/user/emails" {
+				require.NoError(t, err)
+				require.NotNil(t, ret)
+				assert.Empty(t, ret.GetIdentityProvider().Email)
+				return
+			}
+			require.ErrorContains(t, err, context.Canceled.Error())
+			assert.Nil(t, ret)
 		})
 	}
 }
