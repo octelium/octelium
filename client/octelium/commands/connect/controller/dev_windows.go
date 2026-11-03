@@ -21,9 +21,11 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net/netip"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/pkg/errors"
@@ -195,6 +197,10 @@ func (c *Controller) doInitDevTUN(_ context.Context) error {
 		return err
 	}
 
+	if err := checkWireGuardDLLVersion(); err != nil {
+		return err
+	}
+
 	driverVersion, err := driver.RunningVersion()
 	if err != nil {
 		zap.L().Warn("Could not determine driver version", zap.Error(err))
@@ -219,6 +225,50 @@ func (c *Controller) doInitDevTUN(_ context.Context) error {
 
 	c.configureIface()
 
+	return nil
+}
+
+func checkWireGuardDLLVersion() error {
+	name, err := windows.UTF16PtrFromString("wireguard.dll")
+	if err != nil {
+		return err
+	}
+	var module windows.Handle
+	if err := windows.GetModuleHandleEx(windows.GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, name, &module); err != nil {
+		return err
+	}
+	path := make([]uint16, 32768)
+	n, err := windows.GetModuleFileName(module, &path[0], uint32(len(path)))
+	if err != nil {
+		return err
+	}
+	if n == 0 || n >= uint32(len(path)) {
+		return errors.New("Could not determine the loaded WireGuardNT DLL path")
+	}
+	filename := windows.UTF16ToString(path[:n])
+	size, err := windows.GetFileVersionInfoSize(filename, nil)
+	if err != nil {
+		return err
+	}
+	if size == 0 {
+		return errors.New("The loaded WireGuardNT DLL does not contain version information")
+	}
+	data := make([]byte, size)
+	if err := windows.GetFileVersionInfo(filename, 0, size, unsafe.Pointer(&data[0])); err != nil {
+		return err
+	}
+	var info *windows.VS_FIXEDFILEINFO
+	if err := windows.VerQueryValue(unsafe.Pointer(&data[0]), `\`, unsafe.Pointer(&info), &size); err != nil {
+		return err
+	}
+	if info == nil || size < uint32(unsafe.Sizeof(*info)) || info.Signature != 0xFEEF04BD {
+		return errors.New("The loaded WireGuardNT DLL contains invalid version information")
+	}
+	major, minor := info.FileVersionMS>>16, info.FileVersionMS&0xffff
+	runtime.KeepAlive(data)
+	if major != 1 || minor < 1 {
+		return errors.Errorf("Unsupported WireGuardNT DLL version %d.%d; install a compatible wireguard.dll version 1.1 or newer", major, minor)
+	}
 	return nil
 }
 

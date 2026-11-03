@@ -8,6 +8,11 @@ on:
       - "v*.*.*"
 
 jobs:
+  test-windows-drivers:
+    uses: ./.github/workflows/test-windows-drivers.yaml
+    permissions:
+      contents: read
+
   build:
     name: Build
     runs-on: ubuntu-24.04
@@ -80,29 +85,16 @@ jobs:
             bin/checksums-${{ matrix.os }}-${{ matrix.arch }}.txt
           retention-days: 1
 
+      - name: Prepare Windows drivers
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: .github/scripts/windows/prepare-drivers.ps1 -Arch '${{ matrix.arch }}'
+
       - name: Zip for Windows
         if: matrix.os == 'windows'
         shell: bash
-        env:
-          WIREGUARD_NT_SHA256: 772c0b1463d8d2212716f43f06f4594d880dea4f735165bd68e388fc41b81605
-          WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
         run: |
           set -euo pipefail
-
-          curl --fail --show-error --location --retry 3 \
-            --output wireguard.zip \
-            https://download.wireguard.com/wireguard-nt/wireguard-nt-0.10.1.zip
-          echo "${WIREGUARD_NT_SHA256}  wireguard.zip" | sha256sum --check --strict
-          unzip -q wireguard.zip
-          cp "./wireguard-nt/bin/${{ matrix.arch }}/wireguard.dll" ./bin
-
-          curl --fail --show-error --location --retry 3 \
-            --output wintun.zip \
-            https://www.wintun.net/builds/wintun-0.14.1.zip
-          echo "${WINTUN_SHA256}  wintun.zip" | sha256sum --check --strict
-          unzip -q wintun.zip
-          cp "./wintun/bin/${{ matrix.arch }}/wintun.dll" ./bin
-
           cd bin
           zip "octelium-${{ matrix.os }}-${{ matrix.arch }}.zip" octelium.exe wireguard.dll wintun.dll
           zip "octeliumctl-${{ matrix.os }}-${{ matrix.arch }}.zip" octeliumctl.exe
@@ -131,7 +123,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-binaries-${{ matrix.arch }}-${{ github.ref_name }}
-          path: bin/*.exe
+          path: |
+            bin/*.exe
+            bin/*.dll
           retention-days: 1
 
   package-linux:
@@ -323,7 +317,7 @@ jobs:
   package-windows:
     name: Package Windows
     runs-on: windows-2022
-    needs: build
+    needs: [build, test-windows-drivers]
     permissions:
       contents: read
     strategy:
@@ -341,39 +335,9 @@ jobs:
           name: windows-binaries-${{ matrix.arch }}-${{ github.ref_name }}
           path: bin
 
-      - name: Download WireGuard and Wintun DLLs
+      - name: Verify Windows drivers
         shell: pwsh
-        env:
-          WIREGUARD_NT_SHA256: 772c0b1463d8d2212716f43f06f4594d880dea4f735165bd68e388fc41b81605
-          WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          curl.exe --fail --show-error --location --retry 3 `
-            --output wireguard.zip `
-            https://download.wireguard.com/wireguard-nt/wireguard-nt-0.10.1.zip
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          $wireGuardHash = (Get-FileHash -Algorithm SHA256 wireguard.zip).Hash.ToLowerInvariant()
-          if ($wireGuardHash -ne $env:WIREGUARD_NT_SHA256) {
-            throw "wireguard.zip SHA-256 mismatch: $wireGuardHash"
-          }
-
-          Expand-Archive -Path wireguard.zip -DestinationPath .
-          Copy-Item -Path "wireguard-nt/bin/${{ matrix.arch }}/wireguard.dll" -Destination "bin/"
-
-          curl.exe --fail --show-error --location --retry 3 `
-            --output wintun.zip `
-            https://www.wintun.net/builds/wintun-0.14.1.zip
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          $wintunHash = (Get-FileHash -Algorithm SHA256 wintun.zip).Hash.ToLowerInvariant()
-          if ($wintunHash -ne $env:WINTUN_SHA256) {
-            throw "wintun.zip SHA-256 mismatch: $wintunHash"
-          }
-
-          Expand-Archive -Path wintun.zip -DestinationPath .
-          Copy-Item -Path "wintun/bin/${{ matrix.arch }}/wintun.dll" -Destination "bin/"
+        run: .github/scripts/windows/prepare-drivers.ps1 -Arch '${{ matrix.arch }}' -VerifyOnly
 
       - name: Get version
         id: version

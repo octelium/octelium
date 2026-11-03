@@ -1,0 +1,136 @@
+name: test-windows-drivers
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - 'client/**'
+      - 'apis/**'
+      - 'pkg/**'
+      - 'go.work*'
+      - '.github/scripts/windows/**'
+      - '.github/workflows/test-windows-drivers.yaml'
+      - '.github/workflows/release.yaml'
+  push:
+    branches: [master, main, 'dev*']
+    paths:
+      - 'client/**'
+      - 'apis/**'
+      - 'pkg/**'
+      - 'go.work*'
+      - '.github/scripts/windows/**'
+      - '.github/workflows/test-windows-drivers.yaml'
+      - '.github/workflows/release.yaml'
+
+jobs:
+  build:
+    name: Build Windows driver fixtures (${{ matrix.arch }})
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    env:
+      GOOS: windows
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '0'
+      GOMAXPROCS: '4'
+      GOFLAGS: '-mod=readonly -p=4'
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.work
+          cache-dependency-path: '**/go.sum'
+
+      - name: Prepare native driver DLLs
+        shell: pwsh
+        run: .github/scripts/windows/prepare-drivers.ps1 -Arch '${{ matrix.arch }}' -Destination native-tests
+
+      - name: Build Windows client and driver tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go build -o native-tests/octelium.exe ./client/octelium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -c -o native-tests/controller.test.exe ./client/octelium/commands/connect/controller
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build MSI upgrade fixtures
+        shell: pwsh
+        run: .github/scripts/windows/test-msi-upgrade.ps1 -Arch '${{ matrix.arch }}' -PrepareOnly
+
+      - name: Save Windows driver fixtures
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-driver-fixtures-${{ matrix.arch }}
+          path: |
+            native-tests/*
+            packaging/*.msi
+          retention-days: 1
+
+  test:
+    name: Native Windows drivers (${{ matrix.arch }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: windows-2022
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Download Windows driver fixtures
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-driver-fixtures-${{ matrix.arch }}
+
+      - name: Verify native driver DLLs
+        shell: pwsh
+        run: .github/scripts/windows/prepare-drivers.ps1 -Arch '${{ matrix.arch }}' -Destination native-tests -VerifyOnly
+
+      - name: Run native driver and controller tests
+        shell: pwsh
+        env:
+          OCTELIUM_TEST_WINDOWS_DRIVERS: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./native-tests/controller.test.exe -test.v -test.timeout=5m -test.run '^TestWindows'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test MSI driver upgrade
+        shell: pwsh
+        run: .github/scripts/windows/test-msi-upgrade.ps1 -Arch '${{ matrix.arch }}'
+
+      - name: Save MSI logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-msi-logs-${{ matrix.arch }}
+          path: ${{ runner.temp }}/octelium-msi-upgrade/*.log
+          if-no-files-found: ignore
+          retention-days: 3

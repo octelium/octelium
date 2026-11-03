@@ -1,0 +1,22 @@
+{
+  "wireguard": {
+    "version": "1.1",
+    "url": "https://download.wireguard.com/wireguard-nt/wireguard-nt-1.1.zip",
+    "sha256": "dceb30a9bc4be48cce0f74160fc88a585a2c2627366e8f846fc6658f9038dace",
+    "root": "wireguard-nt",
+    "dllSha256": {
+      "amd64": "b1b85e072c45d81358be29d94c599dc76652f912be8c0f0a41e2d5d89a6461d3",
+      "arm64": "75bcdc025d6c00e8315af5d62b869d760ca6a253fc82d70f146e789f059a3e0c"
+    }
+  },
+  "wintun": {
+    "version": "0.14.1",
+    "url": "https://www.wintun.net/builds/wintun-0.14.1.zip",
+    "sha256": "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51",
+    "root": "wintun",
+    "dllSha256": {
+      "amd64": "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce",
+      "arm64": "f7ba89005544be9d85231a9e0d5f23b2d15b3311667e2dad0debd344918a3f80"
+    }
+  }
+}
