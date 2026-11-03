@@ -25,10 +25,10 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
@@ -96,7 +96,7 @@ func CreateLoggerProvider(ctx context.Context, addr string) (*sdklog.LoggerProvi
 }
 
 func GetLogger() log.Logger {
-	return global.GetLoggerProvider().Logger("default")
+	return otel.Logger("default")
 }
 
 func EmitAccessLog(in *corev1.AccessLog) {

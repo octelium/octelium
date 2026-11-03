@@ -38,7 +38,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.uber.org/zap"
@@ -121,7 +120,7 @@ func TestServer(t *testing.T) {
 	metricsProvider, err := otelutils.CreateMetricsProvider(ctx, tstAddr)
 	assert.Nil(t, err)
 
-	global.SetLoggerProvider(logProvider)
+	otel.SetLoggerProvider(logProvider)
 	otel.SetMeterProvider(metricsProvider)
 
 	err = otelutils.SetProcessMetrics(ctx)

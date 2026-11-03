@@ -34,7 +34,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"google.golang.org/protobuf/proto"
 )
@@ -71,12 +71,12 @@ func (p *tstTCPLogProcessor) ForceFlush(ctx context.Context) error {
 
 func newTCPLogRecorder(t *testing.T) <-chan *corev1.AccessLog {
 	t.Helper()
-	previous := global.GetLoggerProvider()
+	previous := otel.GetLoggerProvider()
 	processor := &tstTCPLogProcessor{records: make(chan *corev1.AccessLog, 16)}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
-	global.SetLoggerProvider(provider)
+	otel.SetLoggerProvider(provider)
 	t.Cleanup(func() {
-		global.SetLoggerProvider(previous)
+		otel.SetLoggerProvider(previous)
 		assert.Nil(t, provider.Shutdown(context.Background()))
 	})
 	return processor.records

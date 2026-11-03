@@ -22,7 +22,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/components/otelcore"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/log/global"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -48,7 +47,7 @@ func RunOTEL(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	global.SetLoggerProvider(logProvider)
+	otel.SetLoggerProvider(logProvider)
 	otel.SetMeterProvider(metricProvider)
 
 	zapLogger := otelcore.NewOTELCore(GetLogger())
