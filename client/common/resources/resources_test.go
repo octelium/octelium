@@ -380,6 +380,26 @@ metadata:
 	assert.True(t, strings.Contains(errs[0].Error(), "Could not decode yaml item in file.yaml"), "%+v", errs[0])
 }
 
+func TestResourcesRejectDuplicateKeys(t *testing.T) {
+	yamlFile := `kind: User
+metadata:
+ name: usr1
+ name: usr2
+spec:
+ type: HUMAN
+`
+	items, err := loadResources(strings.NewReader(yamlFile), "duplicate.yaml", ucorev1.NewObject)
+	assert.Empty(t, items)
+	assert.ErrorContains(t, err, "duplicate.yaml")
+	assert.ErrorContains(t, err, `mapping key "name"`)
+
+	items, errs := validateResources(strings.NewReader(yamlFile), "duplicate.yaml", ucorev1.NewObject)
+	assert.Empty(t, items)
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], "duplicate.yaml")
+	assert.ErrorContains(t, errs[0], `mapping key "name"`)
+}
+
 func TestValidateResourcesPaths(t *testing.T) {
 
 	dir := t.TempDir()

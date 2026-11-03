@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -74,6 +75,51 @@ func TestKubeConfigSelection(t *testing.T) {
 	assert.Nil(t, cfg.GetUser("first"))
 	_, err = UnmarshalKubeConfigFromYAML([]byte("[invalid"))
 	assert.NotNil(t, err)
+}
+
+func TestKubeConfigYAMLRoundTrip(t *testing.T) {
+	yamlFile := `apiVersion: v1
+kind: Config
+current-context: ctx1
+clusters:
+- name: cluster1
+  cluster: &cluster
+    server: https://example.com:6443
+    certificate-authority-data: Y2E=
+- name: cluster2
+  cluster: *cluster
+users:
+- name: user1
+  user:
+    token: token1
+- name: user2
+  user:
+    client-certificate-data: Y2VydA==
+    client-key-data: a2V5
+contexts:
+- name: ctx1
+  context:
+    cluster: cluster2
+    user: user2
+`
+
+	cfg, err := UnmarshalKubeConfigFromYAML([]byte(yamlFile))
+	require.Nil(t, err)
+	assert.Equal(t, "v1", cfg.APIVersion)
+	assert.Equal(t, "Config", cfg.Kind)
+	assert.Equal(t, "cluster2", cfg.GetCluster("").Name)
+	assert.Equal(t, "https://example.com:6443", cfg.GetCluster("").Cluster.Server)
+	assert.Equal(t, "Y2E=", cfg.GetCluster("").Cluster.CertificateAuthorityData)
+	assert.Equal(t, cfg.Clusters[0].Cluster, cfg.Clusters[1].Cluster)
+	assert.Equal(t, "token1", cfg.Users[0].User.Token)
+	assert.Equal(t, "Y2VydA==", cfg.GetUser("").User.ClientCertificateData)
+	assert.Equal(t, "a2V5", cfg.GetUser("").User.ClientKeyData)
+
+	data, err := cfg.MarshalToYAML()
+	require.Nil(t, err)
+	res, err := UnmarshalKubeConfigFromYAML(data)
+	require.Nil(t, err)
+	assert.Equal(t, cfg, res)
 }
 
 func TestServiceHostnames(t *testing.T) {
