@@ -38,6 +38,9 @@ import (
 type UpgradeOpts struct{}
 
 func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
+	if err := g.waitForConcurrentGenesis(ctx); err != nil {
+		return err
+	}
 
 	zap.L().Info("Starting upgrade...")
 	if o == nil {

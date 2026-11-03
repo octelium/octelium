@@ -20,6 +20,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -38,6 +39,7 @@ const initializationRedisKey = "octelium:genesis:init"
 type initialization struct {
 	id            string
 	inputHash     string
+	aesKeyName    string
 	complete      bool
 	clusterConfig *corev1.ClusterConfig
 	region        *corev1.Region
@@ -132,6 +134,7 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 			"version":       []byte("1"),
 			"id":            []byte(id),
 			"input-hash":    []byte(inputHash),
+			"aes-key-name":  []byte("sys:aes256-key-" + utilrand.GetRandomStringLowercase(8)),
 			"clusterConfig": pbutils.MarshalMust(clusterCfg),
 			"region":        pbutils.MarshalMust(region),
 		},
@@ -150,9 +153,13 @@ func decodeInitialization(secret *k8scorev1.Secret, inputHash string) (*initiali
 	ret := &initialization{
 		id:            string(secret.Data["id"]),
 		inputHash:     string(secret.Data["input-hash"]),
+		aesKeyName:    string(secret.Data["aes-key-name"]),
 		complete:      secret.Annotations[initializationCompleteKey] == "true",
 		clusterConfig: &corev1.ClusterConfig{},
 		region:        &corev1.Region{},
+	}
+	if ret.aesKeyName == "" {
+		ret.aesKeyName = "sys:aes256-key-genesis"
 	}
 	if string(secret.Data["version"]) != "1" || ret.id == "" || ret.inputHash == "" {
 		return nil, errors.Errorf("Invalid genesis initialization state")

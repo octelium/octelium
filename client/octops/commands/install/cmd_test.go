@@ -78,13 +78,16 @@ func TestBootstrapSecretRoundTrip(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("existing=%t", existing), func(t *testing.T) {
 			c := fakek8s.NewSimpleClientset()
-			if existing {
-				_, err := c.CoreV1().Secrets("default").Create(ctx, &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init", Labels: map[string]string{"retained": "yes"}, ResourceVersion: "17"}, Data: map[string][]byte{"old": []byte("old")}}, k8smetav1.CreateOptions{})
-				require.NoError(t, err)
-			}
 			bootstrap := &cbootstrapv1.Config{}
 			require.NoError(t, pbutils.UnmarshalYAML([]byte("spec:\n  primaryStorage:\n    postgresql: {host: postgres, username: installer, passwordFromSecret: {name: postgres-auth, namespace: storage, key: password}}\n  secondaryStorage:\n    redis: {host: redis, password: secret}\n  spiffe: {enable: true, trustDomain: test.local, csiDriver: {name: custom.csi}}\n  cni: {multusConfDir: /opt/multus/conf}\n  ingress: {frontProxy: {enable: true}}\n"), bootstrap))
 			region := &corev1.Region{Kind: "Region", Metadata: &metav1.Metadata{Name: "default", SystemLabels: map[string]string{"external-ips": `["203.0.113.10"]`}}}
+			if existing {
+				_, err := c.CoreV1().Secrets("default").Create(ctx, &k8scorev1.Secret{
+					ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init", Labels: map[string]string{"retained": "yes"}, ResourceVersion: "17"},
+					Data:       map[string][]byte{"bootstrap": pbutils.MarshalMust(bootstrap), "region": pbutils.MarshalMust(region), "domain": []byte("example.com")},
+				}, k8smetav1.CreateOptions{})
+				require.NoError(t, err)
+			}
 			require.NoError(t, setClusterResources(ctx, &Opts{K8sC: c, ClusterDomain: "example.com", Bootstrap: bootstrap, Region: region}))
 			secret, err := c.CoreV1().Secrets("default").Get(ctx, "octelium-init", k8smetav1.GetOptions{})
 			require.NoError(t, err)
@@ -104,12 +107,9 @@ func TestBootstrapSecretRoundTrip(t *testing.T) {
 }
 
 func TestSetClusterResourcesErrors(t *testing.T) {
-	for _, verb := range []string{"get", "create", "update"} {
+	for _, verb := range []string{"get", "create"} {
 		t.Run(verb, func(t *testing.T) {
 			c := fakek8s.NewSimpleClientset()
-			if verb == "update" {
-				require.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init", Namespace: "default"}}))
-			}
 			want := errors.New("storage failure")
 			c.PrependReactor(verb, "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 			err := setClusterResources(context.Background(), &Opts{K8sC: c, ClusterDomain: "example.com", Bootstrap: &cbootstrapv1.Config{}})
@@ -127,8 +127,8 @@ func TestDoInstallLifecycle(t *testing.T) {
 	require.NoError(t, d.SetSessionToken("example.com", &authv1.SessionToken{AccessToken: "stale"}))
 	require.NoError(t, d.SetSessionToken("other.example", &authv1.SessionToken{AccessToken: "keep"}))
 	c := fakek8s.NewSimpleClientset()
-	c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
+	c.PrependReactor("update", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		job := action.(k8stesting.UpdateAction).GetObject().(*batchv1.Job)
 		assert.Equal(t, "default", action.GetNamespace())
 		assert.Equal(t, "octelium-genesis", job.Name)
 		assert.Equal(t, []string{"init"}, job.Spec.Template.Spec.Containers[0].Args)
@@ -155,9 +155,9 @@ func TestDoInstallStopsBeforeGenesisOnStorageError(t *testing.T) {
 	want := errors.New("write failed")
 	c.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 	assert.ErrorIs(t, DoInstall(context.Background(), &Opts{K8sC: c}), want)
-	for _, action := range c.Actions() {
-		assert.NotEqual(t, "jobs", action.GetResource().Resource)
-	}
+	jobs, err := c.BatchV1().Jobs("default").List(t.Context(), k8smetav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, jobs.Items)
 }
 
 func TestDoInstallLaterStageErrors(t *testing.T) {

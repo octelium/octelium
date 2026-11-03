@@ -124,14 +124,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 func createGenesis(ctx context.Context, c kubernetes.Interface, domain, cmd, version, pkg string) error {
 
-	_, err := c.BatchV1().Jobs("octelium").Create(ctx,
-		getGenesisJob(domain, cmd, version, pkg, install.GetSPIFFE(ctx, c)),
-		metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return install.SubmitGenesisJob(ctx, c, getGenesisJob(domain, cmd, version, pkg, install.GetSPIFFE(ctx, c)), nil)
 }
 
 func getGenesisJob(domain, cmd, version, pkg string, spiffe *install.SPIFFEOpts) *batchv1.Job {
@@ -151,8 +144,7 @@ func getGenesisJob(domain, cmd, version, pkg string, spiffe *install.SPIFFEOpts)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("octelium-genesis-%s-%s-%s",
-				cmd, pkg, utilrand.GetRandomStringLowercase(6)),
+			Name:      fmt.Sprintf("octelium-genesis-%s-%s-%s", cmd, pkg, utilrand.GetRandomStringLowercase(6)),
 			Namespace: "octelium",
 			Labels:    labels,
 		},

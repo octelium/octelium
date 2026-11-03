@@ -77,6 +77,9 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		initResources.Bootstrap.GetSpec().GetSecondaryStorage().GetRedis() == nil {
 		return errors.Errorf("The bootstrap must contain PostgreSQL and Redis storage configuration")
 	}
+	if err := g.waitForConcurrentGenesis(ctx); err != nil {
+		return err
+	}
 	if err := g.setNamespace(ctx); err != nil {
 		return err
 	}
@@ -183,7 +186,7 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		return err
 	}
 
-	if err := g.createAESKey(ctx); err != nil {
+	if err := g.createAESKey(ctx, init.aesKeyName); err != nil {
 		return err
 	}
 
@@ -1156,7 +1159,7 @@ func (g *Genesis) createSSHServiceSeedSecret(ctx context.Context) error {
 	return nil
 }
 
-func (g *Genesis) createAESKey(ctx context.Context) error {
+func (g *Genesis) createAESKey(ctx context.Context, name string) error {
 
 	secretVal, err := utilrand.GetRandomBytes(32)
 	if err != nil {
@@ -1164,7 +1167,7 @@ func (g *Genesis) createAESKey(ctx context.Context) error {
 	}
 	secret := &corev1.Secret{
 		Metadata: &metav1.Metadata{
-			Name: "sys:aes256-key-genesis",
+			Name: name,
 			SystemLabels: map[string]string{
 				"aes256-key": "true",
 			},

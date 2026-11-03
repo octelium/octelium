@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/client/octops/commands/install"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -63,17 +64,24 @@ func TestGenesisPackageJobs(t *testing.T) {
 func TestCreateGenesisPackage(t *testing.T) {
 	ctx := context.Background()
 	c := fakek8s.NewSimpleClientset(&k8scorev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "octelium-installation", Namespace: "octelium"}, Data: map[string]string{"installation.json": `{"spiffe":{"enable":true}}`}})
-	for range 2 {
-		require.NoError(t, createGenesis(ctx, c, "example.com", "init", "1.2.3", "octeliumee"))
-	}
+	require.NoError(t, createGenesis(ctx, c, "example.com", "init", "1.2.3", "octeliumee"))
+	require.ErrorContains(t, createGenesis(ctx, c, "example.com", "init", "1.2.3", "octeliumee"), "still active")
 	jobs, err := c.BatchV1().Jobs("octelium").List(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, jobs.Items, 1)
+	for _, job := range jobs.Items {
+		assert.Equal(t, "csi.spiffe.io", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+		_, err = c.BatchV1().Jobs(job.Namespace).UpdateStatus(ctx, &job, metav1.UpdateOptions{})
+		require.NoError(t, err)
+	}
+	require.NoError(t, createGenesis(ctx, c, "example.com", "init", "1.2.3", "octeliumee"))
+	jobs, err = c.BatchV1().Jobs("octelium").List(ctx, metav1.ListOptions{})
 	require.NoError(t, err)
 	require.Len(t, jobs.Items, 2)
 	assert.NotEqual(t, jobs.Items[0].Name, jobs.Items[1].Name)
-	for _, job := range jobs.Items {
-		assert.Equal(t, "csi.spiffe.io", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
-	}
 	want := k8serr.NewForbidden(schema.GroupResource{Group: "batch", Resource: "jobs"}, "test", fmt.Errorf("not permitted"))
+	c = fakek8s.NewSimpleClientset()
 	c.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 	assert.ErrorIs(t, createGenesis(ctx, c, "example.com", "upgrade", "1.2.3", "cordium"), want)
 }

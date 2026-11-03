@@ -160,12 +160,15 @@ func newTestKubernetes(t *testing.T, objects ...runtime.Object) (*fake.Clientset
 		if len(parts) > 1 {
 			name = parts[1]
 		}
-		kind := map[string]string{"secrets": "Secret", "configmaps": "ConfigMap", "jobs": "Job", "serviceaccounts": "ServiceAccount", "clusterroles": "ClusterRole", "clusterrolebindings": "ClusterRoleBinding", "namespaces": "Namespace"}[resource]
+		kind := map[string]string{"secrets": "Secret", "configmaps": "ConfigMap", "jobs": "Job", "pods": "Pod", "serviceaccounts": "ServiceAccount", "clusterroles": "ClusterRole", "clusterrolebindings": "ClusterRoleBinding", "namespaces": "Namespace"}[resource]
 		if kind == "" {
 			http.NotFound(w, r)
 			return
 		}
 		gvr, gvk := gv.WithResource(resource), gv.WithKind(kind)
+		if r.Method == http.MethodGet && name == "" {
+			gvk.Kind += "List"
+		}
 		obj, err := scheme.Scheme.New(gvk)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -174,7 +177,11 @@ func newTestKubernetes(t *testing.T, objects ...runtime.Object) (*fake.Clientset
 		var action k8stesting.Action
 		switch r.Method {
 		case http.MethodGet:
-			action = k8stesting.NewGetAction(gvr, namespace, name)
+			if name == "" {
+				action = k8stesting.NewListAction(gvr, gv.WithKind(kind), namespace, k8smetav1.ListOptions{LabelSelector: r.URL.Query().Get("labelSelector")})
+			} else {
+				action = k8stesting.NewGetAction(gvr, namespace, name)
+			}
 		case http.MethodPost, http.MethodPut:
 			data, readErr := io.ReadAll(r.Body)
 			if readErr != nil {
@@ -247,7 +254,7 @@ func TestInitCommandE2E(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "credentials", "token")
 				t.Setenv("OCTELIUM_AUTH_TOKEN_SAVE_PATH", path)
 				c, config := newTestKubernetes(t)
-				c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				c.PrependReactor("update", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 					assert.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("admin-token")}}))
 					return false, nil, nil
 				})
@@ -346,7 +353,11 @@ func TestUpgradeAndPackageCommandsE2E(t *testing.T) {
 				assert.Equal(t, []string{command}, container.Args)
 				assert.Equal(t, pkg+"-genesis", container.Name)
 				assert.Contains(t, container.Image, pkg+"-genesis:"+version)
-				assert.Regexp(t, `^octelium-genesis-[a-z0-9-]+-[a-z0-9]{6}$`, job.Name)
+				if args[0] == "install-package" {
+					assert.Regexp(t, "^octelium-genesis-"+command+"-"+pkg+"-[a-z0-9]{6}$", job.Name)
+				} else {
+					assert.Regexp(t, "^octelium-genesis-upgrade-[a-z0-9]{6}$", job.Name)
+				}
 				assert.Contains(t, container.Env, k8scorev1.EnvVar{Name: "OCTELIUM_DOMAIN", Value: "example.com"})
 				assert.Contains(t, container.Env, k8scorev1.EnvVar{Name: "OCTELIUM_REGION_NAME", Value: "default"})
 				if spiffe {
@@ -358,6 +369,29 @@ func TestUpgradeAndPackageCommandsE2E(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestConflictingGenesisCommandsE2E(t *testing.T) {
+	for _, pair := range [][2][]string{
+		{{"upgrade", "example.com", "--version=1.2.3"}, {"upgrade", "example.com", "--version=2.0.0"}},
+		{{"upgrade", "example.com"}, {"install-package", "example.com", "--package=cordium"}},
+		{{"install-package", "example.com", "--package=octeliumee"}, {"upgrade", "example.com"}},
+		{{"install-package", "example.com", "--package=octeliumee"}, {"install-package", "example.com", "--package=cordium"}},
+	} {
+		t.Run(strings.Join(pair[0], " ")+"/"+strings.Join(pair[1], " "), func(t *testing.T) {
+			c, config := newTestKubernetes(t)
+			_, err := executeTestCommand(t, t.Context(), append(slices.Clone(pair[0]), "--kubeconfig="+config)...)
+			require.NoError(t, err)
+			before, err := c.BatchV1().Jobs("octelium").List(t.Context(), k8smetav1.ListOptions{})
+			require.NoError(t, err)
+			require.Len(t, before.Items, 1)
+			_, err = executeTestCommand(t, t.Context(), append(slices.Clone(pair[1]), "--kubeconfig="+config)...)
+			require.ErrorContains(t, err, "still active")
+			after, err := c.BatchV1().Jobs("octelium").List(t.Context(), k8smetav1.ListOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
 	}
 }
 

@@ -17,7 +17,6 @@ package install
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
@@ -84,9 +83,16 @@ func TestGetGenesisPodSpecWithoutSPIFFE(t *testing.T) {
 	assert.Empty(t, c.VolumeMounts)
 	assert.Equal(t, []string{"upgrade"}, c.Args)
 	assert.Equal(t, map[string]string{
-		"OCTELIUM_DOMAIN":      "example.com",
-		"OCTELIUM_REGION_NAME": "default",
+		"OCTELIUM_DOMAIN":                "example.com",
+		"OCTELIUM_REGION_NAME":           "default",
+		"OCTELIUM_GENESIS_POD_NAME":      "",
+		"OCTELIUM_GENESIS_POD_NAMESPACE": "",
 	}, envOf(c))
+	for name, field := range map[string]string{
+		"OCTELIUM_GENESIS_POD_NAME": "metadata.name", "OCTELIUM_GENESIS_POD_NAMESPACE": "metadata.namespace",
+	} {
+		assert.Contains(t, c.Env, k8scorev1.EnvVar{Name: name, ValueFrom: &k8scorev1.EnvVarSource{FieldRef: &k8scorev1.ObjectFieldSelector{FieldPath: field}}})
+	}
 }
 
 func TestGetGenesisPodSpecWithSPIFFE(t *testing.T) {
@@ -210,19 +216,13 @@ func TestGenesisResourcesAndBootstrapSPIFFE(t *testing.T) {
 	assert.Equal(t, "custom.csi", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
 }
 
-func TestCleanupResourcesFailures(t *testing.T) {
-	for _, resource := range []string{"jobs", "clusterrolebindings", "clusterroles", "serviceaccounts"} {
-		for _, verb := range []string{"get", "delete"} {
-			t.Run(fmt.Sprintf("%s/%s", resource, verb), func(t *testing.T) {
-				c := fakek8s.NewSimpleClientset(getGenesisJob(&Opts{}, nil), getGenesisRoleBinding(), getGenesisRole(), getGenesisServiceAccount())
-				want := errors.New("cleanup failed")
-				c.PrependReactor(verb, resource, func(action k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
-				assert.ErrorIs(t, cleanupResources(context.Background(), c), want)
-				actions := c.Actions()
-				require.NotEmpty(t, actions)
-				assert.Equal(t, verb, actions[len(actions)-1].GetVerb())
-				assert.Equal(t, resource, actions[len(actions)-1].GetResource().Resource)
-			})
+func TestGenesisPreservesSharedResources(t *testing.T) {
+	c := fakek8s.NewSimpleClientset(getGenesisRoleBinding(), getGenesisRole(), getGenesisServiceAccount())
+	require.NoError(t, createGenesis(t.Context(), &Opts{K8sC: c}))
+	for _, action := range c.Actions() {
+		assert.NotEqual(t, "delete", action.GetVerb())
+		if action.GetResource().Resource != "jobs" {
+			assert.NotEqual(t, "update", action.GetVerb())
 		}
 	}
 }
@@ -234,14 +234,11 @@ func TestCreateGenesisFailures(t *testing.T) {
 			want := errors.New("creation failed")
 			c.PrependReactor("create", resource, func(action k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 			assert.ErrorIs(t, createGenesis(context.Background(), &Opts{K8sC: c}), want)
-			actions := c.Actions()
-			assert.Equal(t, resource, actions[len(actions)-1].GetResource().Resource)
 		})
 	}
 	c := fakek8s.NewSimpleClientset()
 	c.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("cleanup forbidden")
 	})
-	assert.ErrorContains(t, createGenesis(context.Background(), &Opts{K8sC: c}), "Could not clean up components")
-	assert.Len(t, c.Actions(), 1)
+	assert.ErrorContains(t, createGenesis(context.Background(), &Opts{K8sC: c}), "cleanup forbidden")
 }

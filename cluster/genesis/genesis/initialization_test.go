@@ -59,6 +59,8 @@ func TestInitializationStateReplay(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first.id, second.id)
 	assert.Equal(t, first.inputHash, second.inputHash)
+	assert.Regexp(t, "^sys:aes256-key-[a-z0-9]{8}$", first.aesKeyName)
+	assert.Equal(t, first.aesKeyName, second.aesKeyName)
 	assert.True(t, proto.Equal(first.clusterConfig, second.clusterConfig))
 	assert.True(t, proto.Equal(first.region, second.region))
 	assert.False(t, second.complete)

@@ -29,14 +29,7 @@ import (
 func createGenesis(ctx context.Context, c kubernetes.Interface, domain,
 	version string) error {
 
-	_, err := c.BatchV1().Jobs("octelium").Create(ctx,
-		getGenesisJob(domain, version, install.GetSPIFFE(ctx, c)),
-		metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return install.SubmitGenesisJob(ctx, c, getGenesisJob(domain, version, install.GetSPIFFE(ctx, c)), nil)
 }
 
 func getGenesisJob(domain, version string, spiffe *install.SPIFFEOpts) *batchv1.Job {

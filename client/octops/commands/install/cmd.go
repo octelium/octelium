@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 	k8scorev1 "k8s.io/api/core/v1"
 
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
@@ -44,10 +45,6 @@ type Opts struct {
 
 func DoInstall(ctx context.Context, o *Opts) error {
 	if err := checkExistingInstallation(ctx, o.K8sC); err != nil {
-		return err
-	}
-
-	if err := setClusterResources(ctx, o); err != nil {
 		return err
 	}
 
@@ -133,37 +130,43 @@ func printClusterMsgs() {
 }
 
 func setClusterResources(ctx context.Context, o *Opts) error {
-
-	k8sC := o.K8sC
-
 	dataMap := map[string][]byte{
 		"region":    pbutils.MarshalMust(o.Region),
 		"bootstrap": pbutils.MarshalMust(o.Bootstrap),
 		"domain":    []byte(o.ClusterDomain),
 	}
 
-	{
-
-		if secret, err := k8sC.CoreV1().Secrets("default").Get(ctx, "octelium-init", k8smetav1.GetOptions{}); err == nil {
-			secret.Data = dataMap
-			_, err := k8sC.CoreV1().Secrets("default").Update(ctx, secret, k8smetav1.UpdateOptions{})
-			if err != nil {
-				return err
-			}
-		} else if k8serr.IsNotFound(err) {
-			_, err := k8sC.CoreV1().Secrets("default").Create(ctx, &k8scorev1.Secret{
-				ObjectMeta: k8smetav1.ObjectMeta{
-					Name: "octelium-init",
-				},
-				Data: dataMap,
-			}, k8smetav1.CreateOptions{})
-			if err != nil {
-				return err
-			}
-		} else {
+	secrets := o.K8sC.CoreV1().Secrets("default")
+	secret, err := secrets.Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+	if k8serr.IsNotFound(err) {
+		secret, err = o.K8sC.CoreV1().Secrets(octeliumNS).Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+	}
+	if k8serr.IsNotFound(err) {
+		_, err = secrets.Create(ctx, &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init"}, Data: dataMap}, k8smetav1.CreateOptions{})
+		if !k8serr.IsAlreadyExists(err) {
 			return err
 		}
+		secret, err = secrets.Get(ctx, "octelium-init", k8smetav1.GetOptions{})
 	}
-
+	if err != nil {
+		return err
+	}
+	bs, region := &cbootstrapv1.Config{}, &corev1.Region{}
+	if err := pbutils.Unmarshal(secret.Data["bootstrap"], bs); err != nil {
+		return err
+	}
+	if err := pbutils.Unmarshal(secret.Data["region"], region); err != nil {
+		return err
+	}
+	desiredBS, desiredRegion := o.Bootstrap, o.Region
+	if desiredBS == nil {
+		desiredBS = &cbootstrapv1.Config{}
+	}
+	if desiredRegion == nil {
+		desiredRegion = &corev1.Region{}
+	}
+	if string(secret.Data["domain"]) != o.ClusterDomain || !proto.Equal(bs, desiredBS) || !proto.Equal(region, desiredRegion) {
+		return errors.Errorf("The existing bootstrap differs. Refusing to replace another initialization's input")
+	}
 	return nil
 }

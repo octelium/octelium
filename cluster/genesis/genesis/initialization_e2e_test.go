@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,9 +32,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -385,7 +389,7 @@ func TestInitializationLegacyUpgradeE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.client.K8sC.CoreV1().Secrets(vutils.K8sNS).Delete(t.Context(), initializationSecretName, k8smetav1.DeleteOptions{}))
 	require.NoError(t, f.redis.Del(t.Context(), initializationRedisKey).Err())
-	_, err = f.db.ExecContext(t.Context(), `UPDATE octelium_resources SET resource = jsonb_set(resource, '{metadata,name}', '"sys:aes256-key-legacyab"') WHERE kind = 'Secret' AND resource->'metadata'->>'name' = 'sys:aes256-key-genesis'`)
+	_, err = f.db.ExecContext(t.Context(), `UPDATE octelium_resources SET resource = jsonb_set(resource, '{metadata,name}', '"sys:aes256-key-legacyab"') WHERE kind = 'Secret' AND resource->'metadata'->'systemLabels'->>'aes256-key' = 'true'`)
 	require.NoError(t, err)
 	legacyToken, err := f.client.K8sC.CoreV1().Secrets(vutils.K8sNS).Get(t.Context(), "init-token", k8smetav1.GetOptions{})
 	require.NoError(t, err)
@@ -395,6 +399,7 @@ func TestInitializationLegacyUpgradeE2E(t *testing.T) {
 	before := initializationRows(t, f.db)
 	keys := initializationSecrets(t, f.db)
 	cc := &corev1.ClusterConfig{}
+	require.Contains(t, keys, "sys:aes256-key-legacyab")
 	require.NoError(t, getInitializationResource(t.Context(), f.db, ucorev1.KindClusterConfig, "default", cc))
 	require.ErrorContains(t, f.genesis.RunInit(t.Context(), nil), "octops upgrade")
 	assert.Equal(t, before, initializationRows(t, f.db))
@@ -410,13 +415,87 @@ func TestInitializationLegacyUpgradeE2E(t *testing.T) {
 	f.checkPreserved(t)
 }
 
+func TestLegacyGenesisSubmissionCompatibilityE2E(t *testing.T) {
+	for _, tc := range []struct {
+		name, jobName, namespace, command string
+	}{
+		{"old-octops-init", "octelium-genesis", "default", "init"},
+		{"old-octops-upgrade", "octelium-genesis-upgrade-abcdef", "octelium", "upgrade"},
+		{"old-clusterman-upgrade", "octelium-genesis-upgrade-ghijkl", "octelium", "upgrade"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newInitializationFixture(t)
+			t.Setenv("OCTELIUM_GENESIS_POD_NAME", "")
+			t.Setenv("OCTELIUM_GENESIS_POD_NAMESPACE", "")
+			var keys map[string]string
+			if tc.command == "upgrade" {
+				require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+				keys = initializationSecrets(t, f.db)
+				require.NoError(t, f.client.K8sC.CoreV1().Secrets(vutils.K8sNS).Delete(t.Context(), initializationSecretName, k8smetav1.DeleteOptions{}))
+				require.NoError(t, f.redis.Del(t.Context(), initializationRedisKey).Err())
+			}
+			labels := map[string]string{"octelium.com/component": "genesis"}
+			for _, name := range []string{"octelium-genesis-init-octeliumee-abcdef", "octelium-genesis-upgrade-cordium-abcdef"} {
+				_, err := f.client.K8sC.BatchV1().Jobs(vutils.K8sNS).Create(t.Context(), &batchv1.Job{
+					ObjectMeta: k8smetav1.ObjectMeta{Name: name, Namespace: vutils.K8sNS, Labels: labels},
+					Status:     batchv1.JobStatus{Succeeded: 1},
+				}, k8smetav1.CreateOptions{})
+				require.NoError(t, err)
+			}
+			job := &batchv1.Job{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: tc.jobName, Namespace: tc.namespace, UID: types.UID(tc.jobName), Labels: labels},
+				Spec: batchv1.JobSpec{Template: k8scorev1.PodTemplateSpec{Spec: k8scorev1.PodSpec{
+					RestartPolicy: k8scorev1.RestartPolicyNever,
+					Containers: []k8scorev1.Container{{Name: "octelium-genesis", Image: "octelium-genesis:compatibility", Args: []string{tc.command}, Env: []k8scorev1.EnvVar{
+						{Name: "OCTELIUM_DOMAIN", Value: f.input.Domain}, {Name: "OCTELIUM_REGION_NAME", Value: "default"},
+					}}},
+				}}},
+			}
+			_, err := f.client.K8sC.BatchV1().Jobs(job.Namespace).Create(t.Context(), job, k8smetav1.CreateOptions{})
+			require.NoError(t, err)
+			hostname, err := os.Hostname()
+			require.NoError(t, err)
+			pod := &k8scorev1.Pod{
+				ObjectMeta: k8smetav1.ObjectMeta{
+					Name: hostname, Namespace: tc.namespace, UID: "legacy-worker", Labels: labels,
+					OwnerReferences: []k8smetav1.OwnerReference{{Kind: "Job", Name: job.Name, UID: job.UID, Controller: new(true)}},
+				},
+				Spec: job.Spec.Template.Spec, Status: k8scorev1.PodStatus{Phase: k8scorev1.PodRunning},
+			}
+			pod, err = f.client.K8sC.CoreV1().Pods(pod.Namespace).Create(t.Context(), pod, k8smetav1.CreateOptions{})
+			require.NoError(t, err)
+			f.genesis.pod, f.genesis.podNamespace = nil, tc.namespace
+			failed := false
+			f.client.K8sC.(*k8sfake.Clientset).PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+				if !failed {
+					failed = true
+					return true, nil, io.ErrUnexpectedEOF
+				}
+				return false, nil, nil
+			})
+			if tc.command == "init" {
+				require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+			} else {
+				require.NoError(t, f.genesis.RunUpgrade(t.Context(), nil))
+				assert.Equal(t, keys, initializationSecrets(t, f.db))
+				_, err = f.client.K8sC.CoreV1().Secrets(vutils.K8sNS).Get(t.Context(), initializationSecretName, k8smetav1.GetOptions{})
+				assert.Error(t, err)
+			}
+			assert.True(t, failed)
+			require.NotNil(t, f.genesis.pod)
+			assert.Equal(t, pod.UID, f.genesis.pod.UID)
+			f.checkPreserved(t)
+		})
+	}
+}
+
 func TestInitializationResourceWriteRecoveryE2E(t *testing.T) {
 	for _, point := range []struct{ kind, name string }{
 		{ucorev1.KindUser, "root"},
 		{ucorev1.KindUser, "octelium"},
 		{ucorev1.KindSecret, "sys:ssh-ca"},
 		{ucorev1.KindSecret, "sys:ssh-svc-seed"},
-		{ucorev1.KindSecret, "sys:aes256-key-genesis"},
+		{ucorev1.KindSecret, "sys:aes256-key-"},
 		{ucorev1.KindSecret, vutils.ClusterCertSecretName},
 		{ucorev1.KindSecret, "sys:bootstrap-config"},
 		{ucorev1.KindConfig, "sys:conn-info"},
@@ -427,7 +506,8 @@ func TestInitializationResourceWriteRecoveryE2E(t *testing.T) {
 				f := newInitializationFixture(t)
 				failed := false
 				hook := func(_ context.Context, object umetav1.ResourceObjectI, _, _, kind string) error {
-					if !failed && kind == point.kind && object.GetMetadata().Name == point.name {
+					if !failed && kind == point.kind && (object.GetMetadata().Name == point.name ||
+						(point.name == "sys:aes256-key-" && strings.HasPrefix(object.GetMetadata().Name, point.name))) {
 						failed = true
 						return status.Error(codes.Unavailable, "injected resource failure")
 					}
@@ -642,4 +722,61 @@ func TestInitializationRejectsInvalidCredentialE2E(t *testing.T) {
 			assert.True(t, proto.Equal(credential, current))
 		})
 	}
+}
+
+func TestGenesisConcurrentWorkerPreservesStorageE2E(t *testing.T) {
+	f := newInitializationFixture(t)
+	require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+	before := initializationRows(t, f.db)
+	for _, phase := range []k8scorev1.PodPhase{k8scorev1.PodPending, k8scorev1.PodRunning, k8scorev1.PodUnknown} {
+		pod := &k8scorev1.Pod{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: "package-worker", Namespace: vutils.K8sNS, Labels: map[string]string{"octelium.com/component": "genesis"}},
+			Status:     k8scorev1.PodStatus{Phase: phase},
+		}
+		require.NoError(t, f.client.K8sC.(*k8sfake.Clientset).Tracker().Add(pod))
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		require.ErrorContains(t, f.genesis.RunInit(ctx, nil), "may still be running")
+		cancel()
+		ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond)
+		require.ErrorContains(t, f.genesis.RunUpgrade(ctx, nil), "may still be running")
+		cancel()
+		assert.Equal(t, before, initializationRows(t, f.db))
+		require.NoError(t, f.client.K8sC.CoreV1().Pods(pod.Namespace).Delete(t.Context(), pod.Name, k8smetav1.DeleteOptions{}))
+	}
+	require.NoError(t, f.genesis.RunUpgrade(t.Context(), nil))
+	f.checkPreserved(t)
+}
+
+func TestInitializationMultipleAESKeysE2E(t *testing.T) {
+	f := newInitializationFixture(t)
+	require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+	state, err := f.genesis.prepareInitialization(t.Context(), f.input)
+	require.NoError(t, err)
+	assert.Regexp(t, "^sys:aes256-key-[a-z0-9]{8}$", state.aesKeyName)
+	additional := "sys:aes256-key-" + utilrand.GetRandomStringLowercase(8)
+	require.NoError(t, f.genesis.createAESKey(t.Context(), additional))
+	before := initializationSecrets(t, f.db)
+	require.Contains(t, before, state.aesKeyName)
+	require.Contains(t, before, additional)
+	for range 2 {
+		require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+		require.NoError(t, f.genesis.RunUpgrade(t.Context(), nil))
+		assert.Equal(t, before, initializationSecrets(t, f.db))
+	}
+}
+
+func TestInitializationPriorCheckpointAESNameE2E(t *testing.T) {
+	f := newInitializationFixture(t)
+	_, err := f.genesis.prepareInitialization(t.Context(), f.input)
+	require.NoError(t, err)
+	secret, err := f.client.K8sC.CoreV1().Secrets(vutils.K8sNS).Get(t.Context(), initializationSecretName, k8smetav1.GetOptions{})
+	require.NoError(t, err)
+	delete(secret.Data, "aes-key-name")
+	require.NoError(t, f.client.K8sC.(*k8sfake.Clientset).Tracker().Update(k8scorev1.SchemeGroupVersion.WithResource("secrets"), secret, vutils.K8sNS))
+	require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+	before := initializationSecrets(t, f.db)
+	require.Contains(t, before, "sys:aes256-key-genesis")
+	require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+	require.NoError(t, f.genesis.RunUpgrade(t.Context(), nil))
+	assert.Equal(t, before, initializationSecrets(t, f.db))
 }

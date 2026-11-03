@@ -42,6 +42,8 @@ type Genesis struct {
 	nadC             nadclientset.Interface
 	initializationID string
 	rscServer        *rscserver.Server
+	pod              *k8scorev1.Pod
+	podNamespace     string
 }
 
 func NewGenesis() (*Genesis, error) {
@@ -64,6 +66,10 @@ func NewGenesis() (*Genesis, error) {
 
 	ret.k8sC = k8sClientSet
 	ret.nadC = nadC
+	ret.podNamespace, err = genesisPodNamespace()
+	if err != nil {
+		return nil, err
+	}
 
 	return ret, nil
 }

@@ -51,6 +51,7 @@ import (
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/status"
+	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -304,20 +305,27 @@ func TestCheckUpgradeAuthenticationError(t *testing.T) {
 func TestGenesisUpgradeJobs(t *testing.T) {
 	ctx := context.Background()
 	c := fakek8s.NewSimpleClientset(&k8scorev1.ConfigMap{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-installation", Namespace: "octelium"}, Data: map[string]string{"installation.json": `{"spiffe":{"enable":true,"trustDomain":"test.local"}}`}})
-	for range 2 {
-		require.NoError(t, createGenesis(ctx, c, "example.com", "1.2.3"))
-	}
+	require.NoError(t, createGenesis(ctx, c, "example.com", "1.2.3"))
+	require.ErrorContains(t, createGenesis(ctx, c, "example.com", "1.2.3"), "still active")
 	jobs, err := c.BatchV1().Jobs("octelium").List(ctx, k8smetav1.ListOptions{})
 	require.NoError(t, err)
-	require.Len(t, jobs.Items, 2)
-	assert.NotEqual(t, jobs.Items[0].Name, jobs.Items[1].Name)
+	require.Len(t, jobs.Items, 1)
 	for _, job := range jobs.Items {
-		assert.Regexp(t, `^octelium-genesis-upgrade-[a-z0-9]{6}$`, job.Name)
+		assert.Regexp(t, "^octelium-genesis-upgrade-[a-z0-9]{6}$", job.Name)
 		assert.Equal(t, "octelium-nocturne", job.Spec.Template.Spec.ServiceAccountName)
 		assert.Equal(t, "csi.spiffe.io", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
 		assert.Equal(t, []string{"upgrade"}, job.Spec.Template.Spec.Containers[0].Args)
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+		_, err = c.BatchV1().Jobs(job.Namespace).UpdateStatus(ctx, &job, k8smetav1.UpdateOptions{})
+		require.NoError(t, err)
 	}
+	require.NoError(t, createGenesis(ctx, c, "example.com", "1.2.3"))
+	jobs, err = c.BatchV1().Jobs("octelium").List(ctx, k8smetav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, jobs.Items, 2)
+	assert.NotEqual(t, jobs.Items[0].Name, jobs.Items[1].Name)
 	want := k8serr.NewForbidden(schema.GroupResource{Group: "batch", Resource: "jobs"}, "test", fmt.Errorf("not permitted"))
+	c = fakek8s.NewSimpleClientset()
 	c.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 	assert.ErrorIs(t, createGenesis(ctx, c, "example.com", "1.2.3"), want)
 	job := getGenesisJob("example.com", "1.2.3", &install.SPIFFEOpts{CSIDriver: "custom.csi"})

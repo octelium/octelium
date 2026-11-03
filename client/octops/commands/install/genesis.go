@@ -21,14 +21,11 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
-	"github.com/pkg/errors"
-	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 const genesisNS = "default"
@@ -184,6 +181,18 @@ func GetGenesisPodSpec(o *GenesisPodSpecOpts) corev1.PodSpec {
 							Name:  "OCTELIUM_REGION_NAME",
 							Value: rgn,
 						},
+						{
+							Name: "OCTELIUM_GENESIS_POD_NAME",
+							ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: "metadata.name",
+							}},
+						},
+						{
+							Name: "OCTELIUM_GENESIS_POD_NAMESPACE",
+							ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: "metadata.namespace",
+							}},
+						},
 					}
 
 					if o.SPIFFE != nil {
@@ -215,72 +224,20 @@ func GetGenesisPodSpec(o *GenesisPodSpecOpts) corev1.PodSpec {
 }
 
 func createGenesis(ctx context.Context, o *Opts) error {
-
 	c := o.K8sC
-	if err := cleanupResources(ctx, o.K8sC); err != nil {
-		return errors.Errorf("Could not clean up components: %+v", err)
-	}
-
-	_, err := c.CoreV1().ServiceAccounts(genesisNS).Create(ctx, getGenesisServiceAccount(), metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	_, err = c.RbacV1().ClusterRoles().Create(ctx, getGenesisRole(), metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	_, err = c.RbacV1().ClusterRoleBindings().Create(ctx, getGenesisRoleBinding(), metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	_, err = c.BatchV1().Jobs(genesisNS).Create(ctx,
-		getGenesisJob(o, spiffeFromBootstrap(o.Bootstrap)), metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func cleanupResources(ctx context.Context, c kubernetes.Interface) error {
-	zap.S().Debugf("Cleaning up resources if existent")
-	if _, err := c.BatchV1().Jobs(genesisNS).Get(ctx, genesisJobName, metav1.GetOptions{}); err == nil {
-		zap.S().Debugf("Deleting already existing job")
-		if err := c.BatchV1().Jobs(genesisNS).Delete(ctx, genesisJobName, metav1.DeleteOptions{}); err != nil {
+	return SubmitGenesisJob(ctx, c, getGenesisJob(o, spiffeFromBootstrap(o.Bootstrap)), func(ctx context.Context) error {
+		if err := setClusterResources(ctx, o); err != nil {
 			return err
 		}
-	} else if !k8serr.IsNotFound(err) {
-		return err
-	}
-
-	if _, err := c.RbacV1().ClusterRoleBindings().Get(ctx, getGenesisRoleBinding().Name, metav1.GetOptions{}); err == nil {
-		if err := c.RbacV1().ClusterRoleBindings().Delete(ctx, getGenesisRoleBinding().Name, metav1.DeleteOptions{}); err != nil {
+		if _, err := c.CoreV1().ServiceAccounts(genesisNS).Create(ctx, getGenesisServiceAccount(), metav1.CreateOptions{}); err != nil && !k8serr.IsAlreadyExists(err) {
 			return err
 		}
-	} else if !k8serr.IsNotFound(err) {
-		return err
-	}
-
-	if _, err := c.RbacV1().ClusterRoles().Get(ctx, getGenesisRole().Name, metav1.GetOptions{}); err == nil {
-		if err := c.RbacV1().ClusterRoles().Delete(ctx, getGenesisRole().Name, metav1.DeleteOptions{}); err != nil {
+		if _, err := c.RbacV1().ClusterRoles().Create(ctx, getGenesisRole(), metav1.CreateOptions{}); err != nil && !k8serr.IsAlreadyExists(err) {
 			return err
 		}
-
-	} else if !k8serr.IsNotFound(err) {
-		return err
-	}
-
-	if _, err := c.CoreV1().ServiceAccounts(genesisNS).Get(ctx, getGenesisServiceAccount().Name, metav1.GetOptions{}); err == nil {
-		if err := c.CoreV1().ServiceAccounts(genesisNS).Delete(ctx, getGenesisServiceAccount().Name, metav1.DeleteOptions{}); err != nil {
+		if _, err := c.RbacV1().ClusterRoleBindings().Create(ctx, getGenesisRoleBinding(), metav1.CreateOptions{}); err != nil && !k8serr.IsAlreadyExists(err) {
 			return err
 		}
-
-	} else if !k8serr.IsNotFound(err) {
-		return err
-	}
-
-	return nil
+		return nil
+	})
 }
