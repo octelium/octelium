@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/rscserver/rscserver"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"go.uber.org/zap"
@@ -36,9 +37,11 @@ import (
 )
 
 type Genesis struct {
-	k8sC      kubernetes.Interface
-	octeliumC octeliumc.ClientInterface
-	nadC      nadclientset.Interface
+	k8sC             kubernetes.Interface
+	octeliumC        octeliumc.ClientInterface
+	nadC             nadclientset.Interface
+	initializationID string
+	rscServer        *rscserver.Server
 }
 
 func NewGenesis() (*Genesis, error) {
@@ -136,26 +139,24 @@ func (g *Genesis) initRegion(cr *LoadedClusterResource) (*corev1.Region, error) 
 
 func (g *Genesis) createPostgresSecret(ctx context.Context, dataMap map[string][]byte) error {
 	zap.L().Debug("Creating postgres k8s secret")
-	_, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
+	return g.createStorageSecret(ctx, &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name:      "octelium-postgres",
 			Namespace: vutils.K8sNS,
 		},
 		Data: dataMap,
-	}, k8smetav1.CreateOptions{})
-	return err
+	})
 }
 
 func (g *Genesis) createRedisSecret(ctx context.Context, dataMap map[string][]byte) error {
 	zap.L().Debug("Creating redis k8s secret")
-	_, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
+	return g.createStorageSecret(ctx, &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name:      "octelium-redis",
 			Namespace: vutils.K8sNS,
 		},
 		Data: dataMap,
-	}, k8smetav1.CreateOptions{})
-	return err
+	})
 }
 
 type LoadedClusterResource struct {

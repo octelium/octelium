@@ -167,7 +167,7 @@ func TestDoInstallLaterStageErrors(t *testing.T) {
 	c.PrependReactor("create", "serviceaccounts", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 	assert.ErrorIs(t, DoInstall(context.Background(), &Opts{K8sC: c}), want)
 	for _, action := range c.Actions() {
-		if action.GetResource().Resource == "secrets" {
+		if action.GetResource().Resource == "secrets" && action.GetVerb() != "get" {
 			assert.Equal(t, "default", action.GetNamespace())
 		}
 	}

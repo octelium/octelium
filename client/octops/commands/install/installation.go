@@ -20,7 +20,9 @@ import (
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	ocorev1 "github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -84,4 +86,32 @@ func (o *SPIFFEOpts) getCSIDriver() string {
 		return o.CSIDriver
 	}
 	return "csi.spiffe.io"
+}
+
+func checkExistingInstallation(ctx context.Context, c kubernetes.Interface) error {
+	alreadyInstalled := errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
+	if _, err := c.CoreV1().Secrets(octeliumNS).Get(ctx, "init-token", k8smetav1.GetOptions{}); err == nil {
+		return alreadyInstalled
+	} else if !k8serr.IsNotFound(err) {
+		return err
+	}
+	if state, err := c.CoreV1().Secrets(octeliumNS).Get(ctx, "octelium-genesis-init", k8smetav1.GetOptions{}); err == nil {
+		if state.Annotations["octelium.com/genesis-init-complete"] == "true" {
+			return alreadyInstalled
+		}
+		return nil
+	} else if !k8serr.IsNotFound(err) {
+		return err
+	}
+	if _, err := c.CoreV1().Secrets(octeliumNS).Get(ctx, "octelium-init", k8smetav1.GetOptions{}); err == nil {
+		return alreadyInstalled
+	} else if !k8serr.IsNotFound(err) {
+		return err
+	}
+	if _, err := c.CoreV1().ConfigMaps(octeliumNS).Get(ctx, installationConfigMapName, k8smetav1.GetOptions{}); err == nil {
+		return alreadyInstalled
+	} else if !k8serr.IsNotFound(err) {
+		return err
+	}
+	return nil
 }

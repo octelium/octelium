@@ -31,10 +31,11 @@ import (
 	"github.com/octelium/octelium/apis/cluster/cclusterv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/clusterconfig"
 	oc "github.com/octelium/octelium/cluster/common/components"
-	"github.com/octelium/octelium/cluster/common/jwkctl/jwkutils"
+	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -42,7 +43,6 @@ import (
 	"github.com/octelium/octelium/cluster/genesis/genesis/genesisutils"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
@@ -50,6 +50,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -68,104 +69,77 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		return err
 	}
 
-	if err := g.setDataPlaneNodeTaints(ctx); err != nil {
+	initResources, err := g.loadInitializationInput(ctx)
+	if err != nil {
 		return err
 	}
-
+	if initResources.Bootstrap.GetSpec().GetPrimaryStorage().GetPostgresql() == nil ||
+		initResources.Bootstrap.GetSpec().GetSecondaryStorage().GetRedis() == nil {
+		return errors.Errorf("The bootstrap must contain PostgreSQL and Redis storage configuration")
+	}
 	if err := g.setNamespace(ctx); err != nil {
 		return err
 	}
-
-	initResources, err := g.loadClusterInitResources(ctx, "default")
+	init, err := g.prepareInitialization(ctx, initResources)
 	if err != nil {
 		return err
 	}
-
-	bootstrap := initResources.Bootstrap
-
-	region, err := g.initRegion(initResources)
-	if err != nil {
+	g.initializationID = init.id
+	if init.complete {
+		_, err := g.getInitAuthenticationToken(ctx)
 		return err
 	}
 
-	zap.L().Debug("Loaded Cluster resources",
-		zap.Any("region", region))
-
-	clusterCfg, err := g.initClusterConfig(ctx, bootstrap, initResources.Domain)
+	if err := g.initStorage(ctx, &genesisutils.InstallCtx{Bootstrap: initResources.Bootstrap}); err != nil {
+		return err
+	}
+	rscSrv, err := rscserver.NewServer(ctx, nil)
 	if err != nil {
+		return err
+	}
+	defer rscSrv.Stop()
+	unlock, err := lockInitialization(ctx, rscSrv.GetDB())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	iCtx, err := initializeClusterResources(ctx, rscSrv, init)
+	if err != nil {
+		return err
+	}
+	iCtx.Bootstrap = initResources.Bootstrap
+	clusterCfg := iCtx.ClusterConfig
+	region := iCtx.Region
+	if _, err := g.getInitAuthenticationToken(ctx); err == nil {
+		return g.completeInitialization(ctx, init)
+	} else if !k8serr.IsNotFound(err) {
 		return err
 	}
 
 	if err := g.setInstallationConfigMap(ctx, clusterCfg); err != nil {
 		return err
 	}
-
-	iCtx := &genesisutils.InstallCtx{
-		ClusterConfig: clusterCfg,
-		Region:        region,
-		Bootstrap:     bootstrap,
-	}
-
-	if err := g.initStorage(ctx, iCtx); err != nil {
+	if err := g.setDataPlaneNodeTaints(ctx); err != nil {
 		return err
-	}
-
-	{
-		rscSrv, err := rscserver.NewServer(ctx, nil)
-		if err != nil {
-			return err
-		}
-
-		if _, err := rscSrv.GetDB().ExecContext(ctx, `TRUNCATE TABLE octelium_resources`); err != nil {
-			zap.L().Warn("Could not truncate the octelium_resources table", zap.Error(err))
-		}
-
-		redisC := rscSrv.GetRedisC()
-		if err := redisC.FlushDB(ctx).Err(); err != nil {
-			zap.L().Debug("Could not do Redis flushDB. Trying to manually delete keys", zap.Error(err))
-
-			keys, err := redisC.Keys(ctx, "*").Result()
-			if err == nil {
-				if len(keys) > 0 {
-					if err := redisC.Del(ctx, keys...).Err(); err != nil {
-						zap.L().Warn("Could not delete Redis database keys", zap.Error(err))
-					}
-				}
-			} else {
-				zap.L().Warn("Could not fetch current Redis keys", zap.Error(err))
-			}
-		}
-
-		clusterCfgI, err := rscSrv.CreateResource(ctx,
-			clusterCfg, ucorev1.API, ucorev1.Version, ucorev1.KindClusterConfig)
-		if err != nil {
-			return err
-		}
-
-		iCtx.ClusterConfig = clusterCfgI.(*corev1.ClusterConfig)
-
-		regionI, err := rscSrv.CreateResource(ctx,
-			region, ucorev1.API, ucorev1.Version, ucorev1.KindRegion)
-		if err != nil {
-			return err
-		}
-		iCtx.Region = regionI.(*corev1.Region)
 	}
 
 	zap.L().Debug("creating rscServer")
 
 	if ldflags.IsTest() {
-		os.Setenv("OCTELIUM_TEST_RSCSERVER_PORT", "25432")
-		// os.Setenv("OCTELIUM_POSTGRES_DATABASE", "octelium")
-		rscSrv, err := rscserver.NewServer(ctx, nil)
-		if err != nil {
-			return err
-		}
-
-		zap.L().Debug("Running rscServer")
-		err = rscSrv.Run(ctx)
-		if err != nil {
-			return err
+		if g.rscServer == nil {
+			if os.Getenv("OCTELIUM_TEST_RSCSERVER_PORT") == "" {
+				os.Setenv("OCTELIUM_TEST_RSCSERVER_PORT", "25432")
+			}
+			g.rscServer, err = rscserver.NewServer(ctx, nil)
+			if err != nil {
+				return err
+			}
+			if err := g.rscServer.Run(ctx); err != nil {
+				g.rscServer.Stop()
+				g.rscServer = nil
+				return err
+			}
 		}
 	} else {
 		if err := components.CreateRscServer(ctx, &components.CommonOpts{
@@ -206,14 +180,14 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	}
 
 	if err := g.createSSHServiceSeedSecret(ctx); err != nil {
-		zap.L().Warn("Could not createSSHServiceSeedSecret", zap.Error(err))
+		return err
 	}
 
 	if err := g.createAESKey(ctx); err != nil {
 		return err
 	}
 
-	if _, err := jwkutils.CreateJWKSecret(ctx, octeliumC); err != nil {
+	if _, err := jwkctl.NewJWKController(ctx, octeliumC, nil); err != nil {
 		return err
 	}
 
@@ -245,22 +219,17 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
 	}
 
+	if err := g.setBootstrapSecret(ctx, initResources.Bootstrap); err != nil {
+		return err
+	}
+	if err := g.moveClusterInitResources(ctx); err != nil {
+		return err
+	}
 	if err := g.createInitAuthenticationToken(ctx); err != nil {
 		return err
 	}
-
-	/*
-		if err := g.setGlobalConfigMap(ctx, clusterCfg, region); err != nil {
-			return err
-		}
-	*/
-
-	if err := g.setBootstrapSecret(ctx, bootstrap); err != nil {
+	if err := g.completeInitialization(ctx, init); err != nil {
 		return err
-	}
-
-	if err := g.moveClusterInitResources(ctx); err != nil {
-		zap.L().Error("Could not move octelium-init", zap.Error(err))
 	}
 
 	zap.L().Info("Successfully initialized the Cluster")
@@ -360,7 +329,7 @@ func (g *Genesis) setInitClusterCertificate(ctx context.Context, clusterCfg *cor
 
 	ucorev1.ToSecret(crt).SetCertificate(chainPEM.String(), privPEM)
 
-	_, err = g.octeliumC.CoreC().CreateSecret(ctx, crt)
+	_, err = createInitResource(ctx, crt, g.octeliumC.CoreC().GetSecret, g.octeliumC.CoreC().CreateSecret)
 	if err != nil {
 		return err
 	}
@@ -464,7 +433,7 @@ func (g *Genesis) setBootstrapSecret(ctx context.Context, bs *cbootstrapv1.Confi
 		},
 	}
 
-	_, err = g.octeliumC.CoreC().CreateSecret(ctx, crt)
+	_, err = createInitResource(ctx, crt, g.octeliumC.CoreC().GetSecret, g.octeliumC.CoreC().CreateSecret)
 	if err != nil {
 		return err
 	}
@@ -865,7 +834,7 @@ func (g *Genesis) setConnInfoConfig(ctx context.Context) error {
 		return err
 	}
 
-	_, err = g.octeliumC.CoreC().CreateConfig(ctx, &corev1.Config{
+	_, err = createInitResource(ctx, &corev1.Config{
 		Metadata: &metav1.Metadata{
 			Name:           "sys:conn-info",
 			IsSystem:       true,
@@ -879,7 +848,7 @@ func (g *Genesis) setConnInfoConfig(ctx context.Context) error {
 				Attrs: attrs,
 			},
 		},
-	})
+	}, g.octeliumC.CoreC().GetConfig, g.octeliumC.CoreC().CreateConfig)
 	if err != nil {
 		return err
 	}
@@ -900,7 +869,7 @@ func (g *Genesis) setNadConfig(ctx context.Context) error {
 
 	_, err := g.nadC.K8sCniCncfIoV1().NetworkAttachmentDefinitions(vutils.K8sNS).
 		Create(ctx, nad, k8smetav1.CreateOptions{})
-	if err != nil {
+	if err != nil && !k8serr.IsAlreadyExists(err) {
 		return err
 	}
 
@@ -1135,7 +1104,7 @@ func (g *Genesis) createSSHCA(ctx context.Context) error {
 		return err
 	}
 
-	_, err = g.octeliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+	_, err = createInitResource(ctx, &corev1.Secret{
 		Metadata: &metav1.Metadata{
 			Name:           "sys:ssh-ca",
 			IsSystem:       true,
@@ -1149,7 +1118,7 @@ func (g *Genesis) createSSHCA(ctx context.Context) error {
 				ValueBytes: []byte(privPEM),
 			},
 		},
-	})
+	}, g.octeliumC.CoreC().GetSecret, g.octeliumC.CoreC().CreateSecret)
 	if err != nil {
 		return err
 	}
@@ -1160,7 +1129,7 @@ func (g *Genesis) createSSHCA(ctx context.Context) error {
 }
 
 func (g *Genesis) createSSHServiceSeedSecret(ctx context.Context) error {
-	_, err := g.octeliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+	_, err := createInitResource(ctx, &corev1.Secret{
 		Metadata: &metav1.Metadata{
 			Name:           "sys:ssh-svc-seed",
 			IsSystem:       true,
@@ -1174,7 +1143,7 @@ func (g *Genesis) createSSHServiceSeedSecret(ctx context.Context) error {
 				ValueBytes: []byte(utilrand.GetRandomBytesMust(32)),
 			},
 		},
-	})
+	}, g.octeliumC.CoreC().GetSecret, g.octeliumC.CoreC().CreateSecret)
 	if err != nil {
 		if grpcerr.AlreadyExists(err) {
 			return nil
@@ -1195,7 +1164,7 @@ func (g *Genesis) createAESKey(ctx context.Context) error {
 	}
 	secret := &corev1.Secret{
 		Metadata: &metav1.Metadata{
-			Name: fmt.Sprintf("sys:aes256-key-%s", utilrand.GetRandomStringLowercase(8)),
+			Name: "sys:aes256-key-genesis",
 			SystemLabels: map[string]string{
 				"aes256-key": "true",
 			},
@@ -1214,7 +1183,7 @@ func (g *Genesis) createAESKey(ctx context.Context) error {
 		},
 	}
 
-	if _, err := g.octeliumC.CoreC().CreateSecret(ctx, secret); err != nil {
+	if _, err := createInitResource(ctx, secret, g.octeliumC.CoreC().GetSecret, g.octeliumC.CoreC().CreateSecret); err != nil {
 		return err
 	}
 
@@ -1223,13 +1192,18 @@ func (g *Genesis) createAESKey(ctx context.Context) error {
 
 func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 	zap.L().Debug("Creating the initial root authentication token")
+	if _, err := g.getInitAuthenticationToken(ctx); err == nil {
+		return nil
+	} else if !k8serr.IsNotFound(err) {
+		return err
+	}
 
 	adminSrv := admin.NewServer(&admin.Opts{
 		OcteliumC:  g.octeliumC,
 		IsEmbedded: true,
 	})
 
-	cred, err := adminSrv.CreateCredential(ctx, &corev1.Credential{
+	cred, err := createInitResource(ctx, &corev1.Credential{
 		Metadata: &metav1.Metadata{
 			Name:        "root-init",
 			Description: `This is the initial authentication token used upon the Cluster installation. You might want to delete it once you have added your own Users and other resources`,
@@ -1259,27 +1233,59 @@ func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 				},
 			},
 		},
+	}, g.octeliumC.CoreC().GetCredential, func(ctx context.Context, cred *corev1.Credential, _ ...grpc.CallOption) (*corev1.Credential, error) {
+		return adminSrv.CreateCredential(ctx, cred)
 	})
 	if err != nil {
 		return err
 	}
 
-	tkn, err := adminSrv.GenerateCredentialToken(ctx, &corev1.GenerateCredentialTokenRequest{
-		CredentialRef: umetav1.GetObjectReference(cred),
-	})
+	if cred.GetStatus() == nil || cred.GetSpec().GetType() != corev1.Credential_Spec_AUTH_TOKEN ||
+		cred.Spec.User != "root" || cred.Spec.IsDisabled || cred.Status.IsLocked ||
+		(cred.Spec.ExpiresAt.IsValid() && !time.Now().Before(cred.Spec.ExpiresAt.AsTime())) {
+		return errors.Errorf("The initial root Credential is invalid, disabled, locked or expired")
+	}
+	if cred.Status.UserRef.GetUid() == "" {
+		return errors.Errorf("The initial root Credential has no User reference")
+	}
+	usr, err := g.octeliumC.CoreC().GetUser(ctx, &rmetav1.GetOptions{Uid: cred.Status.UserRef.Uid})
+	if err != nil {
+		return err
+	}
+	if usr.GetMetadata().GetName() != "root" || usr.Metadata.IsSystem {
+		return errors.Errorf("The initial root Credential does not reference the root User")
+	}
+	if cred.Status.TokenID == "" {
+		cred.Status.TokenID = vutils.UUIDv4()
+		cred.Status.LastRotationAt = pbutils.Now()
+		cred.Status.TotalRotations++
+		cred, err = g.octeliumC.CoreC().UpdateCredential(ctx, cred)
+		if err != nil {
+			return err
+		}
+	}
+	jwkCtl, err := jwkctl.NewJWKController(ctx, g.octeliumC, nil)
+	if err != nil {
+		return err
+	}
+	tkn, err := jwkCtl.CreateCredential(cred)
 	if err != nil {
 		return err
 	}
 
 	_, err = g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
-			Name:      "init-token",
-			Namespace: vutils.K8sNS,
+			Name:        "init-token",
+			Namespace:   vutils.K8sNS,
+			Annotations: map[string]string{initializationIDKey: g.initializationID},
 		},
 		Data: map[string][]byte{
-			"data": []byte(tkn.GetAuthenticationToken().AuthenticationToken),
+			"data": []byte(tkn),
 		},
 	}, k8smetav1.CreateOptions{})
+	if k8serr.IsAlreadyExists(err) {
+		_, err = g.getInitAuthenticationToken(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -1331,7 +1337,10 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 			if node.Labels == nil {
 				node.Labels = make(map[string]string)
 			}
-			_, isRegistered := node.Labels[vutils.NodeLabelGatewayRegistered]
+			isRegistered := node.Labels[vutils.NodeLabelGatewayRegistered] == "true"
+			if isRegistered {
+				return nil
+			}
 
 			if hasTaint && !isRegistered {
 				return nil
@@ -1367,44 +1376,34 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 func (g *Genesis) setNamespace(ctx context.Context) error {
 	zap.L().Debug("Initializing the octelium k8s namespace")
 
-	if _, err := g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{}); err == nil {
-		zap.L().Debug("Deleting existent octelium namespace")
-		if err := g.k8sC.CoreV1().Namespaces().Delete(ctx, vutils.K8sNS, k8smetav1.DeleteOptions{}); err != nil {
-			return err
+	namespace, err := g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
+	if err == nil {
+		if namespace.DeletionTimestamp != nil {
+			return errors.Errorf("The octelium namespace is terminating. Refusing to initialize the Cluster")
 		}
-
-		if err := func() error {
-			for i := 0; i < 1000; i++ {
-				_, err := g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
-				if err != nil && k8serr.IsNotFound(err) {
-					return nil
-				}
-				zap.L().Debug("octelium namespace is still deleting. Trying again...")
-				time.Sleep(3 * time.Second)
-			}
-			return errors.Errorf("Could not delete octelium namespace")
-		}(); err != nil {
-			return err
-		}
+		return nil
 	} else if !k8serr.IsNotFound(err) {
 		return err
 	}
 
-	zap.L().Debug("Creating octelium namespace")
-	_, err := g.k8sC.CoreV1().Namespaces().Create(ctx, &k8scorev1.Namespace{
+	_, err = g.k8sC.CoreV1().Namespaces().Create(ctx, &k8scorev1.Namespace{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name: vutils.K8sNS,
 			Labels: map[string]string{
 				"app": "octelium",
 			},
 		},
-		Spec: k8scorev1.NamespaceSpec{},
 	}, k8smetav1.CreateOptions{})
+	if k8serr.IsAlreadyExists(err) {
+		namespace, err = g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
+		if err == nil && namespace.DeletionTimestamp != nil {
+			return errors.Errorf("The octelium namespace is terminating. Refusing to initialize the Cluster")
+		}
+	}
 	return err
 }
 
 func (g *Genesis) moveK8SSecret(ctx context.Context, secFrom *k8scorev1.Secret) error {
-	var err error
 	sec := &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name:      secFrom.Name,
@@ -1414,15 +1413,26 @@ func (g *Genesis) moveK8SSecret(ctx context.Context, secFrom *k8scorev1.Secret) 
 		StringData: secFrom.StringData,
 		Type:       secFrom.Type,
 	}
-
-	_, err = g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, sec, k8smetav1.CreateOptions{})
-	if err != nil {
+	_, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, sec, k8smetav1.CreateOptions{})
+	if k8serr.IsAlreadyExists(err) {
+		existing, getErr := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, sec.Name, k8smetav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
+		if !equalInitializationSecrets(existing, sec) {
+			return errors.Errorf("The existing bootstrap Secret differs from the initialization input")
+		}
+	} else if err != nil {
 		return err
 	}
 
-	g.k8sC.CoreV1().Secrets(secFrom.Namespace).Delete(ctx, secFrom.Name, k8smetav1.DeleteOptions{})
-
-	return nil
+	err = g.k8sC.CoreV1().Secrets(secFrom.Namespace).Delete(ctx, secFrom.Name, k8smetav1.DeleteOptions{
+		Preconditions: &k8smetav1.Preconditions{UID: &secFrom.UID, ResourceVersion: &secFrom.ResourceVersion},
+	})
+	if k8serr.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func (g *Genesis) createUsersGroups(ctx context.Context, clusterCfg *corev1.ClusterConfig) error {
@@ -1439,7 +1449,7 @@ func (g *Genesis) createUsersGroups(ctx context.Context, clusterCfg *corev1.Clus
 		},
 	}
 
-	_, err = g.octeliumC.CoreC().CreateUser(ctx, rootUser)
+	_, err = createInitResource(ctx, rootUser, g.octeliumC.CoreC().GetUser, g.octeliumC.CoreC().CreateUser)
 	if err != nil {
 		return err
 	}
@@ -1455,7 +1465,7 @@ func (g *Genesis) createUsersGroups(ctx context.Context, clusterCfg *corev1.Clus
 				Type: corev1.User_Spec_WORKLOAD,
 			},
 		}
-		_, err = g.octeliumC.CoreC().CreateUser(ctx, usr)
+		_, err = createInitResource(ctx, usr, g.octeliumC.CoreC().GetUser, g.octeliumC.CoreC().CreateUser)
 		if err != nil {
 			return err
 		}
@@ -1505,6 +1515,10 @@ func (g *Genesis) loadClusterInitResources(ctx context.Context, ns string) (*Loa
 func (g *Genesis) moveClusterInitResources(ctx context.Context) error {
 
 	sec, err := g.k8sC.CoreV1().Secrets("default").Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+	if k8serr.IsNotFound(err) {
+		_, err = g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+		return err
+	}
 	if err != nil {
 		return err
 	}

@@ -33,6 +33,7 @@ func Phases() []Phase {
 	return []Phase{
 		{"ClusterReady", testClusterReady},
 		{"CLIVersions", testCLIVersions},
+		{"GenesisInitializationReplay", testGenesisInitializationReplay},
 		{"IngressPublic", testIngressPublic},
 		{"AdminAPI", testAdminAPI},
 		{"APIValidationLoad", testAPIValidationLoad},

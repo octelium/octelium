@@ -43,6 +43,9 @@ type Opts struct {
 }
 
 func DoInstall(ctx context.Context, o *Opts) error {
+	if err := checkExistingInstallation(ctx, o.K8sC); err != nil {
+		return err
+	}
 
 	if err := setClusterResources(ctx, o); err != nil {
 		return err

@@ -178,12 +178,9 @@ func TestOctopsStorageBootstrapErrors(t *testing.T) {
 }
 
 func TestOctopsNamespaceErrors(t *testing.T) {
-	for _, verb := range []string{"get", "delete", "create"} {
+	for _, verb := range []string{"get", "create"} {
 		t.Run(verb, func(t *testing.T) {
 			c := fakek8s.NewSimpleClientset()
-			if verb == "delete" {
-				require.NoError(t, c.Tracker().Add(&k8scorev1.Namespace{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium"}}))
-			}
 			c.PrependReactor(verb, "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "octelium", fmt.Errorf("not permitted"))
 			})
@@ -339,6 +336,7 @@ func TestRunInitNodesReadiness(t *testing.T) {
 }
 
 func TestRunInit(t *testing.T) {
+	reserveInitializationRedis(t)
 
 	ldflags.TestMode = "true"
 	ldflags.PrivateRegistry = "false"
@@ -392,6 +390,11 @@ func TestRunInit(t *testing.T) {
 
 		err = g.RunInit(ctx, nil)
 		assert.Nil(t, err, "%+v", err)
+		t.Cleanup(func() {
+			if g.rscServer != nil {
+				g.rscServer.Stop()
+			}
+		})
 
 		{
 			sec, err := g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
