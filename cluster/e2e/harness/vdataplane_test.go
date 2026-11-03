@@ -17,11 +17,13 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -58,6 +60,7 @@ type testGateway struct {
 	port  int
 	key   wgtypes.Key
 	dev   *device.Device
+	net   *netstack.Net
 }
 
 func freeUDPPort(t *testing.T) int {
@@ -104,7 +107,7 @@ func newTestWGGateway(t *testing.T, id string, cidrs []string, addrs ...netip.Ad
 		serveHTTP(t, tnet, addr, id)
 	}
 
-	return &testGateway{id: id, addrs: addrs, cidrs: cidrs, port: port, key: key, dev: dev}
+	return &testGateway{id: id, addrs: addrs, cidrs: cidrs, port: port, key: key, dev: dev, net: tnet}
 }
 
 func (g *testGateway) allowPeer(t *testing.T, pub wgtypes.Key, allowed ...string) {
@@ -265,6 +268,100 @@ func TestDataPlaneWireGuardL3Mode(t *testing.T) {
 
 	_, _, err = dp.Get(t.Context(), "http://[fd91::1]/", 2*time.Second)
 	assert.Error(t, err)
+}
+
+func TestDataPlaneWireGuardMTUAndDatagrams(t *testing.T) {
+	gw := newTestWGGateway(t, "gw-mtu", []string{"10.91.0.0/24", "fd91::/64"},
+		netip.MustParseAddr("10.91.0.1"), netip.MustParseAddr("fd91::1"))
+	state, key := testState(t, userv1.ConnectionState_BOTH)
+	gw.allowPeer(t, key.PublicKey(), clientV4+"/32", clientV6+"/128")
+	dp, err := NewDataPlane(state, []*userv1.Gateway{gw.user()}, DataPlaneOpts{})
+	require.NoError(t, err)
+	t.Cleanup(dp.Close)
+	require.NoError(t, dp.WaitReady(t.Context()))
+
+	for _, family := range []struct {
+		name       string
+		address    string
+		udpPayload int
+	}{
+		{"4", "10.91.0.1", 1252},
+		{"6", "fd91::1", 1232},
+	} {
+		t.Run("tcp"+family.name, func(t *testing.T) {
+			listener, err := gw.net.ListenTCP(&net.TCPAddr{IP: net.ParseIP(family.address)})
+			require.NoError(t, err)
+			t.Cleanup(func() { listener.Close() })
+			served := make(chan error, 1)
+			go func() {
+				connection, err := listener.Accept()
+				if err != nil {
+					served <- err
+					return
+				}
+				defer connection.Close()
+				connection.SetDeadline(time.Now().Add(10 * time.Second))
+				_, err = io.Copy(connection, connection)
+				served <- err
+			}()
+			connection, err := dp.DialContext(t.Context(), "tcp"+family.name, listener.Addr().String())
+			require.NoError(t, err)
+			t.Cleanup(func() { connection.Close() })
+			require.NoError(t, connection.SetDeadline(time.Now().Add(10*time.Second)))
+			payload := bytes.Repeat([]byte("octelium-wireguard-mtu"), 16384)
+			written := make(chan error, 1)
+			go func() {
+				_, err := io.Copy(connection, bytes.NewReader(payload))
+				written <- err
+			}()
+			got := make([]byte, len(payload))
+			_, err = io.ReadFull(connection, got)
+			require.NoError(t, err)
+			assert.Equal(t, payload, got)
+			require.NoError(t, <-written)
+			require.NoError(t, connection.Close())
+			require.NoError(t, <-served)
+		})
+
+		t.Run("udp"+family.name, func(t *testing.T) {
+			listener, err := gw.net.ListenUDPAddrPort(netip.AddrPortFrom(netip.MustParseAddr(family.address), 0))
+			require.NoError(t, err)
+			t.Cleanup(func() { listener.Close() })
+			require.NoError(t, listener.SetDeadline(time.Now().Add(10*time.Second)))
+			sizes := []int{0, 1, family.udpPayload, family.udpPayload + 1, 4096, 32000}
+			served := make(chan error, 1)
+			go func() {
+				buffer := make([]byte, 65535)
+				for range sizes {
+					n, from, err := listener.ReadFrom(buffer)
+					if err != nil {
+						served <- err
+						return
+					}
+					if _, err := listener.WriteTo(buffer[:n], from); err != nil {
+						served <- err
+						return
+					}
+				}
+				served <- nil
+			}()
+			connection, err := dp.DialContext(t.Context(), "udp"+family.name, listener.LocalAddr().String())
+			require.NoError(t, err)
+			t.Cleanup(func() { connection.Close() })
+			require.NoError(t, connection.SetDeadline(time.Now().Add(10*time.Second)))
+			for i, size := range sizes {
+				payload := bytes.Repeat([]byte{byte(i + 1)}, size)
+				n, err := connection.Write(payload)
+				require.NoError(t, err, "payload size %d", size)
+				require.Equal(t, len(payload), n)
+				got := make([]byte, size+1)
+				n, err = connection.Read(got)
+				require.NoError(t, err, "payload size %d", size)
+				assert.Equal(t, payload, got[:n], "payload size %d", size)
+			}
+			require.NoError(t, <-served)
+		})
+	}
 }
 
 func TestDataPlaneWireGuardSpoofedSource(t *testing.T) {

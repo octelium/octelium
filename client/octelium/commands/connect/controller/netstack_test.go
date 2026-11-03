@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -147,6 +148,94 @@ func TestNetTunWrite(t *testing.T) {
 	assert.Equal(t, len(bufs), n)
 	assert.Equal(t, []tcpip.NetworkProtocolNumber{header.IPv4ProtocolNumber, header.IPv6ProtocolNumber}, dispatcher.protocols)
 	assert.Equal(t, [][]byte{v4, v6}, dispatcher.packets)
+}
+
+func TestNetTunWritePacketsPreservesQueuedData(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		capacity int
+		closed   bool
+		want     int
+	}{
+		{"batch", 2, false, 2},
+		{"queue-full", 1, false, 1},
+		{"closed", 2, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dev := &netTun{closed: make(chan struct{}), incomingPacket: make(chan *bufferv2.View, tc.capacity)}
+			if tc.closed {
+				close(dev.closed)
+			}
+			payloads := [][]byte{{4 << 4, 1, 2, 3}, {6 << 4, 4, 5, 6}}
+			var packets stack.PacketBufferList
+			var released int
+			for _, payload := range payloads {
+				packets.PushBack(stack.NewPacketBuffer(stack.PacketBufferOptions{
+					Payload: bufferv2.MakeWithData(payload),
+					OnRelease: func() {
+						released++
+					},
+				}))
+			}
+			n, err := (*endpoint)(dev).WritePackets(packets)
+			packets.DecRef()
+			require.Equal(t, tc.want, n)
+			switch {
+			case tc.closed:
+				assert.IsType(t, &tcpip.ErrClosedForSend{}, err)
+			case tc.want < len(payloads):
+				assert.IsType(t, &tcpip.ErrNoBufferSpace{}, err)
+			default:
+				assert.Nil(t, err)
+			}
+			for i := range n {
+				buffer := bytes.Repeat([]byte{0xA5}, 20)
+				sizes := []int{0}
+				count, err := dev.Read([][]byte{buffer}, sizes, 16)
+				require.NoError(t, err)
+				assert.Equal(t, 1, count)
+				assert.Equal(t, payloads[i], buffer[16:16+sizes[0]])
+				assert.Equal(t, bytes.Repeat([]byte{0xA5}, 16), buffer[:16])
+			}
+			assert.Equal(t, len(payloads), released)
+			assert.Empty(t, dev.incomingPacket)
+		})
+	}
+}
+
+type retainedNetstackDispatcher struct {
+	packets []*stack.PacketBuffer
+}
+
+func (d *retainedNetstackDispatcher) DeliverNetworkPacket(_ tcpip.NetworkProtocolNumber, packet *stack.PacketBuffer) {
+	d.packets = append(d.packets, packet.IncRef())
+}
+
+func (*retainedNetstackDispatcher) DeliverLinkPacket(tcpip.NetworkProtocolNumber, *stack.PacketBuffer) {
+}
+
+func TestNetTunWriteDoesNotRetainCallerBuffers(t *testing.T) {
+	dispatcher := &retainedNetstackDispatcher{}
+	dev := &netTun{closed: make(chan struct{})}
+	(*endpoint)(dev).Attach(dispatcher)
+	payloads := [][]byte{{4 << 4, 1, 2, 3}, {6 << 4, 4, 5, 6}}
+	var buffers [][]byte
+	for _, payload := range payloads {
+		buffers = append(buffers, append(make([]byte, 16), payload...))
+	}
+	n, err := dev.Write(buffers, 16)
+	require.NoError(t, err)
+	require.Equal(t, len(payloads), n)
+	require.Len(t, dispatcher.packets, len(payloads))
+	for _, buffer := range buffers {
+		clear(buffer)
+	}
+	for i, packet := range dispatcher.packets {
+		view := packet.ToView()
+		assert.Equal(t, payloads[i], view.AsSlice())
+		view.Release()
+		packet.DecRef()
+	}
 }
 
 func TestNetTunWriteAfterClose(t *testing.T) {
