@@ -32,7 +32,14 @@ import (
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 )
 
 type UpgradeOpts struct{}
@@ -121,37 +128,17 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 	}
 
 	if err := g.updateServicesUpgradeUID(ctx, regionV); err != nil {
-		zap.L().Warn("Could not updateServicesUpgradeUID", zap.Error(err))
-	}
-
-	region, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Uid: regionV.Metadata.Uid})
-	if err != nil {
-		return err
-	}
-
-	region.Status.Version = ldflags.GetVersion()
-	if region.Status.VersionInfoMap == nil {
-		region.Status.VersionInfoMap = make(map[string]*corev1.Region_Status_VersionInfo)
-	}
-
-	region.Status.VersionInfoMap["octelium"] = &corev1.Region_Status_VersionInfo{
-		Package: "octelium",
-		SetAt:   pbutils.Now(),
-		Version: ldflags.GetVersion(),
-		Id:      os.Getenv("OCTELIUM_INSTALL_ID"),
-	}
-
-	vutils.SetRegionPublicHostName(region)
-
-	_, err = g.octeliumC.CoreC().UpdateRegion(ctx, region)
-	if err != nil {
 		return err
 	}
 
 	if isDefaultRegion {
 		if err := g.doPostUpgrade(ctx); err != nil {
-			zap.L().Warn("Could not doPostUpgrade", zap.Error(err))
+			return err
 		}
+	}
+
+	if err := g.finishUpgrade(ctx, regionV.Metadata.Uid); err != nil {
+		return err
 	}
 
 	zap.L().Info("Upgrade successfully completed...")
@@ -164,22 +151,8 @@ func (g *Genesis) upgradeClusterResources(ctx context.Context, clusterCfg *corev
 		return err
 	}
 
-	if err := func(ctx context.Context) error {
-		if _, err := g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
-			Name: "sys:ssh-svc-seed",
-		}); err == nil {
-			return nil
-		} else if !grpcerr.IsNotFound(err) {
-			return err
-		}
-
-		if err := g.createSSHServiceSeedSecret(ctx); err != nil {
-			return err
-		}
-
-		return nil
-	}(ctx); err != nil {
-		zap.L().Warn("Could not createSSHServiceSeedSecret", zap.Error(err))
+	if err := retryUpgrade(ctx, g.createSSHServiceSeedSecret); err != nil {
+		return errors.Wrap(err, "Could not ensure SSH Service seed")
 	}
 
 	return nil
@@ -190,42 +163,45 @@ func (g *Genesis) updateServicesUpgradeUID(ctx context.Context, rgn *corev1.Regi
 	zap.L().Debug("Starting updateServicesUpgradeUID")
 	svcList, err := g.getAllServices(ctx, rgn)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "Could not list Services for upgrade")
 	}
 
 	idKey := utilrand.GetRandomStringCanonical(12)
+	if g.pod != nil {
+		if owner := k8smetav1.GetControllerOf(g.pod); owner != nil && owner.Kind == "Job" && owner.UID != "" {
+			idKey = string(owner.UID)
+		}
+	}
 	zap.L().Debug("Starting upgrading Region's Services via idKey",
 		zap.Int("len", len(svcList)), zap.String("idKey", idKey))
 
 	for _, svc := range svcList {
-	doFn:
-		if svc.Metadata.SystemLabels == nil {
-			svc.Metadata.SystemLabels = make(map[string]string)
-		}
-
-		svc.Metadata.SystemLabels[vutils.UpgradeIDKey] = idKey
-
 		zap.L().Debug("Upgrading the Service idKey", zap.String("svc", svc.Metadata.Name))
 
-		if _, err := g.octeliumC.CoreC().UpdateService(ctx, svc); err != nil {
-			switch {
-			case grpcerr.IsResourceChanged(err):
-				zap.L().Debug("resourceChanged err. Trying again...", zap.Any("svc", svc))
-				svc, err = g.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{
-					Uid: svc.Metadata.Uid,
-				})
-				if err != nil {
-					zap.L().Warn("Could not upgrade Service idKey after resourceChanged err",
-						zap.Any("svc", svc), zap.Error(err))
-					continue
-				}
-				time.Sleep(100 * time.Millisecond)
-				goto doFn
-			case grpcerr.IsNotFound(err):
-			default:
-				zap.L().Warn("Could not upgrade Service idKey", zap.Any("svc", svc), zap.Error(err))
-				continue
+		err := retryUpgrade(ctx, func(ctx context.Context) error {
+			current, err := g.octeliumC.CoreC().GetService(ctx, &rmetav1.GetOptions{Uid: svc.Metadata.Uid})
+			if grpcerr.IsNotFound(err) {
+				return nil
 			}
+			if err != nil {
+				return err
+			}
+			if current.GetStatus().GetRegionRef().GetUid() != rgn.Metadata.Uid || current.Metadata.SystemLabels[vutils.UpgradeIDKey] == idKey {
+				return nil
+			}
+			current = proto.Clone(current).(*corev1.Service)
+			if current.Metadata.SystemLabels == nil {
+				current.Metadata.SystemLabels = make(map[string]string)
+			}
+			current.Metadata.SystemLabels[vutils.UpgradeIDKey] = idKey
+			_, err = g.octeliumC.CoreC().UpdateService(ctx, current)
+			if grpcerr.IsNotFound(err) {
+				return nil
+			}
+			return err
+		})
+		if err != nil {
+			return errors.Wrapf(err, "Could not update upgrade marker for Service %s", svc.Metadata.Name)
 		}
 	}
 
@@ -240,13 +216,18 @@ func (g *Genesis) getAllServices(ctx context.Context, rgn *corev1.Region) ([]*co
 	hasMore := true
 	page := 0
 	for hasMore {
-		svcList, err := g.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
-			Paginate:     true,
-			Page:         uint32(page),
-			ItemsPerPage: 500,
-			Filters: []*rmetav1.ListOptions_Filter{
-				urscsrv.FilterFieldEQValStr("status.regionRef.uid", rgn.Metadata.Uid),
-			},
+		var svcList *corev1.ServiceList
+		err := retryUpgrade(ctx, func(ctx context.Context) error {
+			var err error
+			svcList, err = g.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
+				Paginate:     true,
+				Page:         uint32(page),
+				ItemsPerPage: 500,
+				Filters: []*rmetav1.ListOptions_Filter{
+					urscsrv.FilterFieldEQValStr("status.regionRef.uid", rgn.Metadata.Uid),
+				},
+			})
+			return err
 		})
 		if err != nil {
 			return nil, err
@@ -270,23 +251,106 @@ func (g *Genesis) getAllServices(ctx context.Context, rgn *corev1.Region) ([]*co
 }
 
 func (g *Genesis) doPostUpgrade(ctx context.Context) error {
-	{
-		authnList, err := g.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
-		if err != nil {
-			return err
-		}
+	var authnList *corev1.AuthenticatorList
+	if err := retryUpgrade(ctx, func(ctx context.Context) error {
+		var err error
+		authnList, err = g.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{})
+		return err
+	}); err != nil {
+		return errors.Wrap(err, "Could not list Authenticators for upgrade")
+	}
 
-		for _, itm := range authnList.Items {
-			switch itm.Spec.State {
-			case corev1.Authenticator_Spec_STATE_UNKNOWN:
-				itm.Spec.State = corev1.Authenticator_Spec_ACTIVE
-				_, err = g.octeliumC.CoreC().UpdateAuthenticator(ctx, itm)
-				if err != nil {
-					zap.L().Debug("Could not updateAuthenticator in doPostUpgrade", zap.Error(err))
-				}
+	for _, itm := range authnList.Items {
+		if itm.GetSpec().GetState() != corev1.Authenticator_Spec_STATE_UNKNOWN {
+			continue
+		}
+		err := retryUpgrade(ctx, func(ctx context.Context) error {
+			current, err := g.octeliumC.CoreC().GetAuthenticator(ctx, &rmetav1.GetOptions{Uid: itm.Metadata.Uid})
+			if grpcerr.IsNotFound(err) {
+				return nil
 			}
+			if err != nil {
+				return err
+			}
+			if current.GetSpec().GetState() != corev1.Authenticator_Spec_STATE_UNKNOWN {
+				return nil
+			}
+			current = proto.Clone(current).(*corev1.Authenticator)
+			if current.Spec == nil {
+				current.Spec = &corev1.Authenticator_Spec{}
+			}
+			current.Spec.State = corev1.Authenticator_Spec_ACTIVE
+			_, err = g.octeliumC.CoreC().UpdateAuthenticator(ctx, current)
+			if grpcerr.IsNotFound(err) {
+				return nil
+			}
+			return err
+		})
+		if err != nil {
+			return errors.Wrapf(err, "Could not migrate Authenticator %s", itm.Metadata.Name)
 		}
 	}
 
 	return nil
+}
+
+func (g *Genesis) finishUpgrade(ctx context.Context, regionUID string) error {
+	versionInfo := &corev1.Region_Status_VersionInfo{
+		Package: "octelium",
+		SetAt:   pbutils.Now(),
+		Version: ldflags.GetVersion(),
+		Id:      os.Getenv("OCTELIUM_INSTALL_ID"),
+	}
+	err := retryUpgrade(ctx, func(ctx context.Context) error {
+		region, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Uid: regionUID})
+		if err != nil {
+			return err
+		}
+		updated := proto.Clone(region).(*corev1.Region)
+		if updated.Status == nil {
+			updated.Status = &corev1.Region_Status{}
+		}
+		updated.Status.Version = versionInfo.Version
+		if updated.Status.VersionInfoMap == nil {
+			updated.Status.VersionInfoMap = make(map[string]*corev1.Region_Status_VersionInfo)
+		}
+		updated.Status.VersionInfoMap["octelium"] = versionInfo
+		vutils.SetRegionPublicHostName(updated)
+		if proto.Equal(region, updated) {
+			return nil
+		}
+		_, err = g.octeliumC.CoreC().UpdateRegion(ctx, updated)
+		return err
+	})
+	return errors.Wrap(err, "Could not publish upgraded Region version")
+}
+
+func retryUpgrade(ctx context.Context, fn func(context.Context) error) error {
+	var lastErr error
+	err := wait.ExponentialBackoffWithContext(ctx, retry.DefaultRetry, func(ctx context.Context) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		lastErr = fn(ctx)
+		if lastErr == nil {
+			return true, nil
+		}
+		switch status.Code(lastErr) {
+		case codes.OutOfRange, codes.Unavailable, codes.ResourceExhausted, codes.Aborted, codes.DeadlineExceeded:
+			return false, nil
+		}
+		if errors.Is(lastErr, context.DeadlineExceeded) {
+			return false, nil
+		}
+		return false, lastErr
+	})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil && lastErr != nil {
+		return lastErr
+	}
+	return err
 }
