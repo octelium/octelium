@@ -44,6 +44,7 @@ type initialization struct {
 	complete      bool
 	clusterConfig *corev1.ClusterConfig
 	region        *corev1.Region
+	passwords     *storagePasswords
 }
 
 func initializationInputHash(cr *LoadedClusterResource) (string, error) {
@@ -98,6 +99,12 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 		if err := g.validateInitializationNamespace(ctx, secret); err != nil {
 			return nil, err
 		}
+		if !init.complete {
+			init.passwords, err = g.resolveStoragePasswords(ctx, cr.Bootstrap)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if err := g.setNamespace(ctx); err != nil {
 			return nil, err
 		}
@@ -132,6 +139,10 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 		return nil, err
 	}
 	if err := g.validateClusterNetwork(ctx, clusterCfg, cr.Bootstrap); err != nil {
+		return nil, err
+	}
+	passwords, err := g.resolveStoragePasswords(ctx, cr.Bootstrap)
+	if err != nil {
 		return nil, err
 	}
 	if err := g.setNamespace(ctx); err != nil {
@@ -179,7 +190,12 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	if err != nil {
 		return nil, err
 	}
-	return decodeInitialization(secret, inputHash)
+	init, err := decodeInitialization(secret, inputHash)
+	if err != nil {
+		return nil, err
+	}
+	init.passwords = passwords
+	return init, nil
 }
 
 func decodeInitialization(secret *k8scorev1.Secret, inputHash string) (*initialization, error) {

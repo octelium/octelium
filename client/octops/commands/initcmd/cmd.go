@@ -34,6 +34,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -218,12 +219,19 @@ func validateBootstrap(bs *cbootstrapv1.Config) error {
 		return errors.Errorf("Empty postgres user")
 	}
 
-	switch pgSpec.PasswordType.(type) {
+	switch value := pgSpec.PasswordType.(type) {
 	case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_Password:
-		if pgSpec.GetPassword() == "" {
+		if value == nil || value.Password == "" {
 			return errors.Errorf("Empty postgres password")
 		}
 	case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret_:
+		if value == nil {
+			return errors.New("name of passwordFromSecret is empty")
+		}
+		ref := value.PasswordFromSecret
+		if err := validatePasswordSecretReference(ref.GetName(), ref.GetNamespace(), ref.GetKey()); err != nil {
+			return errors.Wrap(err, "Invalid Postgres password reference")
+		}
 	default:
 		return errors.Errorf("either password or passwordFromSecret must be set")
 	}
@@ -247,12 +255,19 @@ func validateBootstrap(bs *cbootstrapv1.Config) error {
 		return errors.Errorf("Empty redis host")
 	}
 
-	switch redisSpec.PasswordType.(type) {
+	switch value := redisSpec.PasswordType.(type) {
 	case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_Password:
-		if redisSpec.GetPassword() == "" {
+		if value == nil || value.Password == "" {
 			return errors.Errorf("Empty redis password")
 		}
 	case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret_:
+		if value == nil {
+			return errors.New("name of passwordFromSecret is empty")
+		}
+		ref := value.PasswordFromSecret
+		if err := validatePasswordSecretReference(ref.GetName(), ref.GetNamespace(), ref.GetKey()); err != nil {
+			return errors.Wrap(err, "Invalid Redis password reference")
+		}
 	default:
 		return errors.Errorf("either password or passwordFromSecret must be set")
 	}
@@ -267,5 +282,25 @@ func validateBootstrap(bs *cbootstrapv1.Config) error {
 		return errors.Errorf("Invalid redis host")
 	}
 
+	return nil
+}
+
+func validatePasswordSecretReference(name, namespace, key string) error {
+	if name == "" {
+		return errors.New("name of passwordFromSecret is empty")
+	}
+	if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+		return errors.Errorf("Invalid passwordFromSecret name %q: %s", name, strings.Join(errs, ", "))
+	}
+	if namespace != "" {
+		if errs := validation.IsDNS1123Label(namespace); len(errs) > 0 {
+			return errors.Errorf("Invalid passwordFromSecret namespace %q: %s", namespace, strings.Join(errs, ", "))
+		}
+	}
+	if key != "" {
+		if errs := validation.IsConfigMapKey(key); len(errs) > 0 {
+			return errors.Errorf("Invalid passwordFromSecret key %q: %s", key, strings.Join(errs, ", "))
+		}
+	}
 	return nil
 }

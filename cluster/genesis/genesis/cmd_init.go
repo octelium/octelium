@@ -90,7 +90,7 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		return err
 	}
 
-	if err := g.initStorage(ctx, &genesisutils.InstallCtx{Bootstrap: initResources.Bootstrap}); err != nil {
+	if err := g.initStorageWithPasswords(ctx, &genesisutils.InstallCtx{Bootstrap: initResources.Bootstrap}, init.passwords); err != nil {
 		return err
 	}
 	rscSrv, err := rscserver.NewServer(ctx, nil)
@@ -940,62 +940,22 @@ func (g *Genesis) initClusterConfig(ctx context.Context, bootstrap *cbootstrapv1
 }
 
 func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) error {
-
-	if i.Bootstrap == nil || i.Bootstrap.Spec == nil {
+	if i == nil {
 		return errors.Errorf("Nil Bootstrap")
 	}
-	if i.Bootstrap.Spec.PrimaryStorage == nil || i.Bootstrap.Spec.PrimaryStorage.GetPostgresql() == nil {
-		return errors.Errorf("No Postgres info")
+	passwords, err := g.resolveStoragePasswords(ctx, i.Bootstrap)
+	if err != nil {
+		return err
 	}
-	if i.Bootstrap.Spec.SecondaryStorage == nil || i.Bootstrap.Spec.SecondaryStorage.GetRedis() == nil {
-		return errors.Errorf("No Redis info")
-	}
+	return g.initStorageWithPasswords(ctx, i, passwords)
+}
+
+func (g *Genesis) initStorageWithPasswords(ctx context.Context, i *genesisutils.InstallCtx, passwords *storagePasswords) error {
 	zap.L().Debug("Initializing storage secrets")
-
-	var err error
-
-	getPassword := func(name, namespace, key string) (string, error) {
-		if namespace == "" {
-			namespace = "default"
-		}
-		if name == "" {
-			return "", errors.Errorf("name of passwordFromSecret is empty")
-		}
-		var password string
-		sec, err := g.getK8sSecret(ctx, namespace, name)
-		if err != nil {
-			return "", err
-		}
-
-		if key != "" {
-			password = string(sec.Data[key])
-		}
-		if password == "" {
-			password = string(sec.Data["password"])
-		}
-		if password == "" {
-			password = string(sec.Data["data"])
-		}
-
-		return password, nil
-	}
 
 	{
 		info := i.Bootstrap.Spec.PrimaryStorage.GetPostgresql()
-
-		var password string
-
-		switch info.PasswordType.(type) {
-		case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_Password:
-			password = info.GetPassword()
-		case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret_:
-			secSpec := info.GetPasswordFromSecret()
-
-			password, err = getPassword(secSpec.Name, secSpec.Namespace, secSpec.Key)
-			if err != nil {
-				return err
-			}
-		}
+		password := passwords.postgres
 
 		dataMap := map[string][]byte{
 			"postgres-password": []byte(password),
@@ -1045,18 +1005,7 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 
 	{
 		info := i.Bootstrap.Spec.SecondaryStorage.GetRedis()
-		var password string
-
-		switch info.PasswordType.(type) {
-		case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_Password:
-			password = info.GetPassword()
-		case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret_:
-			secSpec := info.GetPasswordFromSecret()
-			password, err = getPassword(secSpec.Name, secSpec.Namespace, secSpec.Key)
-			if err != nil {
-				return err
-			}
-		}
+		password := passwords.redis
 
 		dataMap := map[string][]byte{
 			"password": []byte(password),
