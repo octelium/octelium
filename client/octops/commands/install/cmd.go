@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/octops/internal/k8sretry"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -125,16 +126,19 @@ func setClusterResources(ctx context.Context, o *Opts) error {
 	}
 
 	secrets := o.K8sC.CoreV1().Secrets("default")
-	secret, err := secrets.Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+	secret, err := getK8sSecret(ctx, o.K8sC, "default", "octelium-init")
 	if k8serr.IsNotFound(err) {
-		secret, err = o.K8sC.CoreV1().Secrets(octeliumNS).Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+		secret, err = getK8sSecret(ctx, o.K8sC, octeliumNS, "octelium-init")
 	}
 	if k8serr.IsNotFound(err) {
-		_, err = secrets.Create(ctx, &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init"}, Data: dataMap}, k8smetav1.CreateOptions{})
-		if !k8serr.IsAlreadyExists(err) {
-			return err
-		}
-		secret, err = secrets.Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+		desired := &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init", Namespace: "default"}, Data: dataMap}
+		secret, err = k8sretry.Create(ctx, desired,
+			func(ctx context.Context) (*k8scorev1.Secret, error) {
+				return secrets.Create(ctx, desired, k8smetav1.CreateOptions{})
+			},
+			func(ctx context.Context) (*k8scorev1.Secret, error) {
+				return secrets.Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+			})
 	}
 	if err != nil {
 		return err

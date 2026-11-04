@@ -286,7 +286,7 @@ func TestInitializationFailureRecoveryE2E(t *testing.T) {
 				} else {
 					f.client.K8sC.(*k8sfake.Clientset).PrependReactor(point.verb, point.resource, reactor)
 				}
-				require.Error(t, f.genesis.RunInit(t.Context(), nil))
+				require.NoError(t, f.genesis.RunInit(t.Context(), nil))
 				require.True(t, failed)
 				secrets := make(map[string]string)
 				var cc *corev1.ClusterConfig
@@ -705,7 +705,7 @@ func TestInitializationRejectsInvalidCredentialE2E(t *testing.T) {
 					return false, nil, nil
 				}
 				failed = true
-				return true, nil, io.ErrUnexpectedEOF
+				return true, nil, fmt.Errorf("injected token publication failure")
 			})
 			require.Error(t, f.genesis.RunInit(t.Context(), nil))
 			require.True(t, failed)

@@ -23,6 +23,7 @@ import (
 	"github.com/cilium/cilium/pkg/policy/api"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,9 +42,18 @@ func TestHasPolicyAPI(t *testing.T) {
 		},
 	}
 
-	assert.True(t, hasPolicyAPI(k8sC.Discovery(), "cilium.io/v2", "CiliumNetworkPolicy"))
-	assert.False(t, hasPolicyAPI(k8sC.Discovery(), "cilium.io/v2", "CiliumClusterwideNetworkPolicy"))
-	assert.False(t, hasPolicyAPI(k8sC.Discovery(), "projectcalico.org/v3", "NetworkPolicy"))
+	for _, tc := range []struct {
+		groupVersion, kind string
+		supported          bool
+	}{
+		{"cilium.io/v2", "CiliumNetworkPolicy", true},
+		{"cilium.io/v2", "CiliumClusterwideNetworkPolicy", false},
+		{"projectcalico.org/v3", "NetworkPolicy", false},
+	} {
+		supported, err := hasPolicyAPI(t.Context(), k8sC.Discovery(), tc.groupVersion, tc.kind)
+		require.NoError(t, err)
+		assert.Equal(t, tc.supported, supported)
+	}
 }
 
 func TestDetectCNI(t *testing.T) {

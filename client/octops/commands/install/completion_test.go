@@ -269,7 +269,7 @@ func TestInstallationRetriesTransientReads(t *testing.T) {
 					}
 					return false, nil, nil
 				})
-				secret, err := waitForInitialToken(t.Context(), c, job, time.Millisecond, time.Second)
+				secret, err := waitForInitialToken(t.Context(), c, job, time.Millisecond, 3*time.Second)
 				require.NoError(t, err)
 				require.True(t, failed)
 				assert.Equal(t, token, secret)

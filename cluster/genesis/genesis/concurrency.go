@@ -2,19 +2,15 @@ package genesis
 
 import (
 	"context"
-	"io"
-	"net"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/octelium/octelium/cluster/common/k8sretry"
 	"github.com/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilnet "k8s.io/apimachinery/pkg/util/net"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 var errGenesisBusy = errors.New("Another genesis operation is still running")
@@ -47,12 +43,7 @@ func (g *Genesis) loadPodIdentity(ctx context.Context) error {
 }
 
 func isTransientGenesisError(err error) bool {
-	var networkError net.Error
-	return k8serr.IsTimeout(err) || k8serr.IsServerTimeout(err) || k8serr.IsTooManyRequests(err) ||
-		k8serr.IsServiceUnavailable(err) || k8serr.IsInternalError(err) ||
-		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		utilnet.IsConnectionReset(err) || utilnet.IsConnectionRefused(err) ||
-		(errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary()))
+	return k8sretry.IsTransient(err)
 }
 
 func (g *Genesis) waitForConcurrentGenesis(ctx context.Context) error {
@@ -60,13 +51,10 @@ func (g *Genesis) waitForConcurrentGenesis(ctx context.Context) error {
 		return err
 	}
 	var lastErr error
-	err := wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+	err := k8sretry.Wait(ctx, 500*time.Millisecond, 2*time.Minute, func(ctx context.Context) (bool, error) {
 		if g.pod == nil && g.podNamespace != "" {
 			lastErr = g.loadPodIdentity(ctx)
 			if lastErr != nil {
-				if isTransientGenesisError(lastErr) {
-					return false, nil
-				}
 				return false, lastErr
 			}
 		}
@@ -74,7 +62,7 @@ func (g *Genesis) waitForConcurrentGenesis(ctx context.Context) error {
 		if lastErr == nil {
 			return true, nil
 		}
-		if errors.Is(lastErr, errGenesisBusy) || isTransientGenesisError(lastErr) {
+		if errors.Is(lastErr, errGenesisBusy) {
 			return false, nil
 		}
 		return false, lastErr

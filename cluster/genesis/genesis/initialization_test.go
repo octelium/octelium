@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -130,8 +131,11 @@ func TestInitializationStateFailures(t *testing.T) {
 			want := k8serr.NewServiceUnavailable("temporary failure")
 			c.PrependReactor(verb, "secrets", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 			g := &Genesis{k8sC: c}
-			_, err := g.prepareInitialization(t.Context(), newInitializationInput(t))
+			ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+			defer cancel()
+			_, err := g.prepareInitialization(ctx, newInitializationInput(t))
 			assert.ErrorIs(t, err, want)
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
 		})
 	}
 	for _, field := range []string{"version", "id", "input-hash", "clusterConfig", "region"} {
@@ -381,7 +385,7 @@ func TestInitializationBootstrapMoveReplay(t *testing.T) {
 					}
 					return true, nil, io.ErrUnexpectedEOF
 				})
-				require.ErrorIs(t, g.moveClusterInitResources(t.Context()), io.ErrUnexpectedEOF)
+				require.NoError(t, g.moveClusterInitResources(t.Context()))
 				require.NoError(t, g.moveClusterInitResources(t.Context()))
 				_, err := c.CoreV1().Secrets("default").Get(t.Context(), secret.Name, k8smetav1.GetOptions{})
 				assert.True(t, k8serr.IsNotFound(err))

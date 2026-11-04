@@ -106,7 +106,7 @@ func TestWaitGenesisJobRetriesTemporaryReads(t *testing.T) {
 				}
 				return false, nil, nil
 			})
-			require.NoError(t, WaitGenesisJob(t.Context(), c, job, time.Millisecond, time.Second))
+			require.NoError(t, WaitGenesisJob(t.Context(), c, job, time.Millisecond, 4*time.Second))
 			assert.Equal(t, 3, gets)
 		})
 	}

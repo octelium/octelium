@@ -7,12 +7,12 @@ import (
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/k8sretry"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/pkg/errors"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 func (g *Genesis) validateClusterNetwork(ctx context.Context, cc *corev1.ClusterConfig, bootstrap *cbootstrapv1.Config) error {
@@ -42,11 +42,8 @@ func (g *Genesis) validateClusterNetwork(ctx context.Context, cc *corev1.Cluster
 		}
 	}
 	var lastErr error
-	err := wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+	err := k8sretry.Wait(ctx, 500*time.Millisecond, 2*time.Minute, func(ctx context.Context) (bool, error) {
 		lastErr = g.checkKubernetesNetwork(ctx, allocated)
-		if isTransientGenesisError(lastErr) {
-			return false, nil
-		}
 		return lastErr == nil, lastErr
 	})
 	if err != nil && lastErr != nil {

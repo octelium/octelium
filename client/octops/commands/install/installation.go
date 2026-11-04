@@ -23,7 +23,6 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
-	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -49,36 +48,34 @@ func spiffeFromBootstrap(bs *cbootstrapv1.Config) *SPIFFEOpts {
 }
 
 func GetSPIFFE(ctx context.Context, c kubernetes.Interface) *SPIFFEOpts {
-
-	cm, err := c.CoreV1().ConfigMaps(octeliumNS).
-		Get(ctx, installationConfigMapName, k8smetav1.GetOptions{})
+	spiffe, err := GetSPIFFEWithError(ctx, c)
 	if err != nil {
-		zap.L().Debug("Could not get the installation ConfigMap. Assuming defaults",
-			zap.Error(err))
-		return nil
+		zap.L().Debug("Could not get the installation ConfigMap. Assuming defaults", zap.Error(err))
 	}
+	return spiffe
+}
 
-	val, ok := cm.Data[installationConfigMapKey]
-	if !ok || val == "" {
-		return nil
+func GetSPIFFEWithError(ctx context.Context, c kubernetes.Interface) (*SPIFFEOpts, error) {
+	cm, err := getK8sConfigMap(ctx, c, octeliumNS, installationConfigMapName)
+	if k8serr.IsNotFound(err) {
+		return nil, nil
 	}
-
+	if err != nil {
+		return nil, err
+	}
+	val := cm.Data[installationConfigMapKey]
+	if val == "" {
+		return nil, errors.Errorf("The installation ConfigMap has no installation configuration")
+	}
 	installation := &ocorev1.ClusterConfig_Status_Installation{}
 	if err := pbutils.UnmarshalJSON([]byte(val), installation); err != nil {
-		zap.L().Debug("Could not unmarshal the installation ConfigMap. Assuming defaults",
-			zap.Error(err))
-		return nil
+		return nil, errors.Wrap(err, "Invalid installation configuration")
 	}
-
 	spiffe := installation.GetSpiffe()
 	if !spiffe.GetEnable() {
-		return nil
+		return nil, nil
 	}
-
-	return &SPIFFEOpts{
-		CSIDriver:   spiffe.GetCsiDriver().GetName(),
-		TrustDomain: spiffe.GetTrustDomain(),
-	}
+	return &SPIFFEOpts{CSIDriver: spiffe.GetCsiDriver().GetName(), TrustDomain: spiffe.GetTrustDomain()}, nil
 }
 
 func (o *SPIFFEOpts) getCSIDriver() string {
@@ -90,12 +87,12 @@ func (o *SPIFFEOpts) getCSIDriver() string {
 
 func checkExistingInstallation(ctx context.Context, c kubernetes.Interface) error {
 	alreadyInstalled := errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
-	if _, err := c.CoreV1().Secrets(octeliumNS).Get(ctx, "init-token", k8smetav1.GetOptions{}); err == nil {
+	if _, err := getK8sSecret(ctx, c, octeliumNS, "init-token"); err == nil {
 		return alreadyInstalled
 	} else if !k8serr.IsNotFound(err) {
 		return err
 	}
-	if state, err := c.CoreV1().Secrets(octeliumNS).Get(ctx, "octelium-genesis-init", k8smetav1.GetOptions{}); err == nil {
+	if state, err := getK8sSecret(ctx, c, octeliumNS, "octelium-genesis-init"); err == nil {
 		if state.Annotations["octelium.com/genesis-init-complete"] == "true" {
 			return alreadyInstalled
 		}
@@ -103,12 +100,12 @@ func checkExistingInstallation(ctx context.Context, c kubernetes.Interface) erro
 	} else if !k8serr.IsNotFound(err) {
 		return err
 	}
-	if _, err := c.CoreV1().Secrets(octeliumNS).Get(ctx, "octelium-init", k8smetav1.GetOptions{}); err == nil {
+	if _, err := getK8sSecret(ctx, c, octeliumNS, "octelium-init"); err == nil {
 		return alreadyInstalled
 	} else if !k8serr.IsNotFound(err) {
 		return err
 	}
-	if _, err := c.CoreV1().ConfigMaps(octeliumNS).Get(ctx, installationConfigMapName, k8smetav1.GetOptions{}); err == nil {
+	if _, err := getK8sConfigMap(ctx, c, octeliumNS, installationConfigMapName); err == nil {
 		return alreadyInstalled
 	} else if !k8serr.IsNotFound(err) {
 		return err

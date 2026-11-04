@@ -127,7 +127,7 @@ func waitGatewayAgentsRegistered(ctx context.Context, k8sC kubernetes.Interface)
 
 	zap.L().Debug("Checking that all Gateway Agents are registered")
 
-	doCheck := func() (bool, error) {
+	doCheck := func(ctx context.Context) (bool, error) {
 		nodeList, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
 			LabelSelector: vutils.NodeLabelDataPlane,
 		})
@@ -155,21 +155,5 @@ func waitGatewayAgentsRegistered(ctx context.Context, k8sC kubernetes.Interface)
 		return true, nil
 	}
 
-	for i := range 900 {
-		isDone, err := doCheck()
-		if err != nil && !k8sutils.ShouldRetry(err) {
-			return err
-		}
-
-		if isDone {
-			return nil
-		}
-
-		zap.L().Debug("Gateway Agents are still not registered on all data-plane nodes. Trying again...",
-			zap.Int("attempt", i+1))
-
-		time.Sleep(2 * time.Second)
-	}
-
-	return errors.Errorf("Timed out waiting for the Gateway Agents to be registered on all data-plane nodes")
+	return k8sutils.WaitReadiness(ctx, 2*time.Second, 1800*time.Second, doCheck)
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/octops/internal/k8sretry"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	batchv1 "k8s.io/api/batch/v1"
@@ -229,14 +230,29 @@ func createGenesis(ctx context.Context, o *Opts) (*batchv1.Job, error) {
 		if err := setClusterResources(ctx, o); err != nil {
 			return err
 		}
-		if _, err := c.CoreV1().ServiceAccounts(genesisNS).Create(ctx, getGenesisServiceAccount(), metav1.CreateOptions{}); err != nil && !k8serr.IsAlreadyExists(err) {
-			return err
-		}
-		if _, err := c.RbacV1().ClusterRoles().Create(ctx, getGenesisRole(), metav1.CreateOptions{}); err != nil && !k8serr.IsAlreadyExists(err) {
-			return err
-		}
-		if _, err := c.RbacV1().ClusterRoleBindings().Create(ctx, getGenesisRoleBinding(), metav1.CreateOptions{}); err != nil && !k8serr.IsAlreadyExists(err) {
-			return err
+		for _, create := range []func(context.Context) error{
+			func(ctx context.Context) error {
+				_, err := c.CoreV1().ServiceAccounts(genesisNS).Create(ctx, getGenesisServiceAccount(), metav1.CreateOptions{})
+				return err
+			},
+			func(ctx context.Context) error {
+				_, err := c.RbacV1().ClusterRoles().Create(ctx, getGenesisRole(), metav1.CreateOptions{})
+				return err
+			},
+			func(ctx context.Context) error {
+				_, err := c.RbacV1().ClusterRoleBindings().Create(ctx, getGenesisRoleBinding(), metav1.CreateOptions{})
+				return err
+			},
+		} {
+			if err := k8sretry.Do(ctx, func(ctx context.Context) error {
+				err := create(ctx)
+				if k8serr.IsAlreadyExists(err) {
+					return nil
+				}
+				return err
+			}); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

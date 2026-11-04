@@ -29,7 +29,11 @@ import (
 func createGenesis(ctx context.Context, c kubernetes.Interface, domain,
 	version string) (*batchv1.Job, error) {
 
-	return install.SubmitGenesisJobWithResult(ctx, c, getGenesisJob(domain, version, install.GetSPIFFE(ctx, c)), nil)
+	spiffe, err := install.GetSPIFFEWithError(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return install.SubmitGenesisJobWithResult(ctx, c, getGenesisJob(domain, version, spiffe), nil)
 }
 
 func getGenesisJob(domain, version string, spiffe *install.SPIFFEOpts) *batchv1.Job {

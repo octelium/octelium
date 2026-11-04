@@ -36,6 +36,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/clusterconfig"
 	oc "github.com/octelium/octelium/cluster/common/components"
 	"github.com/octelium/octelium/cluster/common/jwkctl"
+	"github.com/octelium/octelium/cluster/common/k8sretry"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -54,7 +55,6 @@ import (
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/retry"
 )
 
 type InitOpts struct{}
@@ -871,13 +871,14 @@ func (g *Genesis) setNadConfig(ctx context.Context) error {
 
 	zap.L().Debug("Setting k8s NAD configuration", zap.Any("nad", nad))
 
-	_, err := g.nadC.K8sCniCncfIoV1().NetworkAttachmentDefinitions(vutils.K8sNS).
-		Create(ctx, nad, k8smetav1.CreateOptions{})
-	if err != nil && !k8serr.IsAlreadyExists(err) {
+	return k8sretry.Do(ctx, func(ctx context.Context) error {
+		_, err := g.nadC.K8sCniCncfIoV1().NetworkAttachmentDefinitions(vutils.K8sNS).
+			Create(ctx, nad, k8smetav1.CreateOptions{})
+		if k8serr.IsAlreadyExists(err) {
+			return nil
+		}
 		return err
-	}
-
-	return nil
+	})
 }
 
 func (g *Genesis) initClusterConfig(ctx context.Context, bootstrap *cbootstrapv1.Config, domain string) (*corev1.ClusterConfig, error) {
@@ -955,9 +956,7 @@ func (g *Genesis) initStorage(ctx context.Context, i *genesisutils.InstallCtx) e
 			return "", errors.Errorf("name of passwordFromSecret is empty")
 		}
 		var password string
-		sec, err := g.k8sC.CoreV1().
-			Secrets(namespace).
-			Get(ctx, name, k8smetav1.GetOptions{})
+		sec, err := g.getK8sSecret(ctx, namespace, name)
 		if err != nil {
 			return "", err
 		}
@@ -1280,7 +1279,7 @@ func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 		return err
 	}
 
-	_, err = g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
+	secret := &k8scorev1.Secret{
 		ObjectMeta: k8smetav1.ObjectMeta{
 			Name:        "init-token",
 			Namespace:   vutils.K8sNS,
@@ -1289,10 +1288,12 @@ func (g *Genesis) createInitAuthenticationToken(ctx context.Context) error {
 		Data: map[string][]byte{
 			"data": []byte(tkn),
 		},
-	}, k8smetav1.CreateOptions{})
-	if k8serr.IsAlreadyExists(err) {
-		_, err = g.getInitAuthenticationToken(ctx)
 	}
+	_, err = k8sretry.Create(ctx, secret,
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, secret, k8smetav1.CreateOptions{})
+		}, g.getInitAuthenticationToken)
+
 	if err != nil {
 		return err
 	}
@@ -1307,8 +1308,8 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 		return nil
 	}
 
-	dataPlaneNodes, err := g.k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
-		LabelSelector: vutils.NodeLabelDataPlane,
+	dataPlaneNodes, err := k8sretry.Read(ctx, func(ctx context.Context) (*k8scorev1.NodeList, error) {
+		return g.k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{LabelSelector: vutils.NodeLabelDataPlane})
 	})
 	if err != nil {
 		return err
@@ -1320,9 +1321,10 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 			vutils.NodeLabelDataPlane)
 	}
 
-	nodeList, err := g.k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
-		LabelSelector: fmt.Sprintf("%s,!%s",
-			vutils.NodeLabelDataPlane, vutils.NodeLabelControlPlane),
+	nodeList, err := k8sretry.Read(ctx, func(ctx context.Context) (*k8scorev1.NodeList, error) {
+		return g.k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
+			LabelSelector: fmt.Sprintf("%s,!%s", vutils.NodeLabelDataPlane, vutils.NodeLabelControlPlane),
+		})
 	})
 	if err != nil {
 		return err
@@ -1331,7 +1333,7 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 	for _, item := range nodeList.Items {
 		nodeName := item.Name
 
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := k8sretry.Do(ctx, func(ctx context.Context) error {
 			node, err := g.k8sC.CoreV1().Nodes().Get(ctx, nodeName, k8smetav1.GetOptions{})
 			if err != nil {
 				return err
@@ -1363,10 +1365,13 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 
 			delete(node.Labels, vutils.NodeLabelGatewayRegistered)
 
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			_, err = g.k8sC.CoreV1().Nodes().Update(ctx, node, k8smetav1.UpdateOptions{})
 			return err
 		}); err != nil {
-			return errors.Errorf("Could not set the gateway-init taint on the node %s: %+v", nodeName, err)
+			return errors.Wrapf(err, "Could not set the gateway-init taint on the node %s", nodeName)
 		}
 
 		zap.L().Debug("Set the gateway-init taint on the data-plane node",
@@ -1382,64 +1387,56 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 
 func (g *Genesis) setNamespace(ctx context.Context) error {
 	zap.L().Debug("Initializing the octelium k8s namespace")
-
-	namespace, err := g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
-	if err == nil {
-		if namespace.DeletionTimestamp != nil {
-			return errors.Errorf("The octelium namespace is terminating. Refusing to initialize the Cluster")
-		}
-		return nil
-	} else if !k8serr.IsNotFound(err) {
+	namespaces := g.k8sC.CoreV1().Namespaces()
+	namespace, err := k8sretry.Read(ctx, func(ctx context.Context) (*k8scorev1.Namespace, error) {
+		return namespaces.Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
+	})
+	if k8serr.IsNotFound(err) {
+		desired := &k8scorev1.Namespace{ObjectMeta: k8smetav1.ObjectMeta{Name: vutils.K8sNS, Labels: map[string]string{"app": "octelium"}}}
+		namespace, err = k8sretry.Create(ctx, desired,
+			func(ctx context.Context) (*k8scorev1.Namespace, error) {
+				return namespaces.Create(ctx, desired, k8smetav1.CreateOptions{})
+			},
+			func(ctx context.Context) (*k8scorev1.Namespace, error) {
+				return namespaces.Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
+			})
+	}
+	if err != nil {
 		return err
 	}
-
-	_, err = g.k8sC.CoreV1().Namespaces().Create(ctx, &k8scorev1.Namespace{
-		ObjectMeta: k8smetav1.ObjectMeta{
-			Name: vutils.K8sNS,
-			Labels: map[string]string{
-				"app": "octelium",
-			},
-		},
-	}, k8smetav1.CreateOptions{})
-	if k8serr.IsAlreadyExists(err) {
-		namespace, err = g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
-		if err == nil && namespace.DeletionTimestamp != nil {
-			return errors.Errorf("The octelium namespace is terminating. Refusing to initialize the Cluster")
-		}
+	if namespace.DeletionTimestamp != nil {
+		return errors.Errorf("The octelium namespace is terminating. Refusing to initialize the Cluster")
 	}
-	return err
+	return nil
 }
 
 func (g *Genesis) moveK8SSecret(ctx context.Context, secFrom *k8scorev1.Secret) error {
 	sec := &k8scorev1.Secret{
-		ObjectMeta: k8smetav1.ObjectMeta{
-			Name:      secFrom.Name,
-			Namespace: vutils.K8sNS,
-		},
-		Data:       secFrom.Data,
-		StringData: secFrom.StringData,
-		Type:       secFrom.Type,
+		ObjectMeta: k8smetav1.ObjectMeta{Name: secFrom.Name, Namespace: vutils.K8sNS},
+		Data:       secFrom.Data, StringData: secFrom.StringData, Type: secFrom.Type,
 	}
-	_, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, sec, k8smetav1.CreateOptions{})
-	if k8serr.IsAlreadyExists(err) {
-		existing, getErr := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, sec.Name, k8smetav1.GetOptions{})
-		if getErr != nil {
-			return getErr
-		}
-		if !equalInitializationSecrets(existing, sec) {
-			return errors.Errorf("The existing bootstrap Secret differs from the initialization input")
-		}
-	} else if err != nil {
+	destination := g.k8sC.CoreV1().Secrets(vutils.K8sNS)
+	existing, err := k8sretry.Create(ctx, sec,
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return destination.Create(ctx, sec, k8smetav1.CreateOptions{})
+		},
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return destination.Get(ctx, sec.Name, k8smetav1.GetOptions{})
+		})
+	if err != nil {
 		return err
 	}
-
-	err = g.k8sC.CoreV1().Secrets(secFrom.Namespace).Delete(ctx, secFrom.Name, k8smetav1.DeleteOptions{
-		Preconditions: &k8smetav1.Preconditions{UID: &secFrom.UID, ResourceVersion: &secFrom.ResourceVersion},
-	})
-	if k8serr.IsNotFound(err) {
-		return nil
+	if !equalInitializationSecrets(existing, sec) {
+		return errors.Errorf("The existing bootstrap Secret differs from the initialization input")
 	}
-	return err
+	source := g.k8sC.CoreV1().Secrets(secFrom.Namespace)
+	return k8sretry.Delete(ctx, secFrom,
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return source.Get(ctx, secFrom.Name, k8smetav1.GetOptions{})
+		},
+		func(ctx context.Context, options k8smetav1.DeleteOptions) error {
+			return source.Delete(ctx, secFrom.Name, options)
+		})
 }
 
 func (g *Genesis) createUsersGroups(ctx context.Context, clusterCfg *corev1.ClusterConfig) error {
@@ -1488,7 +1485,7 @@ func (g *Genesis) loadClusterInitResources(ctx context.Context, ns string) (*Loa
 	}
 	zap.L().Debug("Loading Cluster resources")
 	ret := &LoadedClusterResource{}
-	sec, err := g.k8sC.CoreV1().Secrets(ns).Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+	sec, err := g.getK8sSecret(ctx, ns, "octelium-init")
 	if err != nil {
 		return nil, err
 	}
@@ -1521,9 +1518,9 @@ func (g *Genesis) loadClusterInitResources(ctx context.Context, ns string) (*Loa
 
 func (g *Genesis) moveClusterInitResources(ctx context.Context) error {
 
-	sec, err := g.k8sC.CoreV1().Secrets("default").Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+	sec, err := g.getK8sSecret(ctx, "default", "octelium-init")
 	if k8serr.IsNotFound(err) {
-		_, err = g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, "octelium-init", k8smetav1.GetOptions{})
+		_, err = g.getK8sSecret(ctx, vutils.K8sNS, "octelium-init")
 		return err
 	}
 	if err != nil {

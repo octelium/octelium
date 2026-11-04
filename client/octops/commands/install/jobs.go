@@ -7,14 +7,13 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/octelium/octelium/client/octops/internal/k8sretry"
 	"github.com/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/util/retry"
 )
 
 const genesisRequestHash = "octelium.com/genesis-request-hash"
@@ -40,7 +39,9 @@ func genesisJobFinished(job *batchv1.Job) bool {
 
 func checkGenesisJobs(ctx context.Context, c kubernetes.Interface, own *batchv1.Job) error {
 	for _, namespace := range []string{"default", octeliumNS} {
-		jobs, err := c.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{LabelSelector: "octelium.com/component=genesis"})
+		jobs, err := k8sretry.Read(ctx, func(ctx context.Context) (*batchv1.JobList, error) {
+			return c.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{LabelSelector: "octelium.com/component=genesis"})
+		})
 		if err != nil {
 			return err
 		}
@@ -52,7 +53,9 @@ func checkGenesisJobs(ctx context.Context, c kubernetes.Interface, own *batchv1.
 				return errors.Errorf("Genesis Job %s/%s is still active. Wait for it to finish before starting another operation", job.Namespace, job.Name)
 			}
 		}
-		pods, err := c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "octelium.com/component=genesis"})
+		pods, err := k8sretry.Read(ctx, func(ctx context.Context) (*corev1.PodList, error) {
+			return c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "octelium.com/component=genesis"})
+		})
 		if err != nil {
 			return err
 		}
@@ -80,6 +83,9 @@ func SubmitGenesisJobWithResult(ctx context.Context, c kubernetes.Interface, des
 }
 
 func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batchv1.Job, prepare func(context.Context) error) (_ *batchv1.Job, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	data, err := json.Marshal(desired.Spec)
 	if err != nil {
 		return nil, err
@@ -96,16 +102,27 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 			job.Annotations = make(map[string]string)
 		}
 		job.Annotations[genesisRequestHash] = hash
-		created, err := jobs.Create(ctx, job, metav1.CreateOptions{})
-		if err != nil && !k8serr.IsAlreadyExists(err) {
-			current, getErr := jobs.Get(ctx, job.Name, metav1.GetOptions{})
-			if getErr == nil && current.DeletionTimestamp == nil && current.Annotations[genesisRequestHash] == hash && (current.Spec.Suspend == nil || !*current.Spec.Suspend) {
-				return current, nil
-			}
+		if job.Name == "" {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			return jobs.Create(ctx, job, metav1.CreateOptions{})
 		}
-		return created, err
+		created, err := k8sretry.Create(ctx, job,
+			func(ctx context.Context) (*batchv1.Job, error) {
+				return jobs.Create(ctx, job, metav1.CreateOptions{})
+			},
+			func(ctx context.Context) (*batchv1.Job, error) {
+				return readGenesisJob(ctx, c, job)
+			})
+		if err != nil {
+			return nil, err
+		}
+		if created.DeletionTimestamp != nil || created.Annotations[genesisRequestHash] != hash || (created.Spec.Suspend != nil && *created.Spec.Suspend) {
+			return nil, errors.Errorf("The genesis Job does not match the submitted operation")
+		}
+		return created, nil
 	}
-	job, err := jobs.Get(ctx, desired.Name, metav1.GetOptions{})
+	job, err := getK8sJob(ctx, c, desired.Namespace, desired.Name)
 	createdHere := false
 	defer func() {
 		if retErr == nil || job == nil || !createdHere {
@@ -113,9 +130,9 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		current, err := jobs.Get(ctx, desired.Name, metav1.GetOptions{})
+		current, err := getK8sJob(ctx, c, desired.Namespace, desired.Name)
 		if err == nil && current.UID == job.UID && current.Annotations[genesisRequestHash] == hash && current.Spec.Suspend != nil && *current.Spec.Suspend {
-			jobs.Delete(ctx, current.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &current.UID, ResourceVersion: &current.ResourceVersion}})
+			deleteGenesisJob(ctx, c, current, nil)
 		}
 	}()
 	if err == nil && genesisJobFinished(job) {
@@ -123,14 +140,10 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 			return nil, err
 		}
 		uid := job.UID
-		err = jobs.Delete(ctx, job.Name, metav1.DeleteOptions{
-			Preconditions:     &metav1.Preconditions{UID: &job.UID, ResourceVersion: &job.ResourceVersion},
-			PropagationPolicy: new(metav1.DeletePropagationForeground),
-		})
-		if err != nil && !k8serr.IsNotFound(err) {
+		if err := deleteGenesisJob(ctx, c, job, new(metav1.DeletePropagationForeground)); err != nil {
 			return nil, err
 		}
-		if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 15*time.Second, true, func(ctx context.Context) (bool, error) {
+		if err := k8sretry.Wait(ctx, 100*time.Millisecond, 15*time.Second, func(ctx context.Context) (bool, error) {
 			current, err := jobs.Get(ctx, desired.Name, metav1.GetOptions{})
 			if k8serr.IsNotFound(err) {
 				return true, nil
@@ -151,50 +164,48 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 		if err := checkGenesisJobs(ctx, c, desired); err != nil {
 			return nil, err
 		}
-		job = desired.DeepCopy()
-		job.Spec.Suspend = new(true)
-		if job.Annotations == nil {
-			job.Annotations = make(map[string]string)
+		reservation := desired.DeepCopy()
+		reservation.Spec.Suspend = new(true)
+		if reservation.Annotations == nil {
+			reservation.Annotations = make(map[string]string)
 		}
-		job.Annotations[genesisRequestHash] = hash
-		job, err = jobs.Create(ctx, job, metav1.CreateOptions{})
-		createdHere = err == nil
-		if err != nil {
-			created, getErr := jobs.Get(ctx, desired.Name, metav1.GetOptions{})
-			if getErr != nil {
-				return nil, err
-			}
-			job, err = created, nil
-		}
+		reservation.Annotations[genesisRequestHash] = hash
+		job, err = k8sretry.Create(ctx, reservation,
+			func(ctx context.Context) (*batchv1.Job, error) {
+				created, err := jobs.Create(ctx, reservation, metav1.CreateOptions{})
+				if err == nil {
+					createdHere = true
+				}
+				return created, err
+			},
+			func(ctx context.Context) (*batchv1.Job, error) {
+				return jobs.Get(ctx, desired.Name, metav1.GetOptions{})
+			})
 	}
 	if err != nil {
 		return nil, err
 	}
-	if job.Annotations[genesisRequestHash] != hash {
-		return nil, errors.Errorf("Genesis Job %s/%s belongs to a different request. Wait for it to finish before retrying", job.Namespace, job.Name)
+	if job.DeletionTimestamp != nil || job.Annotations[genesisRequestHash] != hash {
+		return nil, errors.Errorf("Genesis Job %s/%s belongs to a different request or is being deleted. Wait for it to finish before retrying", job.Namespace, job.Name)
 	}
 	if job.Spec.Suspend == nil || !*job.Spec.Suspend {
-		if prepare != nil {
-			if err := prepare(ctx); err != nil {
-				return nil, err
-			}
+		if err := prepare(ctx); err != nil {
+			return nil, err
 		}
 		return job, nil
 	}
 	if err := checkGenesisJobs(ctx, c, job); err != nil {
 		return nil, err
 	}
-	if prepare != nil {
-		if err := prepare(ctx); err != nil {
-			return nil, err
-		}
+	if err := prepare(ctx); err != nil {
+		return nil, err
 	}
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err = k8sretry.Do(ctx, func(ctx context.Context) error {
 		current, err := jobs.Get(ctx, job.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
-		if current.UID != job.UID || current.Annotations[genesisRequestHash] != hash {
+		if current.UID != job.UID || current.DeletionTimestamp != nil || current.Annotations[genesisRequestHash] != hash {
 			return errors.Errorf("The genesis Job was replaced before it could start")
 		}
 		if current.Spec.Suspend == nil || !*current.Spec.Suspend {
@@ -204,20 +215,28 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 		if err := checkGenesisJobs(ctx, c, current); err != nil {
 			return err
 		}
+		current = current.DeepCopy()
 		current.Spec.Suspend = new(false)
-		started, err := jobs.Update(ctx, current, metav1.UpdateOptions{})
-		if err != nil {
-			started, getErr := jobs.Get(ctx, job.Name, metav1.GetOptions{})
-			if getErr == nil && started.UID == job.UID && started.Annotations[genesisRequestHash] == hash &&
-				(started.Spec.Suspend == nil || !*started.Spec.Suspend) {
-				job = started
-				return nil
-			}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		started, err := jobs.Update(ctx, current, metav1.UpdateOptions{})
 		if err == nil {
 			job = started
 		}
 		return err
 	})
 	return job, err
+}
+
+func deleteGenesisJob(ctx context.Context, c kubernetes.Interface, job *batchv1.Job, propagation *metav1.DeletionPropagation) error {
+	jobs := c.BatchV1().Jobs(job.Namespace)
+	return k8sretry.Delete(ctx, job,
+		func(ctx context.Context) (*batchv1.Job, error) {
+			return jobs.Get(ctx, job.Name, metav1.GetOptions{})
+		},
+		func(ctx context.Context, options metav1.DeleteOptions) error {
+			options.PropagationPolicy = propagation
+			return jobs.Delete(ctx, job.Name, options)
+		})
 }

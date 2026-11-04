@@ -273,7 +273,7 @@ func TestRetryableCreateOrUpdate(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			creates, gets, updates, modifies := 0, 0, 0, 0
 			permanent := k8serr.NewBadRequest("invalid")
-			result, err := retryableCreateOrUpdate(context.Background(),
+			result, err := retryableCreateOrUpdate(context.Background(), "resource",
 				func(ctx context.Context) (int, error) {
 					creates++
 					if stage == "PermanentCreate" {
@@ -289,6 +289,9 @@ func TestRetryableCreateOrUpdate(t *testing.T) {
 				},
 				func(ctx context.Context) (int, error) {
 					gets++
+					if stage == "Exhausted" {
+						return 0, k8serr.NewNotFound(resource, "service")
+					}
 					if stage == "PermanentGet" {
 						return 0, permanent
 					}
@@ -325,7 +328,7 @@ func TestRetryableCreateOrUpdate(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := retryableCreateOrUpdate(ctx, func(context.Context) (int, error) { return 0, transient }, nil, nil, nil)
+	_, err := retryableCreateOrUpdate(ctx, "resource", func(context.Context) (int, error) { return 0, transient }, nil, nil, nil)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 

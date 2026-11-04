@@ -3,20 +3,17 @@ package install
 import (
 	"context"
 	"fmt"
-	"io"
-	"net"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/octops/internal/k8sretry"
 	"github.com/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilnet "k8s.io/apimachinery/pkg/util/net"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -90,20 +87,12 @@ func waitForGenesisResult(ctx context.Context, job *batchv1.Job, interval, timeo
 		return errors.Errorf("The genesis polling interval and timeout must be positive")
 	}
 	var lastErr error
-	err := wait.PollUntilContextTimeout(ctx, interval, timeout, true, func(ctx context.Context) (bool, error) {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		lastErr = check(requestCtx)
-		if lastErr == nil {
-			return true, nil
-		}
-		if errors.Is(lastErr, errGenesisPending) || isTransientGenesisError(lastErr) {
+	err := k8sretry.Wait(ctx, interval, timeout, func(ctx context.Context) (bool, error) {
+		lastErr = check(ctx)
+		if errors.Is(lastErr, errGenesisPending) {
 			return false, nil
 		}
-		return false, lastErr
+		return lastErr == nil, lastErr
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -118,15 +107,7 @@ func waitForGenesisResult(ctx context.Context, job *batchv1.Job, interval, timeo
 }
 
 func isTransientGenesisError(err error) bool {
-	var networkError *net.OpError
-	var dnsError *net.DNSError
-	var timeoutError net.Error
-	return k8serr.IsTimeout(err) || k8serr.IsServerTimeout(err) || k8serr.IsTooManyRequests(err) ||
-		k8serr.IsServiceUnavailable(err) || k8serr.IsInternalError(err) ||
-		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		utilnet.IsConnectionReset(err) || utilnet.IsConnectionRefused(err) || utilnet.IsHTTP2ConnectionLost(err) ||
-		errors.As(err, &networkError) || errors.As(err, &dnsError) ||
-		(errors.As(err, &timeoutError) && (timeoutError.Timeout() || timeoutError.Temporary()))
+	return k8sretry.IsTransient(err)
 }
 
 func getInstallationResult(ctx context.Context, c kubernetes.Interface, expected *batchv1.Job) (*corev1.Secret, error) {

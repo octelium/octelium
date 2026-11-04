@@ -20,9 +20,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/octelium/octelium/cluster/common/k8sretry"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -47,38 +47,22 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 		return true
 	}
 
-	doCheck := func() (bool, *appsv1.Deployment, error) {
+	doCheck := func(ctx context.Context) (bool, error) {
 		dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx, name, k8smetav1.GetOptions{})
 		if err != nil {
-			return false, nil, err
+			return false, err
 		}
 
-		newReplicaSet, err := GetNewReplicaSet(dep, k8sC.AppsV1())
+		newReplicaSet, err := GetNewReplicaSetWithContext(ctx, dep, k8sC.AppsV1())
 		if err != nil || newReplicaSet == nil {
-			return false, dep, err
+			return false, err
 		}
 
-		return deploymentReady(newReplicaSet, dep), dep, nil
+		return deploymentReady(newReplicaSet, dep), nil
 	}
 
-	for i := range 10000 {
-		isDone, _, err := doCheck()
-		if err != nil && !shouldRetry(err) {
-			return err
-		}
+	return WaitReadiness(ctx, 2*time.Second, 20000*time.Second, doCheck)
 
-		if isDone {
-			return nil
-		}
-
-		zap.L().Debug("Deployment is not ready",
-			zap.String("deployment", name),
-			zap.String("namespace", ns),
-			zap.Int("attempt", i+1))
-
-		time.Sleep(2 * time.Second)
-	}
-	return errors.Errorf("deployment: %s is still not ready", name)
 }
 
 func WaitReadinessDeployment(ctx context.Context, k8sC kubernetes.Interface, name string) error {
@@ -86,11 +70,7 @@ func WaitReadinessDeployment(ctx context.Context, k8sC kubernetes.Interface, nam
 }
 
 func shouldRetry(err error) bool {
-	return k8serr.IsConflict(err) ||
-		k8serr.IsServerTimeout(err) ||
-		k8serr.IsUnexpectedServerError(err) ||
-		k8serr.IsTooManyRequests(err) ||
-		k8serr.IsTimeout(err)
+	return k8serr.IsConflict(err) || k8sretry.IsTransient(err)
 }
 
 func ShouldRetry(err error) bool {
@@ -102,7 +82,7 @@ func WaitReadinessDaemonsetWithNS(ctx context.Context, k8sC kubernetes.Interface
 		return nil
 	}
 
-	doCheck := func() (bool, error) {
+	doCheck := func(ctx context.Context) (bool, error) {
 		dep, err := k8sC.AppsV1().DaemonSets(ns).Get(ctx, name, k8smetav1.GetOptions{})
 		if err != nil {
 			return false, err
@@ -115,20 +95,8 @@ func WaitReadinessDaemonsetWithNS(ctx context.Context, k8sC kubernetes.Interface
 		return false, nil
 	}
 
-	for {
-		isDone, err := doCheck()
-		if err != nil && !shouldRetry(err) {
-			return err
-		}
+	return WaitReadiness(ctx, 2*time.Second, 20000*time.Second, doCheck)
 
-		if isDone {
-			return nil
-		}
-
-		zap.L().Debug("Daemonset is still not ready, trying again...", zap.String("name", name))
-
-		time.Sleep(2 * time.Second)
-	}
 }
 
 func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error {
@@ -138,7 +106,7 @@ func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 
 	zap.L().Debug("Checking for nodes to become ready...")
 
-	doCheck := func() (bool, error) {
+	doCheck := func(ctx context.Context) (bool, error) {
 		nodes, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{})
 		if err != nil {
 			return false, err
@@ -165,21 +133,15 @@ func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 		return true, nil
 	}
 
-	for i := 0; i < 1500; i++ {
-		isReady, err := doCheck()
-		if err != nil {
-			return err
-		}
-		if isReady {
-			return nil
-		}
+	return WaitReadiness(ctx, 3*time.Second, 4500*time.Second, doCheck)
+}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(3 * time.Second):
+func WaitReadiness(ctx context.Context, interval, timeout time.Duration, check func(context.Context) (bool, error)) error {
+	return k8sretry.Wait(ctx, interval, timeout, func(ctx context.Context) (bool, error) {
+		ready, err := check(ctx)
+		if k8serr.IsNotFound(err) {
+			return false, nil
 		}
-	}
-
-	return errors.Errorf("Could not check of all Kubernetes node readiness")
+		return ready, err
+	})
 }

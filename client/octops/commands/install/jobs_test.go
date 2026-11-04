@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
@@ -101,7 +102,14 @@ func TestGenesisSubmissionWithoutPreparation(t *testing.T) {
 					return true, nil, k8serr.NewServiceUnavailable("temporary outage")
 				})
 			}
-			err := SubmitGenesisJob(t.Context(), c, desired, nil)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if state == "create-failed" || state == "readback-failed" {
+				var timeoutCancel context.CancelFunc
+				ctx, timeoutCancel = context.WithTimeout(ctx, 80*time.Millisecond)
+				defer timeoutCancel()
+			}
+			err := SubmitGenesisJob(ctx, c, desired, nil)
 			if state == "create-failed" || state == "readback-failed" {
 				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 			} else {
@@ -231,11 +239,7 @@ func TestGenesisSubmissionAmbiguousResponses(t *testing.T) {
 				})
 				desired := testSubmissionJob("1.2.3")
 				err := SubmitGenesisJob(t.Context(), c, desired, testGenesisPreparation)
-				if committed {
-					require.NoError(t, err)
-				} else {
-					require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-				}
+				require.NoError(t, err)
 				require.NoError(t, SubmitGenesisJob(t.Context(), c, desired, testGenesisPreparation))
 				jobs, err := c.BatchV1().Jobs("octelium").List(t.Context(), metav1.ListOptions{})
 				require.NoError(t, err)
@@ -306,7 +310,9 @@ func TestGenesisSubmissionConflictsAndLookupFailures(t *testing.T) {
 			want := k8serr.NewServiceUnavailable("temporary outage")
 			c.PrependReactor("list", resource, func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 			prepared := false
-			assert.ErrorIs(t, SubmitGenesisJob(t.Context(), c, testSubmissionJob("1.2.3"), func(context.Context) error { prepared = true; return nil }), want)
+			ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+			defer cancel()
+			assert.ErrorIs(t, SubmitGenesisJob(ctx, c, testSubmissionJob("1.2.3"), func(context.Context) error { prepared = true; return nil }), want)
 			assert.False(t, prepared)
 			for _, action := range c.Actions() {
 				assert.False(t, action.Matches("create", "jobs"))
@@ -516,7 +522,14 @@ func TestGenesisSubmissionWithResultWithoutPreparation(t *testing.T) {
 					return true, nil, io.ErrUnexpectedEOF
 				})
 			}
-			accepted, err := SubmitGenesisJobWithResult(t.Context(), c, desired, nil)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if state == "not-committed" {
+				var timeoutCancel context.CancelFunc
+				ctx, timeoutCancel = context.WithTimeout(ctx, 80*time.Millisecond)
+				defer timeoutCancel()
+			}
+			accepted, err := SubmitGenesisJobWithResult(ctx, c, desired, nil)
 			if state == "created" || state == "create-response-lost" {
 				require.NoError(t, err)
 				require.NotNil(t, accepted)
@@ -525,8 +538,10 @@ func TestGenesisSubmissionWithResultWithoutPreparation(t *testing.T) {
 				current, err := c.BatchV1().Jobs(desired.Namespace).Get(t.Context(), desired.Name, metav1.GetOptions{})
 				require.NoError(t, err)
 				assert.Equal(t, current, accepted)
-			} else {
+			} else if state == "not-committed" {
 				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+			} else {
+				require.ErrorContains(t, err, "does not match")
 			}
 			assert.Equal(t, before, desired)
 			for _, action := range c.Actions() {

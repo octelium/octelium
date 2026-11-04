@@ -12,6 +12,7 @@ import (
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/k8sretry"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/genesisutils"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver"
@@ -28,7 +29,6 @@ import (
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/retry"
 )
 
 const initializationSecretName = "octelium-genesis-init"
@@ -85,7 +85,7 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 		return nil, err
 	}
 
-	secret, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, initializationSecretName, k8smetav1.GetOptions{})
+	secret, err := g.getK8sSecret(ctx, vutils.K8sNS, initializationSecretName)
 	if err == nil {
 		init, err := decodeInitialization(secret, inputHash)
 		if err != nil {
@@ -100,13 +100,13 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	}
 
 	for _, name := range []string{"octelium-init", "init-token", "octelium-postgres", "octelium-redis"} {
-		if _, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, name, k8smetav1.GetOptions{}); err == nil {
+		if _, err := g.getK8sSecret(ctx, vutils.K8sNS, name); err == nil {
 			return nil, errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
 		} else if !k8serr.IsNotFound(err) {
 			return nil, err
 		}
 	}
-	if _, err := g.k8sC.CoreV1().ConfigMaps(vutils.K8sNS).Get(ctx, installationConfigMapName, k8smetav1.GetOptions{}); err == nil {
+	if _, err := g.getK8sConfigMap(ctx, vutils.K8sNS, installationConfigMapName); err == nil {
 		return nil, errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
 	} else if !k8serr.IsNotFound(err) {
 		return nil, err
@@ -152,10 +152,14 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 			"region":        pbutils.MarshalMust(region),
 		},
 	}
-	secret, err = g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, secret, k8smetav1.CreateOptions{})
-	if k8serr.IsAlreadyExists(err) {
-		secret, err = g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, initializationSecretName, k8smetav1.GetOptions{})
-	}
+	desired := secret
+	secret, err = k8sretry.Create(ctx, desired,
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, desired, k8smetav1.CreateOptions{})
+		},
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, initializationSecretName, k8smetav1.GetOptions{})
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -199,8 +203,8 @@ func decodeInitialization(secret *k8scorev1.Secret, inputHash string) (*initiali
 }
 
 func (g *Genesis) completeInitialization(ctx context.Context, init *initialization) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		secret, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, initializationSecretName, k8smetav1.GetOptions{})
+	return k8sretry.Do(ctx, func(ctx context.Context) error {
+		secret, err := g.getK8sSecret(ctx, vutils.K8sNS, initializationSecretName)
 		if err != nil {
 			return err
 		}
@@ -360,11 +364,13 @@ func createInitResource[T umetav1.ResourceObjectI](ctx context.Context, resource
 }
 
 func (g *Genesis) createStorageSecret(ctx context.Context, secret *k8scorev1.Secret) error {
-	_, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, secret, k8smetav1.CreateOptions{})
-	if !k8serr.IsAlreadyExists(err) {
-		return err
-	}
-	existing, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, secret.Name, k8smetav1.GetOptions{})
+	existing, err := k8sretry.Create(ctx, secret,
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return g.k8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, secret, k8smetav1.CreateOptions{})
+		},
+		func(ctx context.Context) (*k8scorev1.Secret, error) {
+			return g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, secret.Name, k8smetav1.GetOptions{})
+		})
 	if err != nil {
 		return err
 	}
@@ -377,7 +383,7 @@ func (g *Genesis) createStorageSecret(ctx context.Context, secret *k8scorev1.Sec
 }
 
 func (g *Genesis) getInitAuthenticationToken(ctx context.Context) (*k8scorev1.Secret, error) {
-	secret, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, "init-token", k8smetav1.GetOptions{})
+	secret, err := g.getK8sSecret(ctx, vutils.K8sNS, "init-token")
 	if err != nil {
 		return nil, err
 	}

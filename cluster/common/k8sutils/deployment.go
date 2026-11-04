@@ -20,6 +20,8 @@ import (
 	"context"
 	"sort"
 
+	"github.com/octelium/octelium/cluster/common/k8sretry"
+
 	apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -107,7 +109,11 @@ func EqualIgnoreHash(template1, template2 *v1.PodTemplateSpec) bool {
 // GetNewReplicaSet returns a replica set that matches the intent of the given deployment; get ReplicaSetList from client interface.
 // Returns nil if the new replica set doesn't exist yet.
 func GetNewReplicaSet(deployment *apps.Deployment, c appsclient.AppsV1Interface) (*apps.ReplicaSet, error) {
-	rsList, err := ListReplicaSets(deployment, RsListFromClient(c))
+	return GetNewReplicaSetWithContext(context.Background(), deployment, c)
+}
+
+func GetNewReplicaSetWithContext(ctx context.Context, deployment *apps.Deployment, c appsclient.AppsV1Interface) (*apps.ReplicaSet, error) {
+	rsList, err := ListReplicaSets(deployment, RsListFromClientWithContext(ctx, c))
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +122,14 @@ func GetNewReplicaSet(deployment *apps.Deployment, c appsclient.AppsV1Interface)
 
 // RsListFromClient returns an rsListFunc that wraps the given client.
 func RsListFromClient(c appsclient.AppsV1Interface) RsListFunc {
+	return RsListFromClientWithContext(context.Background(), c)
+}
+
+func RsListFromClientWithContext(ctx context.Context, c appsclient.AppsV1Interface) RsListFunc {
 	return func(namespace string, options metav1.ListOptions) ([]*apps.ReplicaSet, error) {
-		rsList, err := c.ReplicaSets(namespace).List(context.Background(), options)
+		rsList, err := k8sretry.Read(ctx, func(ctx context.Context) (*apps.ReplicaSetList, error) {
+			return c.ReplicaSets(namespace).List(ctx, options)
+		})
 		if err != nil {
 			return nil, err
 		}

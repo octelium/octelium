@@ -1,8 +1,10 @@
 package install
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,7 +58,9 @@ func TestInstallationAdmissionReadFailures(t *testing.T) {
 			c := fake.NewSimpleClientset()
 			want := k8serr.NewServiceUnavailable("temporary outage")
 			c.PrependReactor("get", resource, func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
-			assert.ErrorIs(t, DoInstall(t.Context(), &Opts{K8sC: c}), want)
+			ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+			defer cancel()
+			assert.ErrorIs(t, DoInstall(ctx, &Opts{K8sC: c}), want)
 			for _, action := range c.Actions() {
 				assert.Equal(t, "get", action.GetVerb())
 			}
