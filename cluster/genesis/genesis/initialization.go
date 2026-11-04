@@ -19,6 +19,7 @@ package genesis
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -52,6 +53,14 @@ const initializationSecretName = "octelium-genesis-init"
 const initializationIDKey = "octelium.com/genesis-init-id"
 const initializationCompleteKey = "octelium.com/genesis-init-complete"
 const initializationRedisKey = "octelium:genesis:init"
+const initializationInputHashKey = "octelium.com/genesis-init-input-hash"
+const initializationInputKey = "genesis-input-key"
+
+func initializationInputBinding(hash string, key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(hash))
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 type initialization struct {
 	id            string
@@ -93,6 +102,10 @@ func (g *Genesis) loadInitializationInput(ctx context.Context) (*LoadedClusterRe
 }
 
 func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterResource) (*initialization, error) {
+	return g.prepareInitializationWithPreflight(ctx, cr, nil)
+}
+
+func (g *Genesis) prepareInitializationWithPreflight(ctx context.Context, cr *LoadedClusterResource, preflight func(context.Context, *storagePasswords) error) (*initialization, error) {
 	if cr == nil || cr.Bootstrap.GetSpec().GetPrimaryStorage().GetPostgresql() == nil ||
 		cr.Bootstrap.GetSpec().GetSecondaryStorage().GetRedis() == nil {
 		return nil, errors.Errorf("The bootstrap must contain PostgreSQL and Redis storage configuration")
@@ -106,39 +119,44 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 		return nil, err
 	}
 
+	var replacement *k8scorev1.Secret
 	secret, err := g.getK8sSecret(ctx, vutils.K8sNS, initializationSecretName)
 	if err == nil {
 		init, err := decodeInitialization(secret, inputHash)
 		if err != nil {
-			return nil, err
+			savedHash := string(secret.Data["input-hash"])
+			if savedHash == inputHash || secret.Annotations[initializationCompleteKey] == "true" ||
+				secret.UID == "" || secret.ResourceVersion == "" || len(savedHash) != sha256.Size*2 {
+				return nil, err
+			}
+			if _, decodeErr := hex.DecodeString(savedHash); decodeErr != nil {
+				return nil, err
+			}
+			if _, decodeErr := decodeInitialization(secret, savedHash); decodeErr != nil {
+				return nil, decodeErr
+			}
+			replacement = secret
 		}
 		if err := g.validateInitializationNamespace(ctx, secret); err != nil {
 			return nil, err
 		}
-		if !init.complete {
-			init.passwords, err = g.resolveStoragePasswords(ctx, cr.Bootstrap)
-			if err != nil {
+		if replacement == nil {
+			if !init.complete {
+				init.passwords, err = g.resolveStoragePasswords(ctx, cr.Bootstrap)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if err := g.setNamespace(ctx); err != nil {
 				return nil, err
 			}
+			return init, nil
 		}
-		if err := g.setNamespace(ctx); err != nil {
-			return nil, err
-		}
-		return init, nil
 	} else if !k8serr.IsNotFound(err) {
 		return nil, err
 	}
 
-	for _, name := range []string{"octelium-init", "init-token", "octelium-postgres", "octelium-redis"} {
-		if _, err := g.getK8sSecret(ctx, vutils.K8sNS, name); err == nil {
-			return nil, errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
-		} else if !k8serr.IsNotFound(err) {
-			return nil, err
-		}
-	}
-	if _, err := g.getK8sConfigMap(ctx, vutils.K8sNS, installationConfigMapName); err == nil {
-		return nil, errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
-	} else if !k8serr.IsNotFound(err) {
+	if err := g.checkInitializationNotStarted(ctx); err != nil {
 		return nil, err
 	}
 
@@ -160,6 +178,11 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	passwords, err := g.resolveStoragePasswords(ctx, cr.Bootstrap)
 	if err != nil {
 		return nil, err
+	}
+	if preflight != nil {
+		if err := preflight(ctx, passwords); err != nil {
+			return nil, err
+		}
 	}
 	if err := g.setNamespace(ctx); err != nil {
 		return nil, err
@@ -195,6 +218,20 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	if namespace.UID != "" {
 		secret.Data["namespace-uid"] = []byte(namespace.UID)
 	}
+	if replacement != nil {
+		if err := g.checkInitializationNotStarted(ctx); err != nil {
+			return nil, err
+		}
+		if err := k8sretry.Delete(ctx, replacement,
+			func(ctx context.Context) (*k8scorev1.Secret, error) {
+				return g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, initializationSecretName, k8smetav1.GetOptions{})
+			},
+			func(ctx context.Context, options k8smetav1.DeleteOptions) error {
+				return g.k8sC.CoreV1().Secrets(vutils.K8sNS).Delete(ctx, initializationSecretName, options)
+			}); err != nil {
+			return nil, err
+		}
+	}
 	desired := secret
 	secret, err = k8sretry.Create(ctx, desired,
 		func(ctx context.Context) (*k8scorev1.Secret, error) {
@@ -212,6 +249,22 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	}
 	init.passwords = passwords
 	return init, nil
+}
+
+func (g *Genesis) checkInitializationNotStarted(ctx context.Context) error {
+	for _, name := range []string{"octelium-init", "init-token", "octelium-postgres", "octelium-redis"} {
+		if _, err := g.getK8sSecret(ctx, vutils.K8sNS, name); err == nil {
+			return errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
+		} else if !k8serr.IsNotFound(err) {
+			return err
+		}
+	}
+	if _, err := g.getK8sConfigMap(ctx, vutils.K8sNS, installationConfigMapName); err == nil {
+		return errors.Errorf("An existing Cluster installation was found. Use octops upgrade instead of init")
+	} else if !k8serr.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 func decodeInitialization(secret *k8scorev1.Secret, inputHash string) (*initialization, error) {

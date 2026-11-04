@@ -45,6 +45,12 @@ const submissionJobName = "genesis-submission-test"
 func newGenesisJobClient(t *testing.T) *fake.Clientset {
 	t.Helper()
 	c := fake.NewSimpleClientset()
+	c.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		secret := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret).DeepCopy()
+		secret.UID, secret.ResourceVersion = types.UID(uuid.NewString()), "1"
+		err := c.Tracker().Create(action.GetResource(), secret, action.GetNamespace())
+		return true, secret, err
+	})
 	c.PrependReactor("*", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		switch action.GetVerb() {
 		case "create":
@@ -427,7 +433,7 @@ func TestActiveInitializationRejectsDifferentBootstrap(t *testing.T) {
 	require.NoError(t, pbutils.UnmarshalYAML([]byte("spec: {primaryStorage: {postgresql: {host: localhost, password: replacement}}}"), replacement))
 	o.Bootstrap = replacement
 	_, err = createGenesis(t.Context(), o)
-	require.ErrorContains(t, err, "bootstrap differs")
+	require.ErrorContains(t, err, "different request")
 	afterJob, err := c.BatchV1().Jobs("default").Get(t.Context(), genesisJobName, metav1.GetOptions{})
 	require.NoError(t, err)
 	afterSecret, err := c.CoreV1().Secrets("default").Get(t.Context(), "octelium-init", metav1.GetOptions{})

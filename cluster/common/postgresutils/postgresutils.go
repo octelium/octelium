@@ -216,6 +216,15 @@ func NewDB() (*sql.DB, error) {
 	return sql.Open("postgres", getPostgresURL(false))
 }
 
+func NewDBWithDialer(dialer pq.Dialer) (*sql.DB, error) {
+	connector, err := pq.NewConnector(getPostgresURL(false))
+	if err != nil {
+		return nil, err
+	}
+	connector.Dialer(dialer)
+	return sql.OpenDB(connector), nil
+}
+
 func NewDBWithNODB() (*sql.DB, error) {
 	return sql.Open("postgres", getPostgresURL(true))
 }

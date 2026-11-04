@@ -379,7 +379,9 @@ func TestInitializationRejectsExistingRedisE2E(t *testing.T) {
 			f := newInitializationFixture(t)
 			require.NoError(t, f.redis.Set(t.Context(), key, "existing", 0).Err())
 			require.ErrorContains(t, f.genesis.RunInit(t.Context(), nil), "Redis database")
-			assert.Empty(t, initializationRows(t, f.db))
+			var exists bool
+			require.NoError(t, f.db.QueryRowContext(t.Context(), `SELECT to_regclass('octelium_resources') IS NOT NULL`).Scan(&exists))
+			assert.False(t, exists)
 			assert.Equal(t, "existing", f.redis.Get(t.Context(), key).Val())
 			f.checkPreserved(t)
 		})

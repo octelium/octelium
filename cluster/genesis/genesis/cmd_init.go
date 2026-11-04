@@ -80,7 +80,18 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	if err := g.waitForConcurrentGenesis(ctx); err != nil {
 		return err
 	}
-	init, err := g.prepareInitialization(ctx, initResources)
+	init, err := g.prepareInitializationWithPreflight(ctx, initResources, func(ctx context.Context, passwords *storagePasswords) error {
+		if g.pod != nil && g.pod.Annotations[initializationInputHashKey] != "" {
+			hash, err := initializationInputHash(initResources)
+			if err != nil {
+				return err
+			}
+			if initializationInputBinding(hash, g.inputBindingKey) != g.pod.Annotations[initializationInputHashKey] {
+				return errors.New("The bootstrap no longer matches the submitted initialization")
+			}
+		}
+		return preflightInitializationStorage(ctx, initResources.Bootstrap, passwords)
+	})
 	if err != nil {
 		return err
 	}
@@ -970,37 +981,6 @@ func (g *Genesis) initStorageWithPasswords(ctx context.Context, i *genesisutils.
 			return err
 		}
 
-		if ldflags.IsTest() {
-			os.Setenv("OCTELIUM_POSTGRES_NOSSL", "true")
-			os.Setenv("OCTELIUM_POSTGRES_HOST", "localhost")
-			os.Setenv("OCTELIUM_POSTGRES_USERNAME", "postgres")
-			os.Setenv("OCTELIUM_POSTGRES_PASSWORD", "postgres")
-
-		} else {
-			if info.Database != "" {
-				os.Setenv("OCTELIUM_POSTGRES_DATABASE", info.Database)
-			}
-
-			if info.Username != "" {
-				os.Setenv("OCTELIUM_POSTGRES_USERNAME", info.Username)
-			}
-
-			if password != "" {
-				os.Setenv("OCTELIUM_POSTGRES_PASSWORD", password)
-			}
-
-			if !info.IsTLS {
-				os.Setenv("OCTELIUM_POSTGRES_NOSSL", "true")
-			}
-
-			if info.Host != "" {
-				os.Setenv("OCTELIUM_POSTGRES_HOST", info.Host)
-			}
-
-			if info.Port != 0 {
-				os.Setenv("OCTELIUM_POSTGRES_PORT", fmt.Sprintf("%d", info.Port))
-			}
-		}
 	}
 
 	{
@@ -1020,34 +1000,9 @@ func (g *Genesis) initStorageWithPasswords(ctx context.Context, i *genesisutils.
 			return err
 		}
 
-		{
-			if info.Database != 0 {
-				os.Setenv("OCTELIUM_REDIS_DATABASE", fmt.Sprintf("%d", info.Database))
-			}
-
-			if info.Username != "" {
-				os.Setenv("OCTELIUM_REDIS_USERNAME", info.Username)
-			}
-
-			if password != "" {
-				os.Setenv("OCTELIUM_REDIS_PASSWORD", password)
-			}
-
-			if info.Host != "" {
-				os.Setenv("OCTELIUM_REDIS_HOST", info.Host)
-			}
-
-			if info.Port != 0 {
-				os.Setenv("OCTELIUM_REDIS_PORT", fmt.Sprintf("%d", info.Port))
-			}
-
-			if info.IsTLS {
-				os.Setenv("OCTELIUM_REDIS_USE_TLS", "true")
-			}
-		}
 	}
 
-	// g.setDBEnvVars(i)
+	setStorageEnvironment(i.Bootstrap, passwords)
 
 	return nil
 }
@@ -1444,6 +1399,7 @@ func (g *Genesis) loadClusterInitResources(ctx context.Context, ns string) (*Loa
 	if err != nil {
 		return nil, err
 	}
+	g.inputBindingKey = sec.Data[initializationInputKey]
 
 	bootstrap := &cbootstrapv1.Config{}
 

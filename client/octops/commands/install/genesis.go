@@ -20,6 +20,7 @@ import (
 
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octops/internal/k8sretry"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	utils_types "github.com/octelium/octelium/pkg/utils/types"
 	batchv1 "k8s.io/api/batch/v1"
@@ -226,7 +227,27 @@ func GetGenesisPodSpec(o *GenesisPodSpecOpts) corev1.PodSpec {
 
 func createGenesis(ctx context.Context, o *Opts) (*batchv1.Job, error) {
 	c := o.K8sC
-	return submitGenesisJob(ctx, c, getGenesisJob(o, spiffeFromBootstrap(o.Bootstrap)), func(ctx context.Context) error {
+	data := map[string][]byte{
+		"bootstrap": pbutils.MarshalMust(o.Bootstrap),
+		"region":    pbutils.MarshalMust(o.Region),
+		"domain":    []byte(o.ClusterDomain),
+	}
+	source, err := getBootstrapInput(ctx, c, data)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := initializationInputHash(data)
+	if err != nil {
+		return nil, err
+	}
+	job := getGenesisJob(o, spiffeFromBootstrap(o.Bootstrap))
+	job, err = bindInitializationInput(ctx, c, job, hash, source.Data[initializationInputKey])
+	if err != nil {
+		return nil, err
+	}
+	prepared := false
+	prepare := func(ctx context.Context) error {
+		prepared = true
 		if err := setClusterResources(ctx, o); err != nil {
 			return err
 		}
@@ -255,5 +276,15 @@ func createGenesis(ctx context.Context, o *Opts) (*batchv1.Job, error) {
 			}
 		}
 		return nil
-	})
+	}
+	accepted, err := submitGenesisJob(ctx, c, job, prepare)
+	if err != nil && !prepared && job.Spec.Template.Annotations[initializationInputHashKey] != "" &&
+		(k8serr.IsForbidden(err) || k8serr.IsInvalid(err)) {
+		currentHash, hashErr := initializationInputHash(source.Data)
+		if hashErr == nil && currentHash == hash {
+			job.Spec.Template.Annotations = nil
+			return submitGenesisJob(ctx, c, job, prepare)
+		}
+	}
+	return accepted, err
 }

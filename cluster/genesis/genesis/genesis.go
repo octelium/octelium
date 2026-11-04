@@ -41,6 +41,7 @@ type Genesis struct {
 	octeliumC        octeliumc.ClientInterface
 	nadC             nadclientset.Interface
 	initializationID string
+	inputBindingKey  []byte
 	rscServer        *rscserver.Server
 	pod              *k8scorev1.Pod
 	podNamespace     string

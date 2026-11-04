@@ -158,7 +158,7 @@ func setClusterResources(ctx context.Context, o *Opts) error {
 		desiredRegion = &corev1.Region{}
 	}
 	if string(secret.Data["domain"]) != o.ClusterDomain || !proto.Equal(bs, desiredBS) || !proto.Equal(region, desiredRegion) {
-		return errors.Errorf("The existing bootstrap differs. Refusing to replace another initialization's input")
+		return repairBootstrap(ctx, o.K8sC, secret, dataMap)
 	}
 	return nil
 }
