@@ -181,7 +181,7 @@ func newTestKubernetes(t *testing.T, objects ...runtime.Object) (*fake.Clientset
 		switch r.Method {
 		case http.MethodGet:
 			if name == "" {
-				action = k8stesting.NewListAction(gvr, gv.WithKind(kind), namespace, k8smetav1.ListOptions{LabelSelector: r.URL.Query().Get("labelSelector")})
+				action = k8stesting.NewListAction(gvr, gv.WithKind(kind), namespace, k8smetav1.ListOptions{LabelSelector: r.URL.Query().Get("labelSelector"), FieldSelector: r.URL.Query().Get("fieldSelector")})
 			} else {
 				action = k8stesting.NewGetAction(gvr, namespace, name)
 			}
@@ -488,27 +488,35 @@ func TestUpgradeWaitCommandE2E(t *testing.T) {
 		t.Run(fmt.Sprintf("transient=%t", transient), func(t *testing.T) {
 			var calls atomic.Int32
 			ctx := newTestCoreServer(t, func(ctx context.Context, req *metav1.GetOptions) (*corev1.Region, error) {
-				assert.Equal(t, "default", req.Name)
-				n := calls.Add(1)
-				if n == 1 {
-					return &corev1.Region{Status: &corev1.Region_Status{Version: "1.0.0"}}, nil
-				}
-				if transient && n == 2 {
-					return &corev1.Region{Status: &corev1.Region_Status{Version: "1.0.0"}}, nil
-				}
-				if transient && n == 3 {
-					return nil, status.Error(codes.NotFound, "region is reloading")
-				}
-				return &corev1.Region{Status: &corev1.Region_Status{Version: "1.2.3"}}, nil
+				calls.Add(1)
+				return nil, status.Error(codes.PermissionDenied, "Public API must not be used to wait for upgrades")
 			})
 			c, config := newTestKubernetes(t)
+			c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+				return false, nil, nil
+			})
+			var reads atomic.Int32
+			c.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				n := reads.Add(1)
+				if transient && n == 1 {
+					return true, nil, k8serr.NewServiceUnavailable("Temporary API outage")
+				}
+				return false, nil, nil
+			})
 			out, err := executeTestCommand(t, ctx, "upgrade", "example.invalid", "--kubeconfig="+config, "--version=1.2.3", "--wait")
 			require.NoError(t, err)
 			assert.Contains(t, out, "Cluster has been upgraded")
 			jobs, err := c.BatchV1().Jobs("octelium").List(ctx, k8smetav1.ListOptions{})
 			require.NoError(t, err)
 			assert.Len(t, jobs.Items, 1)
-			assert.GreaterOrEqual(t, calls.Load(), int32(2))
+			assert.Zero(t, calls.Load())
+			if transient {
+				assert.Equal(t, int32(2), reads.Load())
+			} else {
+				assert.Equal(t, int32(1), reads.Load())
+			}
 		})
 	}
 }
@@ -590,12 +598,18 @@ func TestCommandErrorsE2E(t *testing.T) {
 		assert.Error(t, err)
 		assert.Empty(t, c.Actions())
 	}
-	ctx := newTestCoreServer(t, func(ctx context.Context, req *metav1.GetOptions) (*corev1.Region, error) {
-		return nil, status.Error(codes.PermissionDenied, "not permitted")
+	c, config := newTestKubernetes(t)
+	c.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "test", fmt.Errorf("not permitted"))
 	})
-	_, config := newTestKubernetes(t)
-	_, err := executeTestCommand(t, ctx, "upgrade", "example.invalid", "--kubeconfig="+config, "--wait")
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	c.PrependReactor("list", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.(k8stesting.ListAction).GetListRestrictions().Fields.String() != "" {
+			return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "test", fmt.Errorf("not permitted"))
+		}
+		return false, nil, nil
+	})
+	_, err := executeTestCommand(t, t.Context(), "upgrade", "example.invalid", "--kubeconfig="+config, "--wait")
+	assert.True(t, k8serr.IsForbidden(err), "%v", err)
 }
 
 func TestInitInputErrorsE2E(t *testing.T) {
@@ -634,16 +648,21 @@ func TestInvalidKubernetesTLSConfigE2E(t *testing.T) {
 	}
 }
 
-func TestUpgradeWaitAuthenticationFailureE2E(t *testing.T) {
+func TestUpgradeWaitWithoutClusterAuthenticationE2E(t *testing.T) {
 	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
 	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "")
 	t.Setenv("OCTELIUM_AUTH_TOKEN", "")
 	t.Setenv("OCTELIUM_AUTH_ASSERTION", "unsupported-type")
 	c, config := newTestKubernetes(t)
+	c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+		return false, nil, nil
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := executeTestCommand(t, ctx, "upgrade", "example.invalid", "--kubeconfig="+config, "--wait")
-	assert.Error(t, err)
+	require.NoError(t, err)
 	jobs, err := c.BatchV1().Jobs("octelium").List(context.Background(), k8smetav1.ListOptions{})
 	require.NoError(t, err)
 	assert.Len(t, jobs.Items, 1)

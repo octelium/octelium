@@ -94,7 +94,7 @@ func TestInstallationJobCompletion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			job := completedInstallationJob()
 			tc.mutate(job)
-			complete, err := installationJobComplete(job, completedInstallationJob())
+			complete, err := genesisJobComplete(job, completedInstallationJob())
 			assert.Equal(t, tc.complete, complete)
 			if tc.err == "" {
 				require.NoError(t, err)
@@ -365,7 +365,7 @@ func TestInstallationPodDiagnosticsAndRecovery(t *testing.T) {
 			}
 			c := fake.NewSimpleClientset(job, pod, legacyInitialToken())
 			secret, err := getInstallationResult(t.Context(), c, job)
-			require.ErrorIs(t, err, errInstallationPending)
+			require.ErrorIs(t, err, errGenesisPending)
 			assert.Nil(t, secret)
 			assert.Contains(t, err.Error(), state)
 			assert.Contains(t, err.Error(), pod.Name)
@@ -400,7 +400,7 @@ func TestInstallationPodDiagnosticsOwnership(t *testing.T) {
 				pod.OwnerReferences = nil
 			}
 			c := fake.NewSimpleClientset(pod)
-			assert.NotContains(t, installationPodStatus(t.Context(), c, job), "UnrelatedError")
+			assert.NotContains(t, genesisPodStatus(t.Context(), c, job), "UnrelatedError")
 		})
 	}
 }
@@ -435,7 +435,7 @@ func TestInstallationErrorClassification(t *testing.T) {
 		{context.Canceled, false}, {x509.UnknownAuthorityError{}, false}, {errors.New("invalid response"), false},
 	} {
 		t.Run(tc.err.Error(), func(t *testing.T) {
-			assert.Equal(t, tc.retry, isTransientInstallationError(errors.Wrap(tc.err, "request failed")))
+			assert.Equal(t, tc.retry, isTransientGenesisError(errors.Wrap(tc.err, "request failed")))
 		})
 	}
 }
@@ -456,6 +456,7 @@ func TestInstallationRequiresJobIdentityAndBoundedPolling(t *testing.T) {
 		secret, err := waitForInitialToken(t.Context(), c, tc.job, tc.interval, tc.timeout)
 		require.Error(t, err)
 		assert.Nil(t, secret)
+		require.Error(t, WaitGenesisJob(t.Context(), c, tc.job, tc.interval, tc.timeout))
 		assert.Empty(t, c.Actions())
 	}
 }

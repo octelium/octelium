@@ -71,8 +71,12 @@ func checkGenesisJobs(ctx context.Context, c kubernetes.Interface, own *batchv1.
 }
 
 func SubmitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batchv1.Job, prepare func(context.Context) error) error {
-	_, err := submitGenesisJob(ctx, c, desired, prepare)
+	_, err := SubmitGenesisJobWithResult(ctx, c, desired, prepare)
 	return err
+}
+
+func SubmitGenesisJobWithResult(ctx context.Context, c kubernetes.Interface, desired *batchv1.Job, prepare func(context.Context) error) (*batchv1.Job, error) {
+	return submitGenesisJob(ctx, c, desired, prepare)
 }
 
 func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batchv1.Job, prepare func(context.Context) error) (_ *batchv1.Job, retErr error) {

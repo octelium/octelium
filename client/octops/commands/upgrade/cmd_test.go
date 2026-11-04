@@ -305,8 +305,10 @@ func TestCheckUpgradeAuthenticationError(t *testing.T) {
 func TestGenesisUpgradeJobs(t *testing.T) {
 	ctx := context.Background()
 	c := fakek8s.NewSimpleClientset(&k8scorev1.ConfigMap{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-installation", Namespace: "octelium"}, Data: map[string]string{"installation.json": `{"spiffe":{"enable":true,"trustDomain":"test.local"}}`}})
-	require.NoError(t, createGenesis(ctx, c, "example.com", "1.2.3"))
-	require.ErrorContains(t, createGenesis(ctx, c, "example.com", "1.2.3"), "still active")
+	_, err := createGenesis(ctx, c, "example.com", "1.2.3")
+	require.NoError(t, err)
+	_, err = createGenesis(ctx, c, "example.com", "1.2.3")
+	require.ErrorContains(t, err, "still active")
 	jobs, err := c.BatchV1().Jobs("octelium").List(ctx, k8smetav1.ListOptions{})
 	require.NoError(t, err)
 	require.Len(t, jobs.Items, 1)
@@ -319,7 +321,8 @@ func TestGenesisUpgradeJobs(t *testing.T) {
 		_, err = c.BatchV1().Jobs(job.Namespace).UpdateStatus(ctx, &job, k8smetav1.UpdateOptions{})
 		require.NoError(t, err)
 	}
-	require.NoError(t, createGenesis(ctx, c, "example.com", "1.2.3"))
+	_, err = createGenesis(ctx, c, "example.com", "1.2.3")
+	require.NoError(t, err)
 	jobs, err = c.BatchV1().Jobs("octelium").List(ctx, k8smetav1.ListOptions{})
 	require.NoError(t, err)
 	require.Len(t, jobs.Items, 2)
@@ -327,7 +330,8 @@ func TestGenesisUpgradeJobs(t *testing.T) {
 	want := k8serr.NewForbidden(schema.GroupResource{Group: "batch", Resource: "jobs"}, "test", fmt.Errorf("not permitted"))
 	c = fakek8s.NewSimpleClientset()
 	c.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
-	assert.ErrorIs(t, createGenesis(ctx, c, "example.com", "1.2.3"), want)
+	_, err = createGenesis(ctx, c, "example.com", "1.2.3")
+	assert.ErrorIs(t, err, want)
 	job := getGenesisJob("example.com", "1.2.3", &install.SPIFFEOpts{CSIDriver: "custom.csi"})
 	assert.Equal(t, "custom.csi", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
 }

@@ -24,7 +24,7 @@ const initializationSecretName = "octelium-genesis-init"
 const initializationIDKey = "octelium.com/genesis-init-id"
 const initializationCompleteKey = "octelium.com/genesis-init-complete"
 
-var errInstallationPending = errors.New("The Cluster installation has not finished")
+var errGenesisPending = errors.New("The genesis Job has not finished")
 
 func waitForInstallation(ctx context.Context, c kubernetes.Interface, job *batchv1.Job) (*corev1.Secret, error) {
 	s := cliutils.NewSpinner(os.Stdout)
@@ -35,13 +35,60 @@ func waitForInstallation(ctx context.Context, c kubernetes.Interface, job *batch
 }
 
 func waitForInitialToken(ctx context.Context, c kubernetes.Interface, job *batchv1.Job, interval, timeout time.Duration) (*corev1.Secret, error) {
+	var secret *corev1.Secret
+	err := waitForGenesisResult(ctx, job, interval, timeout, func(ctx context.Context) error {
+		var err error
+		secret, err = getInstallationResult(ctx, c, job)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return secret, nil
+}
+
+func WaitGenesisJob(ctx context.Context, c kubernetes.Interface, job *batchv1.Job, interval, timeout time.Duration) error {
+	return waitForGenesisResult(ctx, job, interval, timeout, func(ctx context.Context) error {
+		current, err := readGenesisJob(ctx, c, job)
+		if err != nil {
+			return err
+		}
+		complete, err := genesisJobComplete(current, job)
+		if err != nil {
+			return errors.Wrapf(err, "%s", genesisPodStatus(ctx, c, job))
+		}
+		if !complete {
+			return errors.Wrapf(errGenesisPending, "%s", genesisPodStatus(ctx, c, job))
+		}
+		return ctx.Err()
+	})
+}
+
+func readGenesisJob(ctx context.Context, c kubernetes.Interface, job *batchv1.Job) (*batchv1.Job, error) {
+	jobs := c.BatchV1().Jobs(job.Namespace)
+	current, err := jobs.Get(ctx, job.Name, metav1.GetOptions{})
+	if !k8serr.IsForbidden(err) {
+		return current, err
+	}
+	list, err := jobs.List(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + job.Name})
+	if err != nil {
+		return nil, err
+	}
+	for i := range list.Items {
+		if list.Items[i].Name == job.Name && list.Items[i].Namespace == job.Namespace {
+			return &list.Items[i], nil
+		}
+	}
+	return nil, k8serr.NewNotFound(batchv1.Resource("jobs"), job.Name)
+}
+
+func waitForGenesisResult(ctx context.Context, job *batchv1.Job, interval, timeout time.Duration, check func(context.Context) error) error {
 	if job == nil || job.UID == "" || job.Name == "" || job.Namespace == "" {
-		return nil, errors.Errorf("The submitted genesis Job identity is missing")
+		return errors.Errorf("The submitted genesis Job identity is missing")
 	}
 	if interval <= 0 || timeout <= 0 {
-		return nil, errors.Errorf("The installation polling interval and timeout must be positive")
+		return errors.Errorf("The genesis polling interval and timeout must be positive")
 	}
-	var secret *corev1.Secret
 	var lastErr error
 	err := wait.PollUntilContextTimeout(ctx, interval, timeout, true, func(ctx context.Context) (bool, error) {
 		if err := ctx.Err(); err != nil {
@@ -49,11 +96,11 @@ func waitForInitialToken(ctx context.Context, c kubernetes.Interface, job *batch
 		}
 		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		secret, lastErr = getInstallationResult(requestCtx, c, job)
+		lastErr = check(requestCtx)
 		if lastErr == nil {
 			return true, nil
 		}
-		if errors.Is(lastErr, errInstallationPending) || isTransientInstallationError(lastErr) {
+		if errors.Is(lastErr, errGenesisPending) || isTransientGenesisError(lastErr) {
 			return false, nil
 		}
 		return false, lastErr
@@ -65,12 +112,12 @@ func waitForInitialToken(ctx context.Context, c kubernetes.Interface, job *batch
 		if lastErr != nil && !errors.Is(err, lastErr) {
 			err = errors.Wrapf(err, "%s", lastErr)
 		}
-		return nil, errors.Wrapf(err, "Could not finish installation with genesis Job %s/%s (%s)", job.Namespace, job.Name, job.UID)
+		return errors.Wrapf(err, "Could not finish genesis Job %s/%s (%s)", job.Namespace, job.Name, job.UID)
 	}
-	return secret, nil
+	return nil
 }
 
-func isTransientInstallationError(err error) bool {
+func isTransientGenesisError(err error) bool {
 	var networkError *net.OpError
 	var dnsError *net.DNSError
 	var timeoutError net.Error
@@ -87,16 +134,16 @@ func getInstallationResult(ctx context.Context, c kubernetes.Interface, expected
 	if err != nil {
 		return nil, err
 	}
-	complete, err := installationJobComplete(job, expected)
+	complete, err := genesisJobComplete(job, expected)
 	if err != nil {
-		return nil, errors.Wrapf(err, "%s", installationPodStatus(ctx, c, expected))
+		return nil, errors.Wrapf(err, "%s", genesisPodStatus(ctx, c, expected))
 	}
 	if !complete {
-		return nil, errors.Wrapf(errInstallationPending, "%s", installationPodStatus(ctx, c, expected))
+		return nil, errors.Wrapf(errGenesisPending, "%s", genesisPodStatus(ctx, c, expected))
 	}
 	secret, err := c.CoreV1().Secrets(octeliumNS).Get(ctx, "init-token", metav1.GetOptions{})
 	if k8serr.IsNotFound(err) {
-		return nil, errors.Wrap(errInstallationPending, "The completed Job's initial authentication token is not available")
+		return nil, errors.Wrap(errGenesisPending, "The completed Job's initial authentication token is not available")
 	}
 	if err != nil {
 		return nil, err
@@ -118,7 +165,7 @@ func getInstallationResult(ctx context.Context, c kubernetes.Interface, expected
 	if err != nil {
 		return nil, err
 	}
-	complete, err = installationJobComplete(job, expected)
+	complete, err = genesisJobComplete(job, expected)
 	if err != nil {
 		return nil, err
 	}
@@ -126,12 +173,12 @@ func getInstallationResult(ctx context.Context, c kubernetes.Interface, expected
 		return nil, err
 	}
 	if !complete {
-		return nil, errInstallationPending
+		return nil, errGenesisPending
 	}
 	return secret, nil
 }
 
-func installationJobComplete(job, expected *batchv1.Job) (bool, error) {
+func genesisJobComplete(job, expected *batchv1.Job) (bool, error) {
 	if job.UID != expected.UID {
 		return false, errors.Errorf("The submitted genesis Job was replaced")
 	}
@@ -153,7 +200,7 @@ func installationJobComplete(job, expected *batchv1.Job) (bool, error) {
 	return complete && job.Status.Active == 0 && (job.Status.Terminating == nil || *job.Status.Terminating == 0), nil
 }
 
-func installationPodStatus(ctx context.Context, c kubernetes.Interface, job *batchv1.Job) string {
+func genesisPodStatus(ctx context.Context, c kubernetes.Interface, job *batchv1.Job) string {
 	pods, err := c.CoreV1().Pods(job.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
 	if err != nil {
 		return fmt.Sprintf("Could not inspect genesis Pods: %v", err)

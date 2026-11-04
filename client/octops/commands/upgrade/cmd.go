@@ -26,10 +26,12 @@ import (
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octops/commands/initcmd"
+	"github.com/octelium/octelium/client/octops/commands/install"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -75,6 +77,9 @@ func init() {
 func doCmd(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	clusterDomain := args[0]
 
@@ -97,50 +102,30 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := createGenesis(ctx, k8sC, clusterDomain, cmdArgs.Version); err != nil {
+	job, err := createGenesis(ctx, k8sC, clusterDomain, cmdArgs.Version)
+	if err != nil {
 		return err
 	}
 
 	cliutils.LineNotify("Upgrading the Cluster has started.\n")
 
 	if cmdArgs.Wait {
-		conn, err := client.GetGRPCClientConn(ctx, clusterDomain)
-		if err != nil {
+		if err := waitForUpgrade(ctx, k8sC, job); err != nil {
 			return err
 		}
-		defer conn.Close()
-
-		c := corev1.NewMainServiceClient(conn)
-
-		versionInit, err := getDefaultRegionVersion(ctx, c)
-		if err != nil {
-			return err
-		}
-
-		s := cliutils.NewSpinner(os.Stdout)
-		s.SetSuffix("Waiting for the Cluster upgrade to finish")
-		s.Start()
-		for range 1000 {
-			versionCurrent, err := getDefaultRegionVersion(ctx, c)
-			if err == nil && versionInit != versionCurrent {
-				s.Stop()
-				cliutils.LineNotify("Cluster has been upgraded.\n")
-				return nil
-			} else if err != nil {
-				zap.L().Debug("Could not getDefaultRegionVersion", zap.Error(err))
-			} else {
-				zap.L().Debug("Versions still match",
-					zap.String("current", versionCurrent),
-					zap.String("init", versionInit))
-			}
-			time.Sleep(1 * time.Second)
-		}
-		s.Stop()
-		return errors.Errorf("Timed out waiting for the Cluster upgrade to finish")
+		cliutils.LineNotify("Cluster has been upgraded.\n")
 	}
 
 	return nil
 
+}
+
+func waitForUpgrade(ctx context.Context, c kubernetes.Interface, job *batchv1.Job) error {
+	s := cliutils.NewSpinner(os.Stdout)
+	s.SetSuffix("Waiting for the Cluster upgrade to finish")
+	s.Start()
+	defer s.Stop()
+	return install.WaitGenesisJob(ctx, c, job, time.Second, 1000*time.Second)
 }
 
 func doCheck(ctx context.Context, domain string) error {

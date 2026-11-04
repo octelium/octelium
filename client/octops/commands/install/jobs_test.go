@@ -491,3 +491,48 @@ func TestGenesisSubmissionReturnsAcceptedJobIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestGenesisSubmissionWithResultWithoutPreparation(t *testing.T) {
+	for _, state := range []string{"created", "create-response-lost", "not-committed", "different-request", "deleting", "suspended"} {
+		t.Run(state, func(t *testing.T) {
+			c := newGenesisJobClient(t)
+			desired := testSubmissionJob("1.2.3")
+			before := desired.DeepCopy()
+			if state != "created" {
+				c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					if state != "not-committed" {
+						job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+						job.UID, job.ResourceVersion = types.UID(uuid.NewString()), "1"
+						switch state {
+						case "different-request":
+							job.Annotations[genesisRequestHash] = "another-request"
+						case "deleting":
+							job.DeletionTimestamp = new(metav1.Now())
+						case "suspended":
+							job.Spec.Suspend = new(true)
+						}
+						require.NoError(t, c.Tracker().Create(action.GetResource(), job, job.Namespace))
+					}
+					return true, nil, io.ErrUnexpectedEOF
+				})
+			}
+			accepted, err := SubmitGenesisJobWithResult(t.Context(), c, desired, nil)
+			if state == "created" || state == "create-response-lost" {
+				require.NoError(t, err)
+				require.NotNil(t, accepted)
+				assert.NotEmpty(t, accepted.UID)
+				assert.Nil(t, accepted.Spec.Suspend)
+				current, err := c.BatchV1().Jobs(desired.Namespace).Get(t.Context(), desired.Name, metav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, current, accepted)
+			} else {
+				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+			}
+			assert.Equal(t, before, desired)
+			for _, action := range c.Actions() {
+				assert.NotEqual(t, "update", action.GetVerb())
+				assert.NotEqual(t, "delete", action.GetVerb())
+			}
+		})
+	}
+}
