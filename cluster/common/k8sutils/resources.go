@@ -169,7 +169,11 @@ func CreateOrUpdateDeployment(ctx context.Context, c kubernetes.Interface, itm *
 			ann["octelium.com/last-upgrade"] = upgradeAt
 			old.SetAnnotations(ann)
 			old.OwnerReferences = itm.OwnerReferences
-			old.Spec = itm.Spec
+			spec := itm.Spec.DeepCopy()
+			if spec.Replicas == nil {
+				spec.Replicas = old.Spec.Replicas
+			}
+			old.Spec = *spec
 		},
 	)
 }
