@@ -155,12 +155,8 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 }
 
 func (g *Genesis) upgradeClusterResources(ctx context.Context, clusterCfg *corev1.ClusterConfig, region *corev1.Region) error {
-	if err := g.installOcteliumResources(ctx, clusterCfg, region); err != nil {
+	if err := g.installOcteliumResources(ctx, clusterCfg, region, false); err != nil {
 		return err
-	}
-
-	if err := g.installBuiltinPolicies(ctx); err != nil {
-		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
 	}
 
 	if err := func(ctx context.Context) error {

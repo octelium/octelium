@@ -616,14 +616,14 @@ func TestRunInit(t *testing.T) {
 				Name: "portal.default",
 			})
 			assert.Nil(t, err)
-			assert.Equal(t, "Octelium Portal Dashboard", portal.Metadata.DisplayName)
+			assert.Equal(t, "Modified Portal", portal.Metadata.DisplayName)
 			assert.NotEmpty(t, portal.Metadata.SystemLabels[vutils.UpgradeIDKey])
 			assert.NotEqual(t, portalUpgradeID, portal.Metadata.SystemLabels[vutils.UpgradeIDKey])
 
 			_, err = g.octeliumC.CoreC().GetPolicy(ctx, &rmetav1.GetOptions{
 				Name: "allow-all",
 			})
-			assert.Nil(t, err)
+			assert.True(t, grpcerr.IsNotFound(err))
 
 			_, err = g.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{
 				Name: "sys:ssh-svc-seed",

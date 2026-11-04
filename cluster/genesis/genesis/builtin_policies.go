@@ -21,7 +21,6 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
-	"github.com/octelium/octelium/cluster/genesis/genesis/genesisutils"
 	"go.uber.org/zap"
 )
 
@@ -203,8 +202,12 @@ func (g *Genesis) installBuiltinPolicies(ctx context.Context) error {
 	}
 
 	for _, pol := range polList.Items {
-		if err := genesisutils.CreateOrUpdatePolicy(ctx, g.octeliumC, pol); err != nil {
-			zap.L().Warn("Could not create builtin Policy", zap.Any("policy", pol), zap.Error(err))
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		pol.Status = &corev1.Policy_Status{}
+		if _, err := createInitResource(ctx, pol, g.octeliumC.CoreC().GetPolicy, g.octeliumC.CoreC().CreatePolicy); err != nil {
+			return err
 		}
 	}
 

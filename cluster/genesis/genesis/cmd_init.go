@@ -207,7 +207,7 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		return err
 	}
 
-	if err := g.installOcteliumResources(ctx, clusterCfg, iCtx.Region); err != nil {
+	if err := g.installOcteliumResources(ctx, clusterCfg, iCtx.Region, true); err != nil {
 		return err
 	}
 
@@ -216,7 +216,7 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	}
 
 	if err := g.installBuiltinPolicies(ctx); err != nil {
-		zap.L().Warn("Could not install builtin Policies", zap.Error(err))
+		return err
 	}
 
 	if err := g.setBootstrapSecret(ctx, initResources.Bootstrap); err != nil {
@@ -441,7 +441,7 @@ func (g *Genesis) setBootstrapSecret(ctx context.Context, bs *cbootstrapv1.Confi
 	return nil
 }
 
-func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *corev1.ClusterConfig, region *corev1.Region) error {
+func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *corev1.ClusterConfig, region *corev1.Region, isInit bool) error {
 	zap.L().Debug("Installing Octelium resources")
 
 	if err := k8sutils.WaitReadinessDeployment(ctx, g.k8sC, "octelium-nocturne"); err != nil {
@@ -450,7 +450,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 
 	zap.L().Debug("Creating system Namespaces and Services")
 
-	if err := genesisutils.CreateOrUpdateNamespace(ctx, g.octeliumC, &corev1.Namespace{
+	if err := g.ensureNamespace(ctx, &corev1.Namespace{
 		Metadata: &metav1.Metadata{
 			Name:        "default",
 			IsSystem:    true,
@@ -462,7 +462,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 		return err
 	}
 
-	if err := genesisutils.CreateOrUpdateNamespace(ctx, g.octeliumC, &corev1.Namespace{
+	if err := g.ensureNamespace(ctx, &corev1.Namespace{
 		Metadata: &metav1.Metadata{
 			Name:         "octelium",
 			IsSystem:     true,
@@ -474,7 +474,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 		return err
 	}
 
-	if err := genesisutils.CreateOrUpdateNamespace(ctx, g.octeliumC, &corev1.Namespace{
+	if err := g.ensureNamespace(ctx, &corev1.Namespace{
 		Metadata: &metav1.Metadata{
 			Name:         "octelium-api",
 			IsSystem:     true,
@@ -533,7 +533,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, dnsService); err != nil {
+		if err := g.ensureService(ctx, dnsService); err != nil {
 			return err
 		}
 	}
@@ -591,7 +591,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+		if err := g.ensureService(ctx, svc); err != nil {
 			return err
 		}
 	}
@@ -631,7 +631,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+		if err := g.ensureService(ctx, svc); err != nil {
 			return err
 		}
 	}
@@ -667,7 +667,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+		if err := g.ensureService(ctx, svc); err != nil {
 			return err
 		}
 	}
@@ -720,9 +720,13 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+		if err := g.ensureService(ctx, svc); err != nil {
 			return err
 		}
+	}
+
+	if !isInit {
+		return nil
 	}
 
 	{
@@ -767,7 +771,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			Status: &corev1.Service_Status{},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+		if err := g.ensureService(ctx, svc); err != nil {
 			return err
 		}
 	}
@@ -794,7 +798,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			Status: &corev1.Service_Status{},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+		if err := g.ensureService(ctx, svc); err != nil {
 			return err
 		}
 	}
@@ -818,7 +822,7 @@ func (g *Genesis) installOcteliumResources(ctx context.Context, clusterCfg *core
 			Status: &corev1.Service_Status{},
 		}
 
-		if err := genesisutils.CreateOrUpdateService(ctx, g.octeliumC, svc); err != nil {
+		if err := g.ensureService(ctx, svc); err != nil {
 			return err
 		}
 	}
