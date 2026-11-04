@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rlockv1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/clusterconfig"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -202,6 +203,44 @@ func TestGetGatewaySubnetV4(t *testing.T) {
 			assert.Nil(t, ret)
 		}
 	})
+}
+
+func TestGatewaySubnetsFromClusterAllocation(t *testing.T) {
+	for _, mode := range []corev1.ClusterConfig_Status_NetworkConfig_Mode{
+		corev1.ClusterConfig_Status_NetworkConfig_DUAL_STACK, corev1.ClusterConfig_Status_NetworkConfig_V4_ONLY, corev1.ClusterConfig_Status_NetworkConfig_V6_ONLY,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			cc := fakeClusterConfig("", "", mode, 3, 5)
+			cc.Status.Network.V6RangePrefix = []byte{1, 2, 3, 4}
+			require.NoError(t, clusterconfig.SetClusterSubnets(cc))
+			for region := 0; region < 8; region++ {
+				for gateway := 0; gateway < 32; gateway++ {
+					subnet, err := getGatewaySubnet(cc, gateway, region)
+					require.NoError(t, err)
+					if mode != corev1.ClusterConfig_Status_NetworkConfig_V6_ONLY {
+						require.NotNil(t, subnet.V4)
+						assert.Equal(t, fmt.Sprintf("100.64.%d.0/24", region*32+gateway), subnet.V4.String())
+					} else {
+						assert.Nil(t, subnet.V4)
+					}
+					if mode != corev1.ClusterConfig_Status_NetworkConfig_V4_ONLY {
+						require.NotNil(t, subnet.V6)
+						_, service, err := net.ParseCIDR(cc.Status.Network.ServiceSubnet.V6)
+						require.NoError(t, err)
+						assert.True(t, service.Contains(subnet.V6.IP))
+					} else {
+						assert.Nil(t, subnet.V6)
+					}
+				}
+			}
+			if mode != corev1.ClusterConfig_Status_NetworkConfig_V6_ONLY {
+				_, err := getGatewaySubnet(cc, 0, 8)
+				assert.Error(t, err)
+				_, err = getGatewaySubnet(cc, 32, 0)
+				assert.Error(t, err)
+			}
+		})
+	}
 }
 
 func TestGetGatewaySubnetV6(t *testing.T) {

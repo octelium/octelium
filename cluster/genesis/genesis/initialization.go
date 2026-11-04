@@ -87,7 +87,14 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 
 	secret, err := g.k8sC.CoreV1().Secrets(vutils.K8sNS).Get(ctx, initializationSecretName, k8smetav1.GetOptions{})
 	if err == nil {
-		return decodeInitialization(secret, inputHash)
+		init, err := decodeInitialization(secret, inputHash)
+		if err != nil {
+			return nil, err
+		}
+		if err := g.setNamespace(ctx); err != nil {
+			return nil, err
+		}
+		return init, nil
 	} else if !k8serr.IsNotFound(err) {
 		return nil, err
 	}
@@ -115,6 +122,12 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	}
 	clusterCfg, err := g.initClusterConfig(ctx, cr.Bootstrap, cr.Domain)
 	if err != nil {
+		return nil, err
+	}
+	if err := g.validateClusterNetwork(ctx, clusterCfg, cr.Bootstrap); err != nil {
+		return nil, err
+	}
+	if err := g.setNamespace(ctx); err != nil {
 		return nil, err
 	}
 	id := vutils.UUIDv4()

@@ -80,9 +80,6 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 	if err := g.waitForConcurrentGenesis(ctx); err != nil {
 		return err
 	}
-	if err := g.setNamespace(ctx); err != nil {
-		return err
-	}
 	init, err := g.prepareInitialization(ctx, initResources)
 	if err != nil {
 		return err
@@ -881,6 +878,9 @@ func (g *Genesis) setNadConfig(ctx context.Context) error {
 
 func (g *Genesis) initClusterConfig(ctx context.Context, bootstrap *cbootstrapv1.Config, domain string) (*corev1.ClusterConfig, error) {
 	zap.L().Debug("Initializing Cluster configuration")
+	if bootstrap.GetSpec() == nil {
+		return nil, errors.Errorf("The bootstrap spec is required")
+	}
 
 	v6Prefix, err := utilrand.GetRandomBytes(2)
 	if err != nil {

@@ -277,7 +277,7 @@ func TestOctopsBootstrapNetworkSettings(t *testing.T) {
 	for _, mode := range []string{"DEFAULT", "DUAL_STACK", "V4_ONLY", "V6_ONLY"} {
 		t.Run(mode, func(t *testing.T) {
 			bs := &cbootstrapv1.Config{}
-			require.NoError(t, pbutils.UnmarshalYAML([]byte(fmt.Sprintf("spec:\n  network:\n    mode: %s\n    v4: {clusterNetwork: 100.96.0.0/11, gatewayBits: 7, regionBits: 5}\n    wireguard: {gatewayPort: 51820, mtu: 1380}\n    quicv0: {enable: true, gatewayPort: 9443, mtu: 1280}\n  spiffe: {enable: true, trustDomain: test.local}\n", mode)), bs))
+			require.NoError(t, pbutils.UnmarshalYAML([]byte(fmt.Sprintf("spec:\n  network:\n    mode: %s\n    v4: {clusterNetwork: 100.96.0.0/11, gatewayBits: 3, regionBits: 5}\n    wireguard: {gatewayPort: 51820, mtu: 1380}\n    quicv0: {enable: true, gatewayPort: 9443, mtu: 1280}\n  spiffe: {enable: true, trustDomain: test.local}\n", mode)), bs))
 			g := &Genesis{}
 			cc, err := g.initClusterConfig(context.Background(), bs, "example.com")
 			require.NoError(t, err)
