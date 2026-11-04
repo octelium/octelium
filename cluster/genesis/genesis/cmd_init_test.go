@@ -203,6 +203,9 @@ func newFakeClient() *FakeClient {
 
 	k8sC.PrependReactor("*", "*", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 		switch {
+		case action.Matches("create", "namespaces"):
+			obj := action.(k8stesting.CreateAction).GetObject().(*k8scorev1.Namespace)
+			obj.UID = types.UID(vutils.UUIDv4())
 		case action.Matches("create", "secrets"):
 			obj := action.(k8stesting.UpdateAction).GetObject().(*k8scorev1.Secret)
 			obj.CreationTimestamp = now()
@@ -228,6 +231,7 @@ func newFakeClient() *FakeClient {
 func setClusterConfigRegion(ctx context.Context, k8sC kubernetes.Interface, region *corev1.Region, db string) error {
 
 	dataMap := map[string][]byte{
+		"domain": []byte(os.Getenv("OCTELIUM_DOMAIN")),
 		"region": pbutils.MarshalMust(region),
 		"bootstrap": pbutils.MarshalMust(&cbootstrapv1.Config{
 			Spec: &cbootstrapv1.Config_Spec{
@@ -337,6 +341,7 @@ func TestRunInitNodesReadiness(t *testing.T) {
 
 func TestRunInit(t *testing.T) {
 	reserveInitializationRedis(t)
+	t.Setenv("OCTELIUM_REGION_NAME", "default")
 
 	ldflags.TestMode = "true"
 	ldflags.PrivateRegistry = "false"
@@ -524,6 +529,8 @@ func TestRunInit(t *testing.T) {
 				k8sC: cJoin.K8sC,
 				nadC: cJoin.NadC,
 			}
+			_, err = cJoin.K8sC.CoreV1().Namespaces().Create(ctx, &k8scorev1.Namespace{ObjectMeta: k8smetav1.ObjectMeta{Name: vutils.K8sNS}}, k8smetav1.CreateOptions{})
+			assert.NoError(t, err)
 
 			_, err = cJoin.K8sC.CoreV1().Secrets(vutils.K8sNS).Create(ctx, &k8scorev1.Secret{
 				ObjectMeta: k8smetav1.ObjectMeta{
@@ -608,6 +615,7 @@ func TestRunInit(t *testing.T) {
 			assert.Nil(t, err)
 			assert.True(t, pbutils.IsEqual(defaultRegion, rgn))
 
+			os.Setenv("OCTELIUM_REGION_NAME", "default")
 			err = g.RunUpgrade(ctx, nil)
 			assert.Nil(t, err, "%+v", err)
 			assert.Equal(t, "default", os.Getenv("OCTELIUM_REGION_NAME"))

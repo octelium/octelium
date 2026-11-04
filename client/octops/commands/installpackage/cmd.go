@@ -128,7 +128,11 @@ func createGenesis(ctx context.Context, c kubernetes.Interface, domain, cmd, ver
 	if err != nil {
 		return err
 	}
-	return install.SubmitGenesisJob(ctx, c, getGenesisJob(domain, cmd, version, pkg, spiffe), nil)
+	job, err := install.BindGenesisJobTarget(ctx, c, getGenesisJob(domain, cmd, version, pkg, spiffe))
+	if err != nil {
+		return err
+	}
+	return install.SubmitGenesisJob(ctx, c, job, nil)
 }
 
 func getGenesisJob(domain, cmd, version, pkg string, spiffe *install.SPIFFEOpts) *batchv1.Job {

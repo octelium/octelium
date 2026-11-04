@@ -31,6 +31,7 @@ import (
 
 func newInitializationInput(t *testing.T) *LoadedClusterResource {
 	t.Helper()
+	t.Setenv("OCTELIUM_DOMAIN", "example.com")
 	bs := &cbootstrapv1.Config{}
 	require.NoError(t, pbutils.UnmarshalYAML([]byte(`spec:
   primaryStorage:
@@ -101,6 +102,7 @@ func TestInitializationInputHash(t *testing.T) {
 		_, err := g.prepareInitialization(t.Context(), cr)
 		require.NoError(t, err)
 		change(cr)
+		t.Setenv("OCTELIUM_DOMAIN", cr.Domain)
 		_, err = g.prepareInitialization(t.Context(), cr)
 		require.ErrorContains(t, err, "bootstrap differs")
 	}

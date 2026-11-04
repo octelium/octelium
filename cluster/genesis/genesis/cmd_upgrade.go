@@ -72,12 +72,17 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 		}
 		return initResources.Region.Metadata.Name
 	}()
-	os.Setenv("OCTELIUM_REGION_NAME", regionName)
-
 	regionV, err := g.octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Name: regionName})
 	if err != nil {
 		return err
 	}
+	if err := g.validateUpgradeTarget(ctx, initResources, clusterCfg, regionV); err != nil {
+		return err
+	}
+	if err := g.reconcileInstallationTarget(ctx, clusterCfg, regionV, true); err != nil {
+		return err
+	}
+	os.Setenv("OCTELIUM_REGION_NAME", regionName)
 
 	zap.L().Debug("upgrading rscServer")
 

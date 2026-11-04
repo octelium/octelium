@@ -117,7 +117,13 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		return err
 	}
 
+	if err := g.reconcileInstallationTarget(ctx, clusterCfg, region, false); err != nil {
+		return err
+	}
 	if err := g.setInstallationConfigMap(ctx, clusterCfg); err != nil {
+		return err
+	}
+	if err := g.reconcileInstallationTarget(ctx, clusterCfg, region, true); err != nil {
 		return err
 	}
 	if err := g.setDataPlaneNodeTaints(ctx); err != nil {

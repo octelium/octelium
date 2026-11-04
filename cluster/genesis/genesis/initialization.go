@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
@@ -79,6 +80,9 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 		cr.Bootstrap.GetSpec().GetSecondaryStorage().GetRedis() == nil {
 		return nil, errors.Errorf("The bootstrap must contain PostgreSQL and Redis storage configuration")
 	}
+	if err := checkTargetDomain(os.Getenv("OCTELIUM_DOMAIN"), cr.Domain); err != nil {
+		return nil, err
+	}
 
 	inputHash, err := initializationInputHash(cr)
 	if err != nil {
@@ -89,6 +93,9 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	if err == nil {
 		init, err := decodeInitialization(secret, inputHash)
 		if err != nil {
+			return nil, err
+		}
+		if err := g.validateInitializationNamespace(ctx, secret); err != nil {
 			return nil, err
 		}
 		if err := g.setNamespace(ctx); err != nil {
@@ -130,6 +137,12 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 	if err := g.setNamespace(ctx); err != nil {
 		return nil, err
 	}
+	namespace, err := k8sretry.Read(ctx, func(ctx context.Context) (*k8scorev1.Namespace, error) {
+		return g.k8sC.CoreV1().Namespaces().Get(ctx, vutils.K8sNS, k8smetav1.GetOptions{})
+	})
+	if err != nil {
+		return nil, err
+	}
 	id := vutils.UUIDv4()
 	clusterCfg.Metadata.Annotations = map[string]string{initializationIDKey: id}
 	if region.Metadata.Annotations == nil {
@@ -151,6 +164,9 @@ func (g *Genesis) prepareInitialization(ctx context.Context, cr *LoadedClusterRe
 			"clusterConfig": pbutils.MarshalMust(clusterCfg),
 			"region":        pbutils.MarshalMust(region),
 		},
+	}
+	if namespace.UID != "" {
+		secret.Data["namespace-uid"] = []byte(namespace.UID)
 	}
 	desired := secret
 	secret, err = k8sretry.Create(ctx, desired,
