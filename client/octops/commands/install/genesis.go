@@ -223,9 +223,9 @@ func GetGenesisPodSpec(o *GenesisPodSpecOpts) corev1.PodSpec {
 	}
 }
 
-func createGenesis(ctx context.Context, o *Opts) error {
+func createGenesis(ctx context.Context, o *Opts) (*batchv1.Job, error) {
 	c := o.K8sC
-	return SubmitGenesisJob(ctx, c, getGenesisJob(o, spiffeFromBootstrap(o.Bootstrap)), func(ctx context.Context) error {
+	return submitGenesisJob(ctx, c, getGenesisJob(o, spiffeFromBootstrap(o.Bootstrap)), func(ctx context.Context) error {
 		if err := setClusterResources(ctx, o); err != nil {
 			return err
 		}

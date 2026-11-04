@@ -397,7 +397,8 @@ func TestActiveInitializationRejectsDifferentBootstrap(t *testing.T) {
 	bootstrap := &cbootstrapv1.Config{}
 	require.NoError(t, pbutils.UnmarshalYAML([]byte("spec: {primaryStorage: {postgresql: {host: localhost, password: original}}}"), bootstrap))
 	o := &Opts{K8sC: c, ClusterDomain: "example.com", Bootstrap: bootstrap}
-	require.NoError(t, createGenesis(t.Context(), o))
+	_, err := createGenesis(t.Context(), o)
+	require.NoError(t, err)
 	beforeJob, err := c.BatchV1().Jobs("default").Get(t.Context(), genesisJobName, metav1.GetOptions{})
 	require.NoError(t, err)
 	beforeSecret, err := c.CoreV1().Secrets("default").Get(t.Context(), "octelium-init", metav1.GetOptions{})
@@ -405,7 +406,8 @@ func TestActiveInitializationRejectsDifferentBootstrap(t *testing.T) {
 	replacement := &cbootstrapv1.Config{}
 	require.NoError(t, pbutils.UnmarshalYAML([]byte("spec: {primaryStorage: {postgresql: {host: localhost, password: replacement}}}"), replacement))
 	o.Bootstrap = replacement
-	require.ErrorContains(t, createGenesis(t.Context(), o), "bootstrap differs")
+	_, err = createGenesis(t.Context(), o)
+	require.ErrorContains(t, err, "bootstrap differs")
 	afterJob, err := c.BatchV1().Jobs("default").Get(t.Context(), genesisJobName, metav1.GetOptions{})
 	require.NoError(t, err)
 	afterSecret, err := c.CoreV1().Secrets("default").Get(t.Context(), "octelium-init", metav1.GetOptions{})
@@ -422,7 +424,7 @@ func TestConcurrentMatchingInitializations(t *testing.T) {
 	for range 8 {
 		wg.Go(func() {
 			<-start
-			if err := createGenesis(t.Context(), &Opts{K8sC: c, ClusterDomain: "example.com"}); err == nil {
+			if _, err := createGenesis(t.Context(), &Opts{K8sC: c, ClusterDomain: "example.com"}); err == nil {
 				succeeded.Add(1)
 			} else {
 				t.Errorf("Matching initialization retry failed: %v", err)
@@ -436,4 +438,56 @@ func TestConcurrentMatchingInitializations(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs.Items, 1)
 	assert.False(t, *jobs.Items[0].Spec.Suspend)
+}
+
+func TestGenesisSubmissionReturnsAcceptedJobIdentity(t *testing.T) {
+	for _, state := range []string{"created", "create-response-lost", "update-response-lost", "resumed", "replaced-completed"} {
+		t.Run(state, func(t *testing.T) {
+			c := newGenesisJobClient(t)
+			if state == "create-response-lost" || state == "update-response-lost" {
+				verb := "create"
+				if state == "update-response-lost" {
+					verb = "update"
+				}
+				c.PrependReactor(verb, "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					var job *batchv1.Job
+					var err error
+					if verb == "create" {
+						job = action.(k8stesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+						job.UID, job.ResourceVersion = types.UID(uuid.NewString()), "1"
+						err = c.Tracker().Create(action.GetResource(), job, action.GetNamespace())
+					} else {
+						job = action.(k8stesting.UpdateAction).GetObject().(*batchv1.Job).DeepCopy()
+						err = c.Tracker().Update(action.GetResource(), job, action.GetNamespace())
+					}
+					require.NoError(t, err)
+					return true, nil, io.ErrUnexpectedEOF
+				})
+			}
+			o := &Opts{K8sC: c, ClusterDomain: "example.com"}
+			accepted, err := createGenesis(t.Context(), o)
+			require.NoError(t, err)
+			require.NotEmpty(t, accepted.UID)
+			if state == "resumed" || state == "replaced-completed" {
+				previousUID := accepted.UID
+				if state == "replaced-completed" {
+					accepted.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+					_, err = c.BatchV1().Jobs(accepted.Namespace).Update(t.Context(), accepted, metav1.UpdateOptions{})
+					require.NoError(t, err)
+				}
+				accepted, err = createGenesis(t.Context(), o)
+				require.NoError(t, err)
+				if state == "resumed" {
+					assert.Equal(t, previousUID, accepted.UID)
+				} else {
+					assert.NotEqual(t, previousUID, accepted.UID)
+				}
+			}
+			current, err := c.BatchV1().Jobs(accepted.Namespace).Get(t.Context(), accepted.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, current, accepted)
+			require.NotNil(t, accepted.Spec.Suspend)
+			assert.False(t, *accepted.Spec.Suspend)
+		})
+	}
 }

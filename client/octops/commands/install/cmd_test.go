@@ -19,9 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -126,7 +124,7 @@ func TestDoInstallLifecycle(t *testing.T) {
 	t.Cleanup(func() { d.Close() })
 	require.NoError(t, d.SetSessionToken("example.com", &authv1.SessionToken{AccessToken: "stale"}))
 	require.NoError(t, d.SetSessionToken("other.example", &authv1.SessionToken{AccessToken: "keep"}))
-	c := fakek8s.NewSimpleClientset()
+	c := newGenesisJobClient(t)
 	c.PrependReactor("update", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		job := action.(k8stesting.UpdateAction).GetObject().(*batchv1.Job)
 		assert.Equal(t, "default", action.GetNamespace())
@@ -136,6 +134,7 @@ func TestDoInstallLifecycle(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "example.com", string(secret.(*k8scorev1.Secret).Data["domain"]))
 		assert.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("new-token")}}))
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
 		return false, nil, nil
 	})
 	path := filepath.Join(t.TempDir(), "credentials", "token")
@@ -174,8 +173,7 @@ func TestDoInstallLaterStageErrors(t *testing.T) {
 	require.NoError(t, cliutils.OpenDB("mem"))
 	d := cliutils.GetDB()
 	t.Cleanup(func() { d.Close() })
-	c = fakek8s.NewSimpleClientset(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("token")}})
-	assert.Error(t, DoInstall(context.Background(), &Opts{K8sC: c, AuthTokenSavePath: t.TempDir()}))
+	assert.Error(t, setInitialAuthToken(&Opts{AuthTokenSavePath: t.TempDir()}, legacyInitialToken()))
 }
 
 func TestInitialTokenWithUnreadableLocalState(t *testing.T) {
@@ -185,9 +183,8 @@ func TestInitialTokenWithUnreadableLocalState(t *testing.T) {
 	d := cliutils.GetDB()
 	t.Cleanup(func() { d.Close() })
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "octelium.db"), []byte("corrupt"), 0600))
-	c := fakek8s.NewSimpleClientset(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("token")}})
 	path := filepath.Join(t.TempDir(), "token")
-	require.NoError(t, setInitialAuthToken(context.Background(), &Opts{K8sC: c, ClusterDomain: "example.com", AuthTokenSavePath: path}))
+	require.NoError(t, setInitialAuthToken(&Opts{ClusterDomain: "example.com", AuthTokenSavePath: path}, legacyInitialToken()))
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, "token", string(data))
@@ -198,53 +195,40 @@ func TestInitialTokenSaveAndOutput(t *testing.T) {
 	require.NoError(t, cliutils.OpenDB("mem"))
 	d := cliutils.GetDB()
 	t.Cleanup(func() { d.Close() })
-	c := fakek8s.NewSimpleClientset(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("token")}})
 	for _, path := range []string{"", filepath.Join(t.TempDir(), "token")} {
-		require.NoError(t, setInitialAuthToken(context.Background(), &Opts{K8sC: c, ClusterDomain: "example.com", AuthTokenSavePath: path}))
+		require.NoError(t, setInitialAuthToken(&Opts{ClusterDomain: "example.com", AuthTokenSavePath: path}, legacyInitialToken()))
 	}
 	blocked := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(blocked, []byte("file"), 0600))
-	assert.Error(t, setInitialAuthToken(context.Background(), &Opts{K8sC: c, ClusterDomain: "example.com", AuthTokenSavePath: filepath.Join(blocked, "token")}))
-	assert.Error(t, setInitialAuthToken(context.Background(), &Opts{K8sC: c, ClusterDomain: "example.com", AuthTokenSavePath: t.TempDir()}))
+	assert.Error(t, setInitialAuthToken(&Opts{ClusterDomain: "example.com", AuthTokenSavePath: filepath.Join(blocked, "token")}, legacyInitialToken()))
+	assert.Error(t, setInitialAuthToken(&Opts{ClusterDomain: "example.com", AuthTokenSavePath: t.TempDir()}, legacyInitialToken()))
 }
 
 func TestInitialTokenRetry(t *testing.T) {
-	t.Setenv("OCTELIUM_SKIP_MESSAGES", "true")
-	require.NoError(t, cliutils.OpenDB("mem"))
-	d := cliutils.GetDB()
-	t.Cleanup(func() { d.Close() })
-	c := fakek8s.NewSimpleClientset()
+	job := completedInstallationJob()
+	c := fakek8s.NewSimpleClientset(job)
 	calls := 0
 	c.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.(k8stesting.GetAction).GetName() != "init-token" {
+			return false, nil, nil
+		}
 		calls++
 		if calls == 1 {
 			return true, nil, k8serr.NewNotFound(schema.GroupResource{Resource: "secrets"}, "init-token")
 		}
-		return true, &k8scorev1.Secret{Data: map[string][]byte{"data": []byte("token")}}, nil
+		return true, legacyInitialToken(), nil
 	})
-	require.NoError(t, setInitialAuthToken(context.Background(), &Opts{K8sC: c, ClusterDomain: "example.com"}))
+	secret, err := waitForInitialToken(t.Context(), c, job, time.Millisecond, time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, "token", string(secret.Data["data"]))
 	assert.Equal(t, 2, calls)
 }
 
-func TestInitialTokenErrorProcess(t *testing.T) {
-	if os.Getenv("OCTOPS_TEST_TOKEN_FAILURE") != "true" {
-		return
-	}
-	c := fakek8s.NewSimpleClientset()
+func TestInitialTokenReadError(t *testing.T) {
+	job := completedInstallationJob()
+	c := fakek8s.NewSimpleClientset(job)
 	want := errors.New("token read failed")
 	c.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
-	err := setInitialAuthToken(context.Background(), &Opts{K8sC: c})
-	if !errors.Is(err, want) {
-		os.Exit(2)
-	}
-	os.Exit(0)
-}
-
-func TestInitialTokenReadError(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInitialTokenErrorProcess$")
-	cmd.Env = append(os.Environ(), "OCTOPS_TEST_TOKEN_FAILURE=true")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, strings.TrimSpace(string(out)))
+	_, err := waitForInitialToken(t.Context(), c, job, time.Millisecond, time.Second)
+	require.ErrorIs(t, err, want)
 }

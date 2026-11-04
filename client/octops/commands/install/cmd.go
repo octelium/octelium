@@ -18,7 +18,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -44,15 +44,27 @@ type Opts struct {
 }
 
 func DoInstall(ctx context.Context, o *Opts) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := checkExistingInstallation(ctx, o.K8sC); err != nil {
 		return err
 	}
 
-	if err := createGenesis(ctx, o); err != nil {
+	job, err := createGenesis(ctx, o)
+	if err != nil {
 		return err
 	}
 
-	if err := setInitialAuthToken(ctx, o); err != nil {
+	secret, err := waitForInstallation(ctx, o.K8sC, job)
+	if err != nil {
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := setInitialAuthToken(o, secret); err != nil {
 		return err
 	}
 
@@ -60,37 +72,25 @@ func DoInstall(ctx context.Context, o *Opts) error {
 
 }
 
-func setInitialAuthToken(ctx context.Context, o *Opts) error {
-	k8sC := o.K8sC
+func setInitialAuthToken(o *Opts, secret *k8scorev1.Secret) error {
 	clusterDomain := o.ClusterDomain
-	zap.L().Debug("Getting the initial access token...")
-	s := cliutils.NewSpinner(os.Stdout)
-	s.SetSuffix("Waiting for Cluster installation to finish")
-	s.Start()
-
-	secret, err := func() (*k8scorev1.Secret, error) {
-		for i := 0; i < 4000; i++ {
-			secret, err := k8sC.CoreV1().Secrets("octelium").Get(ctx, "init-token", k8smetav1.GetOptions{})
-			if err != nil {
-				if k8serr.IsNotFound(err) {
-					zap.L().Debug("Init Token not found. Trying again...")
-					time.Sleep(2000 * time.Millisecond)
-					continue
-				} else {
-					return nil, err
-				}
-			}
-			return secret, nil
-		}
-		return nil, errors.Errorf("Could not find init Token secret")
-	}()
-	if err != nil {
-		return err
+	if secret == nil || strings.TrimSpace(string(secret.Data["data"])) == "" {
+		return errors.Errorf("The initial authentication token is empty")
 	}
 
 	authToken := string(secret.Data["data"])
 
-	s.Stop()
+	if o.AuthTokenSavePath != "" {
+		dir := filepath.Dir(o.AuthTokenSavePath)
+
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+
+		if err := os.WriteFile(o.AuthTokenSavePath, []byte(authToken), 0600); err != nil {
+			return err
+		}
+	}
 
 	if err := cliutils.GetDB().Delete(clusterDomain); err != nil {
 		zap.L().Debug("Could not purge DB for domain", zap.Error(err))
@@ -104,18 +104,6 @@ func setInitialAuthToken(ctx context.Context, o *Opts) error {
 		cliutils.LineNotify("Once you set up your public DNS and Cluster TLS certificate,\n")
 		cliutils.LineNotify("use the following command to login and start interacting with the Cluster.\n")
 		cliutils.LineInfo("octelium login --domain %s --auth-token %s\n", clusterDomain, authToken)
-	}
-
-	if o.AuthTokenSavePath != "" {
-		dir := filepath.Dir(o.AuthTokenSavePath)
-
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return err
-		}
-
-		if err := os.WriteFile(o.AuthTokenSavePath, []byte(authToken), 0600); err != nil {
-			return err
-		}
 	}
 
 	return nil

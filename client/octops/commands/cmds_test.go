@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/cluster/cbootstrapv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -53,12 +54,14 @@ import (
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/status"
+	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smeta "k8s.io/apimachinery/pkg/api/meta"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	k8stesting "k8s.io/client-go/testing"
@@ -201,6 +204,7 @@ func newTestKubernetes(t *testing.T, objects ...runtime.Object) (*fake.Clientset
 			}
 			accessor.SetNamespace(namespace)
 			if r.Method == http.MethodPost {
+				accessor.SetUID(types.UID(uuid.NewString()))
 				action = k8stesting.NewCreateAction(gvr, namespace, obj)
 			} else {
 				action = k8stesting.NewUpdateAction(gvr, namespace, obj)
@@ -256,6 +260,8 @@ func TestInitCommandE2E(t *testing.T) {
 				c, config := newTestKubernetes(t)
 				c.PrependReactor("update", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 					assert.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("admin-token")}}))
+					job := action.(k8stesting.UpdateAction).GetObject().(*batchv1.Job)
+					job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
 					return false, nil, nil
 				})
 				bootstrap := newTestBootstrap(t)

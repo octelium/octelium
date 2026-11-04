@@ -39,7 +39,7 @@ func TestCreateGenesis(t *testing.T) {
 
 	fakeC := fakek8s.NewSimpleClientset()
 
-	err := createGenesis(ctx, &Opts{
+	_, err := createGenesis(ctx, &Opts{
 		ClusterDomain: "example.com",
 		K8sC:          fakeC,
 		Region: &corev1.Region{
@@ -50,7 +50,7 @@ func TestCreateGenesis(t *testing.T) {
 	})
 	assert.Nil(t, err, "%+v", err)
 
-	err = createGenesis(ctx, &Opts{
+	_, err = createGenesis(ctx, &Opts{
 		ClusterDomain: "example.com",
 		K8sC:          fakeC,
 		Region: &corev1.Region{
@@ -185,7 +185,8 @@ func TestGenesisResourcesAndBootstrapSPIFFE(t *testing.T) {
 	c := fakek8s.NewSimpleClientset()
 	bs := &cbootstrapv1.Config{}
 	require.NoError(t, pbutils.UnmarshalYAML([]byte("spec:\n  spiffe: {enable: true, trustDomain: cluster.local, csiDriver: {name: custom.csi}}"), bs))
-	require.NoError(t, createGenesis(context.Background(), &Opts{K8sC: c, Bootstrap: bs, ClusterDomain: "example.com", Version: "1.2.3"}))
+	_, err := createGenesis(context.Background(), &Opts{K8sC: c, Bootstrap: bs, ClusterDomain: "example.com", Version: "1.2.3"})
+	require.NoError(t, err)
 	ctx := context.Background()
 	sa, err := c.CoreV1().ServiceAccounts("default").Get(ctx, "octelium-genesis", k8smetav1.GetOptions{})
 	require.NoError(t, err)
@@ -218,7 +219,8 @@ func TestGenesisResourcesAndBootstrapSPIFFE(t *testing.T) {
 
 func TestGenesisPreservesSharedResources(t *testing.T) {
 	c := fakek8s.NewSimpleClientset(getGenesisRoleBinding(), getGenesisRole(), getGenesisServiceAccount())
-	require.NoError(t, createGenesis(t.Context(), &Opts{K8sC: c}))
+	_, err := createGenesis(t.Context(), &Opts{K8sC: c})
+	require.NoError(t, err)
 	for _, action := range c.Actions() {
 		assert.NotEqual(t, "delete", action.GetVerb())
 		if action.GetResource().Resource != "jobs" {
@@ -233,12 +235,14 @@ func TestCreateGenesisFailures(t *testing.T) {
 			c := fakek8s.NewSimpleClientset()
 			want := errors.New("creation failed")
 			c.PrependReactor("create", resource, func(action k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
-			assert.ErrorIs(t, createGenesis(context.Background(), &Opts{K8sC: c}), want)
+			_, err := createGenesis(context.Background(), &Opts{K8sC: c})
+			assert.ErrorIs(t, err, want)
 		})
 	}
 	c := fakek8s.NewSimpleClientset()
 	c.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("cleanup forbidden")
 	})
-	assert.ErrorContains(t, createGenesis(context.Background(), &Opts{K8sC: c}), "cleanup forbidden")
+	_, err := createGenesis(context.Background(), &Opts{K8sC: c})
+	assert.ErrorContains(t, err, "cleanup forbidden")
 }
