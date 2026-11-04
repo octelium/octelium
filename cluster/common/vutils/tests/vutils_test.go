@@ -17,9 +17,12 @@
 package vutils
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +36,7 @@ import (
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServiceNamesAndAddresses(t *testing.T) {
@@ -209,5 +213,53 @@ func TestSetRegionPublicHostName(t *testing.T) {
 		assert.False(t, strings.Contains(r.Status.PublicHostname, name))
 		assert.False(t, strings.Contains(r.Status.PublicHostname, "_"))
 		assert.Equal(t, 28, len(r.Status.PublicHostname))
+	}
+}
+
+func TestPortWaitContext(t *testing.T) {
+	for _, mode := range []string{"cancelled", "occupied", "released", "available", "settling", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			listener, err := net.Listen("tcp", ":0")
+			require.NoError(t, err)
+			t.Cleanup(func() { listener.Close() })
+			_, textPort, err := net.SplitHostPort(listener.Addr().String())
+			require.NoError(t, err)
+			port, err := strconv.Atoi(textPort)
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			switch mode {
+			case "cancelled":
+				cancel()
+			case "occupied":
+				ctx, cancel = context.WithTimeout(ctx, 25*time.Millisecond)
+				defer cancel()
+			case "released":
+				time.AfterFunc(50*time.Millisecond, func() { listener.Close() })
+			default:
+				require.NoError(t, listener.Close())
+			}
+			if mode == "settling" {
+				time.AfterFunc(25*time.Millisecond, cancel)
+			}
+			started := time.Now()
+			if mode == "legacy" {
+				err = vutils.WaitUntilPortIsAvailable(port)
+			} else {
+				err = vutils.WaitUntilPortIsAvailableContext(ctx, port)
+			}
+			switch mode {
+			case "cancelled", "settling":
+				require.ErrorIs(t, err, context.Canceled)
+			case "occupied":
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+			default:
+				require.NoError(t, err)
+				again, err := net.Listen("tcp", net.JoinHostPort("", textPort))
+				require.NoError(t, err)
+				require.NoError(t, again.Close())
+			}
+			assert.Less(t, time.Since(started), 1500*time.Millisecond)
+		})
 	}
 }

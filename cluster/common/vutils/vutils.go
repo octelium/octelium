@@ -17,6 +17,7 @@
 package vutils
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"net"
@@ -327,24 +328,33 @@ func NowRFC3339Nano() string {
 	return time.Now().Format(time.RFC3339Nano)
 }
 
-func isPortAvailable(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return false
-	}
-
-	ln.Close()
-	time.Sleep(100 * time.Millisecond)
-	return true
+func WaitUntilPortIsAvailable(port int) error {
+	return WaitUntilPortIsAvailableContext(context.Background(), port)
 }
 
-func WaitUntilPortIsAvailable(port int) error {
+func WaitUntilPortIsAvailableContext(ctx context.Context, port int) error {
 	for i := range 10000 {
-		if isPortAvailable(port) {
-			return nil
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		zap.L().Warn("Port is not available. Trying again...", zap.Int("attempt", i+1))
-		time.Sleep(500 * time.Millisecond)
+		ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", fmt.Sprintf(":%d", port))
+		delay := 500 * time.Millisecond
+		if err == nil {
+			ln.Close()
+			delay = 100 * time.Millisecond
+		} else {
+			zap.L().Warn("Port is not available. Trying again...", zap.Int("attempt", i+1))
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		if err == nil {
+			return ctx.Err()
+		}
 	}
 	return errors.Errorf("port %d is not available", port)
 }

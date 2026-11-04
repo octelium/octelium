@@ -19,7 +19,11 @@ package rscserver
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
+	"io"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2152,4 +2156,313 @@ func TestMigrateLegacyDuplicates(t *testing.T) {
 	require.Nil(t, err)
 	require.Len(t, items, 1)
 	assert.True(t, proto.Equal(created, items[0]))
+}
+
+func newStartupDatabase(t *testing.T) (*sql.DB, string) {
+	t.Helper()
+	t.Setenv("PGAPPNAME", "gen011-control")
+	for key, value := range map[string]string{
+		"OCTELIUM_POSTGRES_HOST": "localhost", "OCTELIUM_POSTGRES_USERNAME": "postgres",
+		"OCTELIUM_POSTGRES_PASSWORD": "postgres", "OCTELIUM_POSTGRES_NOSSL": "true", "OCTELIUM_POSTGRES_PORT": "5432",
+	} {
+		t.Setenv(key, value)
+	}
+	name := "gen011" + utilrand.GetRandomStringLowercase(10)
+	admin, err := postgresutils.NewDBWithNODB()
+	require.NoError(t, err)
+	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+name)
+	require.NoError(t, err)
+	t.Setenv("OCTELIUM_POSTGRES_DATABASE", name)
+	connectionURL, err := url.Parse(postgresutils.GetPostgresURLFromArgs(&postgresutils.PostgresDBArgs{
+		Host: "localhost", Port: 5432, Username: "postgres", Password: "postgres", DB: name, NoSSL: true,
+	}))
+	require.NoError(t, err)
+	parameters := connectionURL.Query()
+	parameters.Set("application_name", "gen011-control")
+	connectionURL.RawQuery = parameters.Encode()
+	db, err := postgresutils.NewDBWithURL(connectionURL.String())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := admin.ExecContext(ctx, "DROP DATABASE "+name+" WITH (FORCE)")
+		require.NoError(t, err)
+		require.NoError(t, admin.Close())
+	})
+	return db, name
+}
+
+func TestServerStartupQueryContext(t *testing.T) {
+	for _, mode := range []string{"cancel", "deadline", "probe-error", "migration-error", "migration-cancel", "migration-deadline", "successful-startup-context-ends"} {
+		t.Run(mode, func(t *testing.T) {
+			db, name := newStartupDatabase(t)
+			body := "RETURN 'startup-test';"
+			if mode == "cancel" || mode == "deadline" {
+				body = "PERFORM pg_sleep(30); " + body
+			} else if mode == "probe-error" {
+				body = "RAISE EXCEPTION 'injected startup failure';"
+			}
+			_, err := db.ExecContext(t.Context(), fmt.Sprintf("CREATE FUNCTION public.current_database() RETURNS name LANGUAGE plpgsql AS $$ BEGIN %s END $$", body))
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), "ALTER DATABASE "+name+" SET search_path TO public, pg_catalog")
+			require.NoError(t, err)
+			if mode == "migration-error" {
+				_, err = db.ExecContext(t.Context(), "CREATE TABLE octelium_resources (id INTEGER)")
+				require.NoError(t, err)
+			}
+			var migrationLock *sql.Tx
+			if mode == "migration-cancel" || mode == "migration-deadline" {
+				require.NoError(t, postgresutils.Migrate(t.Context(), db))
+				migrationLock, err = db.BeginTx(t.Context(), nil)
+				require.NoError(t, err)
+				defer migrationLock.Rollback()
+				_, err = migrationLock.ExecContext(t.Context(), "LOCK TABLE octelium_resources IN ACCESS EXCLUSIVE MODE")
+				require.NoError(t, err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if mode == "deadline" || mode == "migration-deadline" {
+				ctx, cancel = context.WithTimeout(ctx, time.Second)
+				defer cancel()
+			}
+			t.Setenv("PGAPPNAME", "gen011-startup")
+			type result struct {
+				server *Server
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				server, err := NewServer(ctx, nil)
+				done <- result{server, err}
+			}()
+			if mode == "cancel" || mode == "deadline" || migrationLock != nil {
+				require.Eventually(t, func() bool {
+					var count int
+					query := "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND application_name = 'gen011-startup' AND query = 'SELECT current_database();' AND state = 'active'"
+					if migrationLock != nil {
+						query = "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND application_name = 'gen011-startup' AND wait_event_type = 'Lock'"
+					}
+					err := db.QueryRowContext(t.Context(), query, name).Scan(&count)
+					return err == nil && count == 1
+				}, 750*time.Millisecond, 10*time.Millisecond)
+				if mode == "cancel" || mode == "migration-cancel" {
+					cancel()
+				}
+			}
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(2 * time.Second):
+				_, stopErr := db.ExecContext(t.Context(), "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND application_name = 'gen011-startup'", name)
+				require.NoError(t, stopErr)
+				got = <-done
+				if got.server != nil {
+					got.server.Stop()
+				}
+				t.Fatal("Resource-server startup ignored the query context")
+			}
+			if mode == "successful-startup-context-ends" {
+				require.NoError(t, got.err)
+				require.NotNil(t, got.server)
+				defer got.server.Stop()
+				cancel()
+				require.NoError(t, got.server.GetDB().PingContext(t.Context()))
+				return
+			}
+			if migrationLock != nil {
+				require.NoError(t, migrationLock.Rollback())
+			}
+			require.Error(t, got.err)
+			assert.Nil(t, got.server)
+			if mode == "cancel" || mode == "migration-cancel" {
+				assert.ErrorIs(t, got.err, context.Canceled)
+			} else if mode == "deadline" || mode == "migration-deadline" {
+				assert.ErrorIs(t, got.err, context.DeadlineExceeded)
+			}
+			require.Eventually(t, func() bool {
+				var count int
+				err := db.QueryRowContext(t.Context(), "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND application_name = 'gen011-startup'", name).Scan(&count)
+				return err == nil && count == 0
+			}, time.Second, 10*time.Millisecond)
+			if !strings.HasPrefix(mode, "migration-") {
+				var exists bool
+				require.NoError(t, db.QueryRowContext(t.Context(), "SELECT to_regclass('octelium_resources') IS NOT NULL").Scan(&exists))
+				assert.False(t, exists)
+			}
+		})
+	}
+}
+
+func TestServerStartupAlreadyCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	server, err := NewServer(ctx, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, server)
+	require.ErrorIs(t, (&Server{}).Run(ctx), context.Canceled)
+}
+
+type startupPingHook struct {
+	ping func() error
+}
+
+func (h startupPingHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h startupPingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "ping" {
+			return h.ping()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h startupPingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func TestServerStartupWaitCancellation(t *testing.T) {
+	for _, mode := range []string{"redis-backoff", "occupied-port"} {
+		t.Run(mode, func(t *testing.T) {
+			db, _ := newStartupDatabase(t)
+			require.NoError(t, db.PingContext(t.Context()))
+			server, err := NewServer(t.Context(), nil)
+			require.NoError(t, err)
+			defer server.Stop()
+			previous := ldflags.TestMode
+			ldflags.TestMode = "true"
+			t.Cleanup(func() { ldflags.TestMode = previous })
+			listener, err := net.Listen("tcp", ":0")
+			require.NoError(t, err)
+			defer listener.Close()
+			t.Setenv("OCTELIUM_TEST_RSCSERVER_PORT", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			pings := 0
+			server.redisC.AddHook(startupPingHook{ping: func() error {
+				pings++
+				if pings == 1 && mode == "redis-backoff" {
+					cancel()
+					return context.Canceled
+				}
+				if pings == 1 && mode == "occupied-port" {
+					time.AfterFunc(50*time.Millisecond, cancel)
+				}
+				return nil
+			}})
+			started := time.Now()
+			err = server.Run(ctx)
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Less(t, time.Since(started), time.Second)
+			assert.Equal(t, 1, pings)
+		})
+	}
+}
+
+func TestServerStartupHandshakeCancellation(t *testing.T) {
+	for _, mode := range []string{"startup", "tls", "deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer listener.Close()
+			t.Setenv("OCTELIUM_POSTGRES_HOST", "127.0.0.1")
+			t.Setenv("OCTELIUM_POSTGRES_PORT", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+			t.Setenv("OCTELIUM_POSTGRES_NOSSL", strconv.FormatBool(mode != "tls"))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if mode == "deadline" {
+				ctx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+				defer cancel()
+			}
+			done := make(chan error, 1)
+			go func() {
+				server, err := NewServer(ctx, nil)
+				if server != nil {
+					server.Stop()
+				}
+				done <- err
+			}()
+			require.NoError(t, listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second)))
+			connection, err := listener.Accept()
+			require.NoError(t, err)
+			defer connection.Close()
+			require.NoError(t, connection.SetReadDeadline(time.Now().Add(time.Second)))
+			header := make([]byte, 8)
+			_, err = io.ReadFull(connection, header)
+			require.NoError(t, err)
+			if mode == "tls" {
+				assert.EqualValues(t, 80877103, binary.BigEndian.Uint32(header[4:]))
+				_, err = connection.Write([]byte{'S'})
+				require.NoError(t, err)
+				_, err = io.ReadFull(connection, make([]byte, 5))
+				require.NoError(t, err)
+			}
+			if mode != "deadline" {
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if mode == "deadline" {
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+				} else {
+					require.ErrorIs(t, err, context.Canceled)
+				}
+			case <-time.After(time.Second):
+				connection.Close()
+				t.Fatal("The PostgreSQL startup handshake ignored cancellation")
+			}
+			_, err = io.Copy(io.Discard, connection)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestStartupDialerRelease(t *testing.T) {
+	for _, mode := range []string{"released", "cancelled", "release-before-dial", "concurrent"} {
+		t.Run(mode, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer listener.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			dialer := &startupDialer{ctx: ctx}
+			defer dialer.finish()
+			if mode == "release-before-dial" {
+				dialer.finish()
+				cancel()
+			}
+			connection, err := dialer.DialContext(t.Context(), "tcp", listener.Addr().String())
+			require.NoError(t, err)
+			defer connection.Close()
+			peer, err := listener.Accept()
+			require.NoError(t, err)
+			defer peer.Close()
+			switch mode {
+			case "released":
+				dialer.finish()
+				cancel()
+			case "cancelled":
+				cancel()
+			case "concurrent":
+				var group sync.WaitGroup
+				group.Go(cancel)
+				group.Go(dialer.finish)
+				group.Wait()
+			}
+			if mode == "cancelled" {
+				require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
+				_, err := peer.Read(make([]byte, 1))
+				require.ErrorIs(t, err, io.EOF)
+			} else if mode != "concurrent" {
+				require.NoError(t, connection.SetWriteDeadline(time.Now().Add(time.Second)))
+				_, err := connection.Write([]byte{'x'})
+				require.NoError(t, err)
+				var value [1]byte
+				_, err = io.ReadFull(peer, value[:])
+				require.NoError(t, err)
+				assert.Equal(t, byte('x'), value[0])
+			}
+		})
+	}
 }

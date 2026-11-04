@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
@@ -69,24 +70,102 @@ type Server struct {
 	hasSecretManager bool
 }
 
-func NewServer(ctx context.Context, o *Opts) (*Server, error) {
+type startupDialer struct {
+	ctx      context.Context
+	mu       sync.Mutex
+	finished bool
+	stops    []func() bool
+}
 
-	db, err := postgresutils.NewDB()
+func (d *startupDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	if !d.finished {
+		d.stops = append(d.stops, context.AfterFunc(d.ctx, func() {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if !d.finished {
+				conn.Close()
+			}
+		}))
+	}
+	d.mu.Unlock()
+	return conn, nil
+}
+
+func (d *startupDialer) Dial(network, address string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, address)
+}
+
+func (d *startupDialer) DialTimeout(network, address string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return d.DialContext(ctx, network, address)
+}
+
+func (d *startupDialer) finish() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.finished = true
+	for _, stop := range d.stops {
+		stop()
+	}
+	d.stops = nil
+	d.ctx = nil
+}
+
+func NewServer(ctx context.Context, o *Opts) (_ *Server, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	dialer := &startupDialer{ctx: ctx}
+	defer dialer.finish()
+	db, err := postgresutils.NewDBWithDialer(dialer)
 	if err != nil {
 		return nil, errors.Errorf("Could not create a db client: %+v", err)
 	}
+	defer func() {
+		if retErr != nil {
+			db.Close()
+		}
+	}()
+	connection, err := db.Conn(ctx)
+	if err == nil {
+		err = connection.Close()
+	}
+	dialer.finish()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "Could not connect to Postgres")
+	}
 
 	{
-		_, err := db.Exec("SELECT current_database();")
+		_, err := db.ExecContext(ctx, "SELECT current_database();")
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if err != nil {
-			return nil, errors.Errorf("Could not check Postgres with SELECT current_database(): %+v", err)
+			return nil, errors.Wrap(err, "Could not check Postgres with SELECT current_database()")
 		}
 	}
 
 	redisC := redisutils.NewClient()
+	defer func() {
+		if retErr != nil {
+			redisC.Close()
+		}
+	}()
 
 	if err := postgresutils.Migrate(ctx, db); err != nil {
-		return nil, errors.Errorf("Could not migrate database: %+v", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, errors.Wrap(err, "Could not migrate database")
 	}
 
 	if o == nil {
@@ -103,6 +182,9 @@ func NewServer(ctx context.Context, o *Opts) (*Server, error) {
 
 	commonMetrics, err := newCommonMetrics(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -161,19 +243,34 @@ func (s *Server) GetRedisC() *redis.Client {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := s.setSecretManager(ctx); err != nil {
 		zap.L().Warn("Could not setSecretManager", zap.Error(err))
 	}
 
 	if err := func() error {
 		for range 100 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			err := s.redisC.Ping(ctx).Err()
 			if err == nil {
 				zap.L().Debug("Successfully ping'ed Redis server")
-				return nil
+				return ctx.Err()
 			}
 			zap.L().Warn("Could not ping redis. Trying again", zap.Error(err))
-			time.Sleep(3 * time.Second)
+			timer := time.NewTimer(3 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		return errors.Errorf("Could not ping redis")
 	}(); err != nil {
@@ -247,7 +344,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	if err := vutils.WaitUntilPortIsAvailable(port); err != nil {
+	if err := vutils.WaitUntilPortIsAvailableContext(ctx, port); err != nil {
 		return err
 	}
 
@@ -255,8 +352,16 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		lis.Close()
+		return err
+	}
 
 	if err := s.eventHub.Start(ctx); err != nil {
+		lis.Close()
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		lis.Close()
 		return err
 	}

@@ -114,6 +114,6 @@ func main() {
 		}
 
 		return nil
-	}, nil)
+	}, &components.RunComponentOpts{CancelOnSIGTERM: true})
 
 }
