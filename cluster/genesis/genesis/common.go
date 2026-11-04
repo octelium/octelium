@@ -117,7 +117,20 @@ func waitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error
 }
 
 func waitGatewayAgentReady(ctx context.Context, k8sC kubernetes.Interface) error {
-	return k8sutils.WaitReadinessDaemonsetWithNS(ctx, k8sC, "octelium-gwagent", "octelium")
+	if ldflags.IsTest() {
+		return nil
+	}
+	return k8sutils.WaitReadiness(ctx, 2*time.Second, 20000*time.Second, func(ctx context.Context) (bool, error) {
+		return gatewayAgentReadiness(ctx, k8sC)
+	})
+}
+
+func gatewayAgentReadiness(ctx context.Context, k8sC kubernetes.Interface) (bool, error) {
+	ds, err := k8sC.AppsV1().DaemonSets(vutils.K8sNS).Get(ctx, "octelium-gwagent", k8smetav1.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+	return ds.Status.DesiredNumberScheduled > 0 && k8sutils.IsDaemonSetReady(ds), nil
 }
 
 func waitGatewayAgentsRegistered(ctx context.Context, k8sC kubernetes.Interface) error {
@@ -128,8 +141,12 @@ func waitGatewayAgentsRegistered(ctx context.Context, k8sC kubernetes.Interface)
 	zap.L().Debug("Checking that all Gateway Agents are registered")
 
 	doCheck := func(ctx context.Context) (bool, error) {
+		ready, err := gatewayAgentReadiness(ctx, k8sC)
+		if err != nil || !ready {
+			return false, err
+		}
 		nodeList, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
-			LabelSelector: vutils.NodeLabelDataPlane,
+			LabelSelector: vutils.NodeLabelDataPlane + "=",
 		})
 		if err != nil {
 			return false, err

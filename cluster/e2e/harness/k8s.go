@@ -94,9 +94,11 @@ func (h *H) WaitDaemonSet(ctx context.Context, name string) error {
 			if ds.Status.DesiredNumberScheduled == 0 {
 				return errors.Errorf("daemonset %s has no scheduled pods yet", name)
 			}
-			if ds.Status.NumberReady != ds.Status.DesiredNumberScheduled {
-				return errors.Errorf("daemonset %s: %d/%d pods ready",
-					name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled)
+			if !k8sutils.IsDaemonSetReady(ds) {
+				return errors.Errorf("daemonset %s: generation %d/%d observed, %d/%d updated, %d/%d available",
+					name, ds.Status.ObservedGeneration, ds.Generation,
+					ds.Status.UpdatedNumberScheduled, ds.Status.DesiredNumberScheduled,
+					ds.Status.NumberAvailable, ds.Status.DesiredNumberScheduled)
 			}
 			return nil
 		})

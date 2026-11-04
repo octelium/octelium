@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sretry"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
@@ -39,30 +40,38 @@ func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interfac
 	zap.L().Debug("Checking readiness for deployment",
 		zap.String("deployment", name), zap.String("namespace", ns))
 
-	deploymentReady := func(rs *appsv1.ReplicaSet, dep *appsv1.Deployment) bool {
-		expectedReady := *dep.Spec.Replicas - MaxUnavailable(*dep)
-		if !(rs.Status.ReadyReplicas >= expectedReady) {
-			return false
-		}
-		return true
-	}
-
 	doCheck := func(ctx context.Context) (bool, error) {
 		dep, err := k8sC.AppsV1().Deployments(ns).Get(ctx, name, k8smetav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
 
-		newReplicaSet, err := GetNewReplicaSetWithContext(ctx, dep, k8sC.AppsV1())
-		if err != nil || newReplicaSet == nil {
-			return false, err
-		}
-
-		return deploymentReady(newReplicaSet, dep), nil
+		return deploymentReadiness(dep)
 	}
 
 	return WaitReadiness(ctx, 2*time.Second, 20000*time.Second, doCheck)
 
+}
+
+func deploymentReadiness(dep *appsv1.Deployment) (bool, error) {
+	if dep == nil || dep.DeletionTimestamp != nil || dep.Status.ObservedGeneration < dep.Generation {
+		return false, nil
+	}
+	replicas := int32(1)
+	if dep.Spec.Replicas != nil {
+		replicas = *dep.Spec.Replicas
+	}
+	if dep.Status.UpdatedReplicas == replicas && dep.Status.Replicas == replicas && dep.Status.AvailableReplicas == replicas {
+		return true, nil
+	}
+	if !dep.Spec.Paused {
+		for _, condition := range dep.Status.Conditions {
+			if condition.Type == appsv1.DeploymentProgressing && condition.Status == k8scorev1.ConditionFalse && condition.Reason == "ProgressDeadlineExceeded" {
+				return false, errors.Errorf("Deployment %s/%s exceeded its progress deadline: %s", dep.Namespace, dep.Name, condition.Message)
+			}
+		}
+	}
+	return false, nil
 }
 
 func WaitReadinessDeployment(ctx context.Context, k8sC kubernetes.Interface, name string) error {
@@ -88,15 +97,22 @@ func WaitReadinessDaemonsetWithNS(ctx context.Context, k8sC kubernetes.Interface
 			return false, err
 		}
 
-		if dep.Status.NumberReady == dep.Status.DesiredNumberScheduled {
-			return true, nil
-		}
-
-		return false, nil
+		return IsDaemonSetReady(dep), nil
 	}
 
 	return WaitReadiness(ctx, 2*time.Second, 20000*time.Second, doCheck)
 
+}
+
+func IsDaemonSetReady(ds *appsv1.DaemonSet) bool {
+	if ds == nil || ds.DeletionTimestamp != nil || ds.Status.ObservedGeneration == 0 || ds.Status.ObservedGeneration < ds.Generation {
+		return false
+	}
+	desired := ds.Status.DesiredNumberScheduled
+	if ds.Status.NumberReady != desired || ds.Status.NumberAvailable != desired {
+		return false
+	}
+	return ds.Spec.UpdateStrategy.Type == appsv1.OnDeleteDaemonSetStrategyType || ds.Status.UpdatedNumberScheduled == desired
 }
 
 func WaitForNodesReadiness(ctx context.Context, k8sC kubernetes.Interface) error {

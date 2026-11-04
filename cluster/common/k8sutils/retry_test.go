@@ -142,12 +142,13 @@ func TestReadinessTemporaryErrorsAndContext(t *testing.T) {
 	for _, kind := range []string{"nodes", "daemonsets", "deployments", "replicasets"} {
 		t.Run(kind, func(t *testing.T) {
 			dep := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "octelium", UID: "deployment"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "octelium", UID: "deployment", Generation: 1},
 				Spec:       appsv1.DeploymentSpec{Replicas: new(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test"}}}},
+				Status:     appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1},
 			}
 			rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "test-rs", Namespace: "octelium", Labels: map[string]string{"app": "test"}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", UID: dep.UID, Name: dep.Name, Controller: new(true)}}}, Spec: appsv1.ReplicaSetSpec{Template: dep.Spec.Template}, Status: appsv1.ReplicaSetStatus{ReadyReplicas: 1}}
 			c := fake.NewSimpleClientset(dep, rs,
-				&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "octelium"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberReady: 1}},
+				&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "octelium", Generation: 1}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 1, DesiredNumberScheduled: 1, NumberReady: 1, UpdatedNumberScheduled: 1, NumberAvailable: 1}},
 				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
 			)
 			failed := false
@@ -166,6 +167,8 @@ func TestReadinessTemporaryErrorsAndContext(t *testing.T) {
 				err = WaitForNodesReadiness(ctx, c)
 			case "daemonsets":
 				err = WaitReadinessDaemonsetWithNS(ctx, c, "test", "octelium")
+			case "replicasets":
+				_, err = GetNewReplicaSetWithContext(ctx, dep, c.AppsV1())
 			default:
 				err = WaitReadinessDeploymentWithNS(ctx, c, "test", "octelium")
 			}

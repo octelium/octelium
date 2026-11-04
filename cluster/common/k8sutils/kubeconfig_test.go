@@ -429,8 +429,10 @@ func TestReadiness(t *testing.T) {
 	replicas := int32(1)
 	controller := true
 	dep := &appsv1.Deployment{ObjectMeta: k8smetav1.ObjectMeta{Name: "deployment", Namespace: "octelium", UID: "deployment"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, Selector: &k8smetav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}}}}
+	dep.Generation = 1
+	dep.Status = appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
 	rs := &appsv1.ReplicaSet{ObjectMeta: k8smetav1.ObjectMeta{Name: "replicaset", Namespace: "octelium", Labels: map[string]string{"app": "test"}, OwnerReferences: []k8smetav1.OwnerReference{{UID: "deployment", Controller: &controller}}}, Status: appsv1.ReplicaSetStatus{ReadyReplicas: 1}}
-	ds := &appsv1.DaemonSet{ObjectMeta: k8smetav1.ObjectMeta{Name: "daemonset", Namespace: "octelium"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberReady: 2}}
+	ds := &appsv1.DaemonSet{ObjectMeta: k8smetav1.ObjectMeta{Name: "daemonset", Namespace: "octelium", Generation: 1}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 1, DesiredNumberScheduled: 2, NumberReady: 2, UpdatedNumberScheduled: 2, NumberAvailable: 2}}
 	node := &k8scorev1.Node{ObjectMeta: k8smetav1.ObjectMeta{Name: "node"}, Status: k8scorev1.NodeStatus{Conditions: []k8scorev1.NodeCondition{{Type: k8scorev1.NodeReady, Status: k8scorev1.ConditionTrue}}}}
 	client := fake.NewClientset(dep, rs, ds, node)
 	ctx := context.Background()
