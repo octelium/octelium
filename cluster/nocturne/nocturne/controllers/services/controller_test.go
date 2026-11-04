@@ -19,6 +19,7 @@ package svccontroller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -844,6 +846,70 @@ func TestServiceDeleteWatcherRetry(t *testing.T) {
 			assert.False(t, sessionHasUpstreamForSvc(current, svc))
 			if assert.Len(t, current.Status.Connection.Upstreams, 1) {
 				assert.True(t, proto.Equal(sess.Status.Connection.Upstreams[0], current.Status.Connection.Upstreams[0]))
+			}
+		})
+	}
+}
+
+func TestServiceReplicaOwnership(t *testing.T) {
+	for _, replicas := range []int32{0, 3} {
+		t.Run(fmt.Sprint(replicas), func(t *testing.T) {
+			t.Setenv("OCTELIUM_REGION_NAME", "default")
+			svc := newTstService()
+			client := fakek8s.NewSimpleClientset()
+			core := &fakeCoreC{getService: func(context.Context, *rmetav1.GetOptions) (*corev1.Service, error) {
+				return proto.Clone(svc).(*corev1.Service), nil
+			}}
+			controller := NewController(&fakeOcteliumC{coreC: core}, client)
+			require.NoError(t, controller.OnAdd(t.Context(), svc))
+			deployment, err := client.AppsV1().Deployments(ns).Get(t.Context(), k8sutils.GetSvcHostname(svc), k8smetav1.GetOptions{})
+			require.NoError(t, err)
+			deployment.Spec.Replicas = new(replicas)
+			_, err = client.AppsV1().Deployments(ns).Update(t.Context(), deployment, k8smetav1.UpdateOptions{})
+			require.NoError(t, err)
+			for range 2 {
+				require.NoError(t, controller.OnUpdate(t.Context(), svc, svc))
+				current, err := client.AppsV1().Deployments(ns).Get(t.Context(), deployment.Name, k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, new(replicas), current.Spec.Replicas)
+			}
+			for _, count := range []uint32{4, 1} {
+				svc.Spec.Deployment = &corev1.Service_Spec_Deployment{Replicas: count}
+				require.NoError(t, controller.OnUpdate(t.Context(), svc, svc))
+				current, err := client.AppsV1().Deployments(ns).Get(t.Context(), deployment.Name, k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, new(int32(count)), current.Spec.Replicas)
+			}
+		})
+	}
+}
+
+func TestContainerUpstreamReplicaOwnership(t *testing.T) {
+	for _, replicas := range []int32{0, 3} {
+		t.Run(fmt.Sprint(replicas), func(t *testing.T) {
+			svc := newTstService()
+			svc.Spec.Config = newTstContainerConfig("default")
+			client := fakek8s.NewSimpleClientset()
+			controller := NewController(nil, client)
+			owner := controller.getOwnerConfigMap(svc)
+			require.NoError(t, controller.setK8sUpstream(t.Context(), svc, owner))
+			deployment, err := client.AppsV1().Deployments(ns).Get(t.Context(), k8sutils.GetSvcK8sUpstreamHostname(svc, "default"), k8smetav1.GetOptions{})
+			require.NoError(t, err)
+			deployment.Spec.Replicas = new(replicas)
+			_, err = client.AppsV1().Deployments(ns).Update(t.Context(), deployment, k8smetav1.UpdateOptions{})
+			require.NoError(t, err)
+			for range 2 {
+				require.NoError(t, controller.setK8sUpstream(t.Context(), svc, owner))
+				current, err := client.AppsV1().Deployments(ns).Get(t.Context(), deployment.Name, k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, new(replicas), current.Spec.Replicas)
+			}
+			for _, count := range []uint32{4, 1} {
+				svc.Spec.Config.Upstream.GetContainer().Replicas = count
+				require.NoError(t, controller.setK8sUpstream(t.Context(), svc, owner))
+				current, err := client.AppsV1().Deployments(ns).Get(t.Context(), deployment.Name, k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, new(int32(count)), current.Spec.Replicas)
 			}
 		})
 	}

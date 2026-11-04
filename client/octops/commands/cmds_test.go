@@ -667,3 +667,559 @@ func TestUpgradeWaitWithoutClusterAuthenticationE2E(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, jobs.Items, 1)
 }
+
+func TestInitCompletionE2E(t *testing.T) {
+	for _, state := range []string{"legacy-success", "owned-success", "failed-after-publication", "empty-token", "wrong-initialization", "incomplete-checkpoint", "replaced-job", "deleted-job", "cancelled"} {
+		t.Run(state, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "credentials", "token")
+			t.Setenv("OCTELIUM_AUTH_TOKEN_SAVE_PATH", path)
+			c, config := newTestKubernetes(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			started := false
+			c.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				if !started {
+					return false, nil, nil
+				}
+				a := action.(k8stesting.GetAction)
+				switch state {
+				case "deleted-job":
+					return true, nil, k8serr.NewNotFound(action.GetResource().GroupResource(), a.GetName())
+				case "replaced-job":
+					object, err := c.Tracker().Get(action.GetResource(), action.GetNamespace(), a.GetName())
+					if err != nil {
+						return true, nil, err
+					}
+					job := object.(*batchv1.Job).DeepCopy()
+					job.UID = "replacement"
+					return true, job, nil
+				case "cancelled":
+					cancel()
+					return true, nil, context.Canceled
+				}
+				return false, nil, nil
+			})
+			c.PrependReactor("update", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				job := action.(k8stesting.UpdateAction).GetObject().(*batchv1.Job)
+				started = true
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+				if state == "failed-after-publication" {
+					job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: k8scorev1.ConditionTrue, Reason: "BackoffLimitExceeded"}}
+				}
+				token := &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("new-admin-token")}}
+				if state == "empty-token" {
+					token.Data = nil
+				}
+				if state == "owned-success" || state == "wrong-initialization" || state == "incomplete-checkpoint" {
+					token.Annotations = map[string]string{"octelium.com/genesis-init-id": "init-id"}
+					checkpoint := &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-genesis-init", Namespace: "octelium", Annotations: map[string]string{"octelium.com/genesis-init-complete": "true"}}, Data: map[string][]byte{"id": []byte("init-id")}}
+					if state == "wrong-initialization" {
+						checkpoint.Data["id"] = []byte("other-initialization")
+					}
+					if state == "incomplete-checkpoint" {
+						checkpoint.Annotations = nil
+					}
+					assert.NoError(t, c.Tracker().Add(checkpoint))
+				}
+				assert.NoError(t, c.Tracker().Add(token))
+				return false, nil, nil
+			})
+			output, err := executeTestCommand(t, ctx, "init", "example.com", "--bootstrap="+newTestBootstrap(t), "--kubeconfig="+config, "--kubecontext=local", "--version=1.2.3")
+			if state == "legacy-success" || state == "owned-success" {
+				require.NoError(t, err, output)
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, "new-admin-token", string(data))
+			} else {
+				require.Error(t, err)
+				_, fileErr := os.Stat(path)
+				assert.True(t, os.IsNotExist(fileErr))
+				assert.NotContains(t, output, "new-admin-token")
+				assert.NotContains(t, err.Error(), "new-admin-token")
+				assert.NotContains(t, output, "Cluster installation is now complete")
+				if state == "cancelled" {
+					assert.ErrorIs(t, err, context.Canceled)
+				}
+			}
+		})
+	}
+}
+
+func TestInitBootstrapRepairE2E(t *testing.T) {
+	for _, state := range []string{"preflight-only", "checkpoint-only", "postgres-started", "redis-started", "response-lost"} {
+		t.Run(state, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "credentials", "token")
+			t.Setenv("OCTELIUM_AUTH_TOKEN_SAVE_PATH", path)
+			c, config := newTestKubernetes(t)
+			var starts, inputWrites atomic.Int32
+			c.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				secret := action.(k8stesting.CreateAction).GetObject().(*k8scorev1.Secret)
+				secret.ResourceVersion = "1"
+				return false, nil, nil
+			})
+			c.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				secret := action.(k8stesting.UpdateAction).GetObject().(*k8scorev1.Secret)
+				if secret.Name != "octelium-init" || action.GetNamespace() != "default" {
+					return false, nil, nil
+				}
+				count := inputWrites.Add(1)
+				secret.ResourceVersion = "2"
+				if state == "response-lost" && count == 1 {
+					assert.NoError(t, c.Tracker().Update(action.GetResource(), secret.DeepCopy(), action.GetNamespace()))
+					return true, nil, k8serr.NewServiceUnavailable("response lost after bootstrap update")
+				}
+				return false, nil, nil
+			})
+			c.PrependReactor("update", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				job := action.(k8stesting.UpdateAction).GetObject().(*batchv1.Job)
+				if job.Spec.Suspend != nil && *job.Spec.Suspend {
+					return false, nil, nil
+				}
+				if starts.Add(1) == 1 {
+					job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: k8scorev1.ConditionTrue, Reason: "BackoffLimitExceeded"}}
+					return false, nil, nil
+				}
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+				token := &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("new-admin-token")}}
+				if state == "checkpoint-only" {
+					object, err := c.Tracker().Get(k8scorev1.SchemeGroupVersion.WithResource("secrets"), "octelium", "octelium-genesis-init")
+					if assert.NoError(t, err) {
+						checkpoint := object.(*k8scorev1.Secret).DeepCopy()
+						checkpoint.Annotations = map[string]string{"octelium.com/genesis-init-complete": "true"}
+						checkpoint.Data["id"] = []byte("new-init-id")
+						assert.NoError(t, c.Tracker().Update(k8scorev1.SchemeGroupVersion.WithResource("secrets"), checkpoint, "octelium"))
+					}
+					token.Annotations = map[string]string{"octelium.com/genesis-init-id": "new-init-id"}
+				}
+				assert.NoError(t, c.Tracker().Add(token))
+				return false, nil, nil
+			})
+			bootstrapPath := newTestBootstrap(t)
+			contents, err := os.ReadFile(bootstrapPath)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(bootstrapPath, []byte(strings.ReplaceAll(string(contents), "host: postgres,", "host: wrong.example,")), 0600))
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			args := []string{"init", "example.com", "--bootstrap=" + bootstrapPath, "--kubeconfig=" + config, "--kubecontext=local", "--version=1.2.3"}
+			output, err := executeTestCommand(t, ctx, args...)
+			require.Error(t, err)
+			assert.NotContains(t, output, "Cluster installation is now complete")
+			_, err = os.Stat(path)
+			require.True(t, os.IsNotExist(err))
+			original, err := c.CoreV1().Secrets("default").Get(t.Context(), "octelium-init", k8smetav1.GetOptions{})
+			require.NoError(t, err)
+			switch state {
+			case "checkpoint-only":
+				require.NoError(t, c.Tracker().Add(&k8scorev1.Secret{
+					ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-genesis-init", Namespace: "octelium", UID: "previous-checkpoint"},
+					Data:       map[string][]byte{"id": []byte("previous-init-id"), "version": []byte("1"), "input-hash": []byte(strings.Repeat("0", 64))},
+				}))
+			case "postgres-started", "redis-started":
+				name := "octelium-postgres"
+				if state == "redis-started" {
+					name = "octelium-redis"
+				}
+				require.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: name, Namespace: "octelium", UID: "existing-storage"}, Data: map[string][]byte{"value": []byte("preserved")}}))
+			}
+			require.NoError(t, os.WriteFile(bootstrapPath, []byte(strings.ReplaceAll(string(contents), "host: postgres,", "host: corrected.example,")), 0600))
+			output, err = executeTestCommand(t, ctx, args...)
+			if state == "postgres-started" || state == "redis-started" {
+				require.ErrorContains(t, err, "bootstrap differs")
+				assert.NotContains(t, output, "new-admin-token")
+				assert.Zero(t, inputWrites.Load())
+				current, err := c.CoreV1().Secrets("default").Get(t.Context(), original.Name, k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, original, current)
+				return
+			}
+			require.NoError(t, err, output)
+			token, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, "new-admin-token", string(token))
+			assert.Equal(t, int32(1), inputWrites.Load())
+			current, err := c.CoreV1().Secrets("default").Get(t.Context(), original.Name, k8smetav1.GetOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, original.UID, current.UID)
+			bootstrap := &cbootstrapv1.Config{}
+			require.NoError(t, pbutils.Unmarshal(current.Data["bootstrap"], bootstrap))
+			assert.Equal(t, "corrected.example", bootstrap.Spec.PrimaryStorage.GetPostgresql().Host)
+		})
+	}
+}
+
+func TestInitCommandRejectsInvalidPasswordReferencesE2E(t *testing.T) {
+	for _, storage := range []string{"postgres", "redis"} {
+		for _, ref := range []string{"{}", "{name: ''}", "{name: Credentials}", "{name: credentials, namespace: a/b}", "{name: credentials, key: a/b}"} {
+			for _, stdin := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/stdin=%t", storage, ref, stdin), func(t *testing.T) {
+					c, config := newTestKubernetes(t)
+					pg, redis := "password: private-postgres-value", "password: private-redis-value"
+					if storage == "postgres" {
+						pg = "passwordFromSecret: " + ref
+					} else {
+						redis = "passwordFromSecret: " + ref
+					}
+					bootstrap := filepath.Join(t.TempDir(), "bootstrap.yaml")
+					require.NoError(t, os.WriteFile(bootstrap, []byte(fmt.Sprintf("spec:\n  primaryStorage:\n    postgresql: {host: postgres, username: installer, %s}\n  secondaryStorage:\n    redis: {host: redis, %s}\n", pg, redis)), 0600))
+					if stdin {
+						file, err := os.Open(bootstrap)
+						require.NoError(t, err)
+						previous := os.Stdin
+						os.Stdin = file
+						t.Cleanup(func() { os.Stdin = previous; file.Close() })
+						bootstrap = "-"
+					}
+					credential := filepath.Join(t.TempDir(), "initial-token")
+					t.Setenv("OCTELIUM_AUTH_TOKEN_SAVE_PATH", credential)
+					output, err := executeTestCommand(t, t.Context(), "init", "example.com", "--bootstrap="+bootstrap, "--kubeconfig="+config, "--version=1.2.3")
+					require.ErrorContains(t, err, "passwordFromSecret")
+					assert.Empty(t, c.Actions())
+					assert.NoFileExists(t, credential)
+					for _, value := range []string{"private-postgres-value", "private-redis-value"} {
+						assert.NotContains(t, output, value)
+						assert.NotContains(t, err.Error(), value)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestUpgradeAndPackageConfigurationRetryE2E(t *testing.T) {
+	for _, command := range []string{"upgrade", "install-package"} {
+		for _, stage := range []string{"transient", "forbidden", "corrupt", "missing-key", "legacy-missing"} {
+			t.Run(command+"/"+stage, func(t *testing.T) {
+				c, config := newTestKubernetes(t)
+				if stage != "legacy-missing" {
+					cm := &k8scorev1.ConfigMap{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-installation", Namespace: "octelium"}, Data: map[string]string{"installation.json": `{"spiffe":{"enable":true,"trustDomain":"test.local","csiDriver":{"name":"custom.csi"}}}`}}
+					if stage == "corrupt" {
+						cm.Data["installation.json"] = "{invalid"
+					}
+					if stage == "missing-key" {
+						cm.Data = nil
+					}
+					require.NoError(t, c.Tracker().Add(cm))
+				}
+				failed := false
+				c.PrependReactor("get", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					if stage == "forbidden" {
+						return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "octelium-installation", fmt.Errorf("permission denied"))
+					}
+					if stage == "transient" && !failed {
+						failed = true
+						return true, nil, k8serr.NewServiceUnavailable("temporary installation metadata outage")
+					}
+					return false, nil, nil
+				})
+				args := []string{command, "example.com", "--kubeconfig=" + config, "--version=1.2.3"}
+				if command == "install-package" {
+					args = append(args, "--package=cordium", "--upgrade")
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				out, err := executeTestCommand(t, ctx, args...)
+				jobs, listErr := c.BatchV1().Jobs("octelium").List(t.Context(), k8smetav1.ListOptions{})
+				require.NoError(t, listErr)
+				if stage == "transient" || stage == "legacy-missing" {
+					require.NoError(t, err, out)
+					require.Len(t, jobs.Items, 1)
+					if stage == "transient" {
+						assert.True(t, failed)
+						assert.Equal(t, "custom.csi", jobs.Items[0].Spec.Template.Spec.Volumes[0].CSI.Driver)
+					} else {
+						assert.Empty(t, jobs.Items[0].Spec.Template.Spec.Volumes)
+					}
+				} else {
+					require.Error(t, err)
+					assert.Empty(t, jobs.Items)
+					assert.NotContains(t, out, "has started")
+				}
+			})
+		}
+	}
+}
+
+func TestCommandClusterTargetE2E(t *testing.T) {
+	for _, command := range []string{"upgrade", "install-package/cordium", "upgrade-package/octeliumee"} {
+		for _, state := range []string{"bound", "legacy", "secret-forbidden", "wrong-domain", "wrong-bootstrap", "wrong-region", "corrupt-region", "partial-identity", "transient", "lost-create-response"} {
+			t.Run(command+"/"+state, func(t *testing.T) {
+				c, config := newTestKubernetes(t)
+				annotations := map[string]string{
+					"octelium.com/genesis-cluster-uid": "cluster-uid", "octelium.com/genesis-domain": "example.com",
+					"octelium.com/genesis-region-uid": "region-uid", "octelium.com/genesis-region-name": "west", "octelium.com/genesis-namespace-uid": "namespace-uid",
+				}
+				if state == "legacy" || state == "secret-forbidden" {
+					annotations = nil
+				}
+				if state == "partial-identity" {
+					delete(annotations, "octelium.com/genesis-namespace-uid")
+				}
+				require.NoError(t, c.Tracker().Add(&k8scorev1.ConfigMap{
+					ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-installation", Namespace: "octelium", Annotations: annotations},
+					Data:       map[string]string{"installation.json": `{"spiffe":{"enable":true,"csiDriver":{"name":"custom.csi"}}}`},
+				}))
+				bootstrap := &k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init", Namespace: "octelium"}, Data: map[string][]byte{
+					"domain": []byte("example.com"), "region": pbutils.MarshalMust(&corev1.Region{Metadata: &metav1.Metadata{Name: "west"}}),
+				}}
+				if state == "wrong-bootstrap" {
+					bootstrap.Data["domain"] = []byte("another.example")
+				}
+				if state == "wrong-region" {
+					bootstrap.Data["region"] = pbutils.MarshalMust(&corev1.Region{Metadata: &metav1.Metadata{Name: "east"}})
+				}
+				if state == "corrupt-region" {
+					bootstrap.Data["region"] = []byte{0xff}
+				}
+				require.NoError(t, c.Tracker().Add(bootstrap))
+				failed := false
+				c.PrependReactor("get", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					if state == "secret-forbidden" {
+						return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "octelium-init", fmt.Errorf("legacy restricted role"))
+					}
+					if state == "transient" && !failed {
+						failed = true
+						return true, nil, k8serr.NewServiceUnavailable("short bootstrap read outage")
+					}
+					return false, nil, nil
+				})
+				if state == "lost-create-response" {
+					c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+						job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+						job.UID = "accepted-target-job"
+						require.NoError(t, c.Tracker().Create(action.GetResource(), job, action.GetNamespace()))
+						return true, nil, k8serr.NewServiceUnavailable("response lost after commit")
+					})
+				}
+				domain := "example.com"
+				if state == "wrong-domain" {
+					domain = "another.example"
+				}
+				args := []string{"upgrade", domain, "--kubeconfig=" + config, "--version=1.2.3"}
+				if command != "upgrade" {
+					args[0] = "install-package"
+					pkg := "cordium"
+					if command == "upgrade-package/octeliumee" {
+						pkg = "octeliumee"
+						args = append(args, "--upgrade")
+					}
+					args = append(args, "--package="+pkg)
+				}
+				out, err := executeTestCommand(t, t.Context(), args...)
+				blocked := state == "wrong-domain" || state == "wrong-bootstrap" || state == "wrong-region" || state == "corrupt-region" || state == "partial-identity"
+				if blocked {
+					require.Error(t, err)
+					assert.NotContains(t, out, "has started")
+					for _, action := range c.Actions() {
+						assert.Contains(t, []string{"get", "list"}, action.GetVerb())
+					}
+				} else {
+					require.NoError(t, err, out)
+				}
+				jobs, listErr := c.BatchV1().Jobs("octelium").List(t.Context(), k8smetav1.ListOptions{})
+				require.NoError(t, listErr)
+				if blocked {
+					assert.Empty(t, jobs.Items)
+					return
+				}
+				require.Len(t, jobs.Items, 1)
+				job := jobs.Items[0]
+				assert.Nil(t, job.Spec.Suspend)
+				assert.Equal(t, "custom.csi", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
+				env := map[string]string{}
+				for _, value := range job.Spec.Template.Spec.Containers[0].Env {
+					env[value.Name] = value.Value
+				}
+				if state == "secret-forbidden" {
+					assert.Equal(t, "default", env["OCTELIUM_REGION_NAME"])
+				} else {
+					assert.Equal(t, "west", env["OCTELIUM_REGION_NAME"])
+				}
+				if annotations != nil {
+					assert.Equal(t, "cluster-uid", env["OCTELIUM_GENESIS_CLUSTER_UID"])
+					assert.Equal(t, "region-uid", env["OCTELIUM_GENESIS_REGION_UID"])
+					assert.Equal(t, "namespace-uid", env["OCTELIUM_GENESIS_NAMESPACE_UID"])
+				} else {
+					assert.NotContains(t, env, "OCTELIUM_GENESIS_CLUSTER_UID")
+				}
+				if state == "transient" {
+					assert.True(t, failed)
+				}
+			})
+		}
+	}
+}
+
+func TestUpgradeCompletionE2E(t *testing.T) {
+	for _, state := range []string{"already-complete", "same-version", "secondary-region", "legacy-cluster", "lost-create-response", "list-only-role", "failed-job", "failed-with-target-version", "pending-with-unrelated-version", "replaced-job", "deleted-job", "deleting-job", "cancelled", "retrying-pod"} {
+		t.Run(state, func(t *testing.T) {
+			var publicCalls atomic.Int32
+			ctx := newTestCoreServer(t, func(_ context.Context, _ *metav1.GetOptions) (*corev1.Region, error) {
+				n := publicCalls.Add(1)
+				version := "1.2.3"
+				if state == "pending-with-unrelated-version" {
+					version = "1.0.0"
+					if n > 1 {
+						version = "1.1.0"
+					}
+				}
+				return &corev1.Region{Status: &corev1.Region_Status{Version: version}}, nil
+			})
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			if state == "pending-with-unrelated-version" {
+				var deadlineCancel context.CancelFunc
+				ctx, deadlineCancel = context.WithTimeout(ctx, 3*time.Second)
+				defer deadlineCancel()
+			}
+			c, config := newTestKubernetes(t)
+			if state == "secondary-region" || state == "legacy-cluster" {
+				region := "default"
+				if state == "secondary-region" {
+					region = "europe"
+				}
+				require.NoError(t, c.Tracker().Add(&k8scorev1.Secret{
+					ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-init", Namespace: "octelium"},
+					Data:       map[string][]byte{"region": pbutils.MarshalMust(&corev1.Region{Metadata: &metav1.Metadata{Name: region}})},
+				}))
+			}
+			var submitted atomic.Pointer[batchv1.Job]
+			var reads atomic.Int32
+			c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+				switch state {
+				case "failed-job", "failed-with-target-version":
+					job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: k8scorev1.ConditionTrue, Reason: "BackoffLimitExceeded"}}
+				case "pending-with-unrelated-version", "retrying-pod":
+					job.Status = batchv1.JobStatus{Failed: 1}
+				}
+				submitted.Store(job.DeepCopy())
+				if state == "lost-create-response" {
+					assert.NoError(t, c.Tracker().Create(action.GetResource(), job, job.Namespace))
+					return true, nil, k8serr.NewServiceUnavailable("Response lost after persisting Job")
+				}
+				return false, nil, nil
+			})
+			c.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				n := reads.Add(1)
+				accepted := submitted.Load()
+				if accepted == nil {
+					return false, nil, nil
+				}
+				assert.Equal(t, accepted.Namespace, action.GetNamespace())
+				assert.Equal(t, accepted.Name, action.(k8stesting.GetAction).GetName())
+				job := accepted.DeepCopy()
+				switch state {
+				case "list-only-role":
+					return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), job.Name, fmt.Errorf("only list is permitted"))
+				case "replaced-job":
+					job.UID = "replacement"
+					return true, job, nil
+				case "deleted-job":
+					return true, nil, k8serr.NewNotFound(action.GetResource().GroupResource(), job.Name)
+				case "deleting-job":
+					job.DeletionTimestamp = new(k8smetav1.Now())
+					return true, job, nil
+				case "cancelled":
+					cancel()
+					return true, nil, context.Canceled
+				case "retrying-pod":
+					if n > 1 {
+						job.Status = batchv1.JobStatus{Succeeded: 1, Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}}
+					}
+					return true, job, nil
+				}
+				return false, nil, nil
+			})
+			out, err := executeTestCommand(t, ctx, "upgrade", "example.invalid", "--kubeconfig="+config, "--version=1.2.3", "--wait")
+			switch state {
+			case "failed-job", "failed-with-target-version", "pending-with-unrelated-version", "replaced-job", "deleted-job", "deleting-job", "cancelled":
+				require.Error(t, err)
+				assert.NotContains(t, out, "Cluster has been upgraded")
+				if state == "cancelled" {
+					assert.ErrorIs(t, err, context.Canceled)
+				}
+				if state == "pending-with-unrelated-version" {
+					assert.ErrorIs(t, err, context.DeadlineExceeded)
+				}
+			default:
+				require.NoError(t, err, out)
+				assert.Contains(t, out, "Cluster has been upgraded")
+			}
+			assert.Zero(t, publicCalls.Load())
+			accepted := submitted.Load()
+			require.NotNil(t, accepted)
+			assert.NotEmpty(t, accepted.UID)
+			assert.Regexp(t, "^octelium-genesis-upgrade-[a-z0-9]{6}$", accepted.Name)
+			assert.Nil(t, accepted.Spec.Suspend)
+			assert.Equal(t, []string{"upgrade"}, accepted.Spec.Template.Spec.Containers[0].Args)
+			assert.Contains(t, accepted.Spec.Template.Spec.Containers[0].Image, "octelium-genesis:1.2.3")
+			for _, action := range c.Actions() {
+				assert.NotEqual(t, "update", action.GetVerb())
+				assert.NotEqual(t, "delete", action.GetVerb())
+			}
+		})
+	}
+}
+
+func TestUpgradeWaitKubernetesAuthorizationFailureE2E(t *testing.T) {
+	c, config := newTestKubernetes(t)
+	c.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "test", fmt.Errorf("permission denied"))
+	})
+	c.PrependReactor("list", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.(k8stesting.ListAction).GetListRestrictions().Fields.String() != "" {
+			return true, nil, k8serr.NewForbidden(action.GetResource().GroupResource(), "test", fmt.Errorf("permission denied"))
+		}
+		return false, nil, nil
+	})
+	out, err := executeTestCommand(t, t.Context(), "upgrade", "example.invalid", "--kubeconfig="+config, "--wait")
+	require.True(t, k8serr.IsForbidden(err), "%v", err)
+	assert.NotContains(t, out, "Cluster has been upgraded")
+}
+
+func TestUpgradeWaitWithoutPublicAPIE2E(t *testing.T) {
+	var publicCalls atomic.Int32
+	ctx := newTestCoreServer(t, func(context.Context, *metav1.GetOptions) (*corev1.Region, error) {
+		publicCalls.Add(1)
+		return nil, status.Error(codes.Unavailable, "Public API is temporarily unavailable during rollout")
+	})
+	c, config := newTestKubernetes(t)
+	c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	out, err := executeTestCommand(t, ctx, "upgrade", "example.invalid", "--kubeconfig="+config, "--wait")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Cluster has been upgraded")
+	assert.Zero(t, publicCalls.Load())
+}
+
+func TestUpgradeWithoutWaitDoesNotObserveJobE2E(t *testing.T) {
+	c, config := newTestKubernetes(t)
+	c.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: k8scorev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	out, err := executeTestCommand(t, t.Context(), "upgrade", "example.invalid", "--kubeconfig="+config)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Upgrading the Cluster has started")
+	assert.NotContains(t, out, "Cluster has been upgraded")
+	for _, action := range c.Actions() {
+		assert.False(t, action.Matches("get", "jobs"))
+		assert.NotEqual(t, "delete", action.GetVerb())
+	}
+}
+
+func TestUpgradeCancelledBeforeSubmissionE2E(t *testing.T) {
+	c, config := newTestKubernetes(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	out, err := executeTestCommand(t, ctx, "upgrade", "example.invalid", "--kubeconfig="+config, "--wait")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, c.Actions())
+	assert.NotContains(t, out, "Upgrading the Cluster has started")
+	assert.NotContains(t, out, "Cluster has been upgraded")
+}

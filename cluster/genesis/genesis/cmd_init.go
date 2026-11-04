@@ -19,11 +19,15 @@ package genesis
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -39,6 +43,8 @@ import (
 	"github.com/octelium/octelium/cluster/common/k8sretry"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
+	"github.com/octelium/octelium/cluster/common/postgresutils"
+	"github.com/octelium/octelium/cluster/common/redisutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/genesis/genesis/components"
 	"github.com/octelium/octelium/cluster/genesis/genesis/genesisutils"
@@ -46,15 +52,17 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
+	"github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 type InitOpts struct{}
@@ -1439,4 +1447,371 @@ func (g *Genesis) moveClusterInitResources(ctx context.Context) error {
 	}
 
 	return g.moveK8SSecret(ctx, sec)
+}
+
+func (g *Genesis) validateClusterNetwork(ctx context.Context, cc *corev1.ClusterConfig, bootstrap *cbootstrapv1.Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var allocated []netip.Prefix
+	values := []string{}
+	if ucorev1.ToClusterConfig(cc).HasV4() {
+		values = append(values, cc.Status.Network.GetClusterNetwork().GetV4())
+	}
+	if ucorev1.ToClusterConfig(cc).HasV6() {
+		values = append(values, cc.Status.Network.GetClusterNetwork().GetV6())
+	}
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return errors.Wrap(err, "Invalid allocated Cluster network")
+		}
+		allocated = append(allocated, prefix)
+	}
+	for _, host := range []string{bootstrap.GetSpec().GetPrimaryStorage().GetPostgresql().GetHost(), bootstrap.GetSpec().GetSecondaryStorage().GetRedis().GetHost()} {
+		if addr, err := netip.ParseAddr(host); err == nil {
+			if err := checkNetworkOverlap(allocated, addr.Unmap().String(), "storage endpoint"); err != nil {
+				return err
+			}
+		}
+	}
+	var lastErr error
+	err := k8sretry.Wait(ctx, 500*time.Millisecond, 2*time.Minute, func(ctx context.Context) (bool, error) {
+		lastErr = g.checkKubernetesNetwork(ctx, allocated)
+		return lastErr == nil, lastErr
+	})
+	if err != nil && lastErr != nil {
+		return errors.Wrapf(err, "Could not validate Cluster network: %s", lastErr)
+	}
+	return err
+}
+
+func (g *Genesis) checkKubernetesNetwork(ctx context.Context, allocated []netip.Prefix) error {
+	nodes, err := g.k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes.Items {
+		for _, cidr := range append([]string{node.Spec.PodCIDR}, node.Spec.PodCIDRs...) {
+			if err := checkNetworkOverlap(allocated, cidr, "Kubernetes Pod CIDR on Node "+node.Name); err != nil {
+				return err
+			}
+		}
+		for _, addr := range node.Status.Addresses {
+			if addr.Type == k8scorev1.NodeInternalIP || addr.Type == k8scorev1.NodeExternalIP {
+				if err := checkNetworkOverlap(allocated, addr.Address, "Kubernetes Node "+node.Name); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	cidrs, err := g.k8sC.NetworkingV1().ServiceCIDRs().List(ctx, k8smetav1.ListOptions{})
+	if err != nil && !k8serr.IsNotFound(err) && !k8serr.IsMethodNotSupported(err) {
+		return err
+	}
+	if err == nil {
+		for _, cidr := range cidrs.Items {
+			for _, value := range cidr.Spec.CIDRs {
+				if err := checkNetworkOverlap(allocated, value, "Kubernetes ServiceCIDR "+cidr.Name); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	services, err := g.k8sC.CoreV1().Services("").List(ctx, k8smetav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, service := range services.Items {
+		for _, value := range append([]string{service.Spec.ClusterIP}, service.Spec.ClusterIPs...) {
+			if value == k8scorev1.ClusterIPNone {
+				continue
+			}
+			if err := checkNetworkOverlap(allocated, value, "Kubernetes Service "+service.Namespace+"/"+service.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func checkNetworkOverlap(allocated []netip.Prefix, value, source string) error {
+	if value == "" {
+		return nil
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		addr, addrErr := netip.ParseAddr(value)
+		if addrErr != nil {
+			return errors.Errorf("Invalid network address %q from %s", value, source)
+		}
+		addr = addr.Unmap()
+		prefix = netip.PrefixFrom(addr, addr.BitLen())
+	}
+	if prefix.Addr().Is4In6() {
+		if prefix.Bits() < 96 {
+			return errors.Errorf("Invalid IPv4-mapped network %q from %s", value, source)
+		}
+		prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+	}
+	for _, subnet := range allocated {
+		if subnet.Overlaps(prefix) {
+			return errors.Errorf("Cluster subnet %s overlaps %s %s", subnet, source, value)
+		}
+	}
+	return nil
+}
+
+type storagePasswords struct {
+	postgres string
+	redis    string
+}
+
+func validatePasswordSecretReference(name, namespace, key string) error {
+	if name == "" {
+		return errors.New("name of passwordFromSecret is empty")
+	}
+	if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+		return errors.Errorf("Invalid passwordFromSecret name %q: %s", name, strings.Join(errs, ", "))
+	}
+	if namespace != "" {
+		if errs := validation.IsDNS1123Label(namespace); len(errs) > 0 {
+			return errors.Errorf("Invalid passwordFromSecret namespace %q: %s", namespace, strings.Join(errs, ", "))
+		}
+	}
+	if key != "" {
+		if errs := validation.IsConfigMapKey(key); len(errs) > 0 {
+			return errors.Errorf("Invalid passwordFromSecret key %q: %s", key, strings.Join(errs, ", "))
+		}
+	}
+	return nil
+}
+
+func (g *Genesis) resolveStoragePasswords(ctx context.Context, bs *cbootstrapv1.Config) (*storagePasswords, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if bs.GetSpec() == nil {
+		return nil, errors.New("Nil Bootstrap")
+	}
+	pg := bs.Spec.GetPrimaryStorage().GetPostgresql()
+	if pg == nil {
+		return nil, errors.New("No Postgres info")
+	}
+	redis := bs.Spec.GetSecondaryStorage().GetRedis()
+	if redis == nil {
+		return nil, errors.New("No Redis info")
+	}
+
+	secrets := make(map[string]*k8scorev1.Secret)
+	getPassword := func(name, namespace, key string) (string, error) {
+		if err := validatePasswordSecretReference(name, namespace, key); err != nil {
+			return "", err
+		}
+		if namespace == "" {
+			namespace = "default"
+		}
+		identity := namespace + "/" + name
+		secret := secrets[identity]
+		if secret == nil {
+			var err error
+			secret, err = g.getK8sSecret(ctx, namespace, name)
+			if err != nil {
+				return "", err
+			}
+			secrets[identity] = secret
+		}
+		if key != "" {
+			if len(secret.Data[key]) == 0 {
+				return "", errors.Errorf("The passwordFromSecret %s key %q is missing or empty", identity, key)
+			}
+			return string(secret.Data[key]), nil
+		}
+		for _, key := range []string{"password", "data"} {
+			if len(secret.Data[key]) > 0 {
+				return string(secret.Data[key]), nil
+			}
+		}
+		return "", errors.Errorf("The passwordFromSecret %s has no non-empty password or data key", identity)
+	}
+
+	ret := &storagePasswords{}
+	var err error
+	switch value := pg.PasswordType.(type) {
+	case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_Password:
+		if value != nil {
+			ret.postgres = value.Password
+		}
+	case *cbootstrapv1.Config_Spec_PrimaryStorage_Postgresql_PasswordFromSecret_:
+		if value == nil {
+			return nil, errors.New("name of passwordFromSecret is empty")
+		}
+		ref := value.PasswordFromSecret
+		ret.postgres, err = getPassword(ref.GetName(), ref.GetNamespace(), ref.GetKey())
+		if err != nil {
+			return nil, errors.Wrap(err, "Could not resolve the Postgres password")
+		}
+	}
+	switch value := redis.PasswordType.(type) {
+	case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_Password:
+		if value != nil {
+			ret.redis = value.Password
+		}
+	case *cbootstrapv1.Config_Spec_SecondaryStorage_Redis_PasswordFromSecret_:
+		if value == nil {
+			return nil, errors.New("name of passwordFromSecret is empty")
+		}
+		ref := value.PasswordFromSecret
+		ret.redis, err = getPassword(ref.GetName(), ref.GetNamespace(), ref.GetKey())
+		if err != nil {
+			return nil, errors.Wrap(err, "Could not resolve the Redis password")
+		}
+	}
+	return ret, nil
+}
+
+func setStorageEnvironment(bootstrap *cbootstrapv1.Config, passwords *storagePasswords) {
+	pg := bootstrap.Spec.PrimaryStorage.GetPostgresql()
+	if ldflags.IsTest() {
+		os.Setenv("OCTELIUM_POSTGRES_NOSSL", "true")
+		os.Setenv("OCTELIUM_POSTGRES_HOST", "localhost")
+		os.Setenv("OCTELIUM_POSTGRES_USERNAME", "postgres")
+		os.Setenv("OCTELIUM_POSTGRES_PASSWORD", "postgres")
+	} else {
+		for key, value := range map[string]string{
+			"OCTELIUM_POSTGRES_DATABASE": pg.Database,
+			"OCTELIUM_POSTGRES_USERNAME": pg.Username,
+			"OCTELIUM_POSTGRES_PASSWORD": passwords.postgres,
+			"OCTELIUM_POSTGRES_HOST":     pg.Host,
+		} {
+			if value != "" {
+				os.Setenv(key, value)
+			}
+		}
+		if !pg.IsTLS {
+			os.Setenv("OCTELIUM_POSTGRES_NOSSL", "true")
+		}
+		if pg.Port != 0 {
+			os.Setenv("OCTELIUM_POSTGRES_PORT", fmt.Sprintf("%d", pg.Port))
+		}
+	}
+	redis := bootstrap.Spec.SecondaryStorage.GetRedis()
+	for key, value := range map[string]string{
+		"OCTELIUM_REDIS_USERNAME": redis.Username,
+		"OCTELIUM_REDIS_PASSWORD": passwords.redis,
+		"OCTELIUM_REDIS_HOST":     redis.Host,
+	} {
+		if value != "" {
+			os.Setenv(key, value)
+		}
+	}
+	if redis.Database != 0 {
+		os.Setenv("OCTELIUM_REDIS_DATABASE", fmt.Sprintf("%d", redis.Database))
+	}
+	if redis.Port != 0 {
+		os.Setenv("OCTELIUM_REDIS_PORT", fmt.Sprintf("%d", redis.Port))
+	}
+	if redis.IsTLS {
+		os.Setenv("OCTELIUM_REDIS_USE_TLS", "true")
+	}
+}
+
+type initializationDialer struct {
+	ctx       context.Context
+	tlsConfig *tls.Config
+}
+
+type initializationConn struct {
+	net.Conn
+	stop func() bool
+}
+
+func (c *initializationConn) Close() error {
+	c.stop()
+	return c.Conn.Close()
+}
+
+func (d *initializationDialer) dial(ctx context.Context, network, address string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(d.ctx, cancel)
+	defer stop()
+	defer cancel()
+	dialer := &net.Dialer{Timeout: timeout}
+	var conn net.Conn
+	var err error
+	if d.tlsConfig == nil {
+		conn, err = dialer.DialContext(ctx, network, address)
+	} else {
+		conn, err = (&tls.Dialer{NetDialer: dialer, Config: d.tlsConfig}).DialContext(ctx, network, address)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &initializationConn{Conn: conn, stop: context.AfterFunc(d.ctx, func() { conn.Close() })}, nil
+}
+
+func (d *initializationDialer) Dial(network, address string) (net.Conn, error) {
+	return d.dial(d.ctx, network, address, 0)
+}
+
+func (d *initializationDialer) DialTimeout(network, address string, timeout time.Duration) (net.Conn, error) {
+	return d.dial(d.ctx, network, address, timeout)
+}
+
+func (d *initializationDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return d.dial(ctx, network, address, 0)
+}
+
+func preflightInitializationStorage(ctx context.Context, bootstrap *cbootstrapv1.Config, passwords *storagePasswords) error {
+	setStorageEnvironment(bootstrap, passwords)
+	return k8sretry.Do(ctx, func(ctx context.Context) error {
+		db, err := postgresutils.NewDBWithDialer(&initializationDialer{ctx: ctx})
+		if err != nil {
+			return errors.Wrap(err, "Could not configure PostgreSQL")
+		}
+		defer db.Close()
+		if err := db.PingContext(ctx); err != nil {
+			return errors.Wrap(err, "Could not connect to PostgreSQL before initialization")
+		}
+		opts := redisutils.NewOptions()
+		opts.ContextTimeoutEnabled = true
+		opts.Dialer = (&initializationDialer{ctx: ctx, tlsConfig: opts.TLSConfig}).DialContext
+		redisC := redis.NewClient(opts)
+		defer redisC.Close()
+		stop := context.AfterFunc(ctx, func() { redisC.Close() })
+		defer stop()
+		if err := redisC.Ping(ctx).Err(); err != nil {
+			return errors.Wrap(err, "Could not connect to Redis before initialization")
+		}
+		var exists bool
+		if err := db.QueryRowContext(ctx, `SELECT to_regclass('octelium_resources') IS NOT NULL`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			var empty bool
+			if err := db.QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM octelium_resources)`).Scan(&empty); err != nil {
+				return err
+			}
+			if !empty {
+				return errors.New("The primary storage contains existing resources. Use octops upgrade instead of init")
+			}
+		}
+		for _, pattern := range []string{"octelium:*", "rsc:*"} {
+			var cursor uint64
+			for {
+				keys, next, err := redisC.Scan(ctx, cursor, pattern, 100).Result()
+				if err != nil {
+					return err
+				}
+				if len(keys) > 0 {
+					return errors.New("The Redis database contains existing Octelium state. Refusing to reset it")
+				}
+				cursor = next
+				if cursor == 0 {
+					break
+				}
+			}
+		}
+		return nil
+	})
 }
