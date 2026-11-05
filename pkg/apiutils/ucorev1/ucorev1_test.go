@@ -20,6 +20,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -316,4 +317,20 @@ func TestRegionIsDefault(t *testing.T) {
 			Name: "region-1",
 		},
 	}).IsDefault())
+}
+
+func TestDevicePostureStoredBeforeRedesign(t *testing.T) {
+	ret := &corev1.Device{}
+	assert.Nil(t, pbutils.UnmarshalJSON([]byte(`{
+		"status": {
+			"posture": {
+				"diskEncryption": "PASS",
+				"mobileIntegrity": "FAIL",
+				"signals": {"x.jamf.sip": "PASS"}
+			}
+		}
+	}`), ret))
+
+	assert.Equal(t, corev1.Device_Status_Posture_PASS, ret.Status.Posture.DiskEncryption)
+	assert.Equal(t, corev1.Device_Status_Posture_SIGNAL_STATE_UNKNOWN, ret.Status.Posture.OsIntegrity)
 }
