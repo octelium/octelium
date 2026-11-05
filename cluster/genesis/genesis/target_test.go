@@ -382,6 +382,88 @@ func TestUpgradeTargetMismatchPreservesClusterE2E(t *testing.T) {
 	}
 }
 
+func TestClusterConfigRoundTripPreservesInitializationE2E(t *testing.T) {
+	f := newInitializationFixture(t)
+	require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+	srv := admin.NewServer(&admin.Opts{OcteliumC: f.genesis.octeliumC, IsEmbedded: true})
+	cc, err := srv.GetClusterConfig(t.Context(), &corev1.GetClusterConfigRequest{})
+	require.NoError(t, err)
+	id := cc.Metadata.Annotations[initializationIDKey]
+	require.NotEmpty(t, id)
+	checkpoint, err := f.genesis.getK8sSecret(t.Context(), vutils.K8sNS, initializationSecretName)
+	require.NoError(t, err)
+	assert.Equal(t, id, string(checkpoint.Data["id"]))
+	token, err := f.genesis.getInitAuthenticationToken(t.Context())
+	require.NoError(t, err)
+	keys := initializationSecrets(t, f.db)
+	credential, err := f.genesis.octeliumC.CoreC().GetCredential(t.Context(), &rmetav1.GetOptions{Name: "root-init"})
+	require.NoError(t, err)
+	owner, err := f.redis.Get(t.Context(), initializationRedisKey).Result()
+	require.NoError(t, err)
+
+	cc.Spec.Ingress = &corev1.ClusterConfig_Spec_Ingress{UseForwardedForHeader: true, XffNumTrustedHops: 2}
+	cc.Metadata.Annotations["operator"] = "preserved"
+	cc.Metadata.Annotations["operator.example.com/owner"] = "platform"
+	before := proto.Clone(cc)
+	updated, err := srv.UpdateClusterConfig(t.Context(), cc)
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(before, cc))
+	assert.Equal(t, cc.Metadata.Annotations, updated.Metadata.Annotations)
+	assert.True(t, proto.Equal(cc.Spec, updated.Spec))
+	assert.Equal(t, cc.Metadata.Uid, updated.Metadata.Uid)
+
+	restarted := &Genesis{k8sC: f.client.K8sC, nadC: f.client.NadC}
+	require.NoError(t, restarted.RunInit(t.Context(), nil))
+	assert.Equal(t, id, restarted.initializationID)
+	for range 2 {
+		require.NoError(t, f.genesis.RunUpgrade(t.Context(), nil))
+	}
+	current, err := srv.GetClusterConfig(t.Context(), &corev1.GetClusterConfigRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, updated.Metadata.Uid, current.Metadata.Uid)
+	assert.Equal(t, updated.Metadata.Annotations, current.Metadata.Annotations)
+	assert.True(t, proto.Equal(updated.Spec, current.Spec))
+	assert.True(t, proto.Equal(updated.Status.Network, current.Status.Network))
+	region, err := f.genesis.octeliumC.CoreC().GetRegion(t.Context(), &rmetav1.GetOptions{Name: "default"})
+	require.NoError(t, err)
+	assert.Equal(t, id, region.Metadata.Annotations[initializationIDKey])
+	stored, err := f.genesis.getK8sSecret(t.Context(), vutils.K8sNS, initializationSecretName)
+	require.NoError(t, err)
+	assert.Equal(t, checkpoint.Data, stored.Data)
+	assert.Equal(t, checkpoint.Annotations, stored.Annotations)
+	storedToken, err := f.genesis.getInitAuthenticationToken(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, token.Data, storedToken.Data)
+	assert.Equal(t, token.Annotations, storedToken.Annotations)
+	currentCredential, err := f.genesis.octeliumC.CoreC().GetCredential(t.Context(), &rmetav1.GetOptions{Name: "root-init"})
+	require.NoError(t, err)
+	assert.True(t, proto.Equal(credential, currentCredential))
+	assert.Equal(t, keys, initializationSecrets(t, f.db))
+	currentOwner, err := f.redis.Get(t.Context(), initializationRedisKey).Result()
+	require.NoError(t, err)
+	assert.Equal(t, owner, currentOwner)
+	f.checkPreserved(t)
+}
+
+func TestUpgradeRejectsChangedInitializationAnnotationE2E(t *testing.T) {
+	f := newInitializationFixture(t)
+	require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+	srv := admin.NewServer(&admin.Opts{OcteliumC: f.genesis.octeliumC, IsEmbedded: true})
+	cc, err := srv.GetClusterConfig(t.Context(), &corev1.GetClusterConfigRequest{})
+	require.NoError(t, err)
+	cc.Metadata.Annotations[initializationIDKey] = vutils.UUIDv4()
+	_, err = srv.UpdateClusterConfig(t.Context(), cc)
+	require.NoError(t, err)
+	before := initializationRows(t, f.db)
+	keys := initializationSecrets(t, f.db)
+	c := f.client.K8sC.(*fake.Clientset)
+	c.ClearActions()
+	require.ErrorContains(t, f.genesis.RunUpgrade(t.Context(), nil), "another Cluster initialization")
+	assertTargetReadOnly(t, c)
+	assert.Equal(t, before, initializationRows(t, f.db))
+	assert.Equal(t, keys, initializationSecrets(t, f.db))
+}
+
 func TestUpgradeAfterClusterConfigAppliedWithoutAnnotationsE2E(t *testing.T) {
 	f := newInitializationFixture(t)
 	require.NoError(t, f.genesis.RunInit(t.Context(), nil))

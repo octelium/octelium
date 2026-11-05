@@ -108,6 +108,83 @@ func TestValidateNameBoundaries(t *testing.T) {
 	}
 }
 
+func TestValidateMetadataAnnotationKeys(t *testing.T) {
+	prefix := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." +
+		strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)
+	for _, tc := range []struct {
+		name string
+		key  string
+		ok   bool
+	}{
+		{"Legacy", "custom", true},
+		{"LegacyMinimum", "ab", true},
+		{"LegacyMaximum", strings.Repeat("a", 40), true},
+		{"LegacyDoubleHyphen", "custom--key", true},
+		{"Initialization", "octelium.com/genesis-init-id", true},
+		{"Qualified", "operator.example.com/custom-key", true},
+		{"SingleLabelPrefix", "operator/custom-key", true},
+		{"MaximumPrefix", prefix + "/custom-key", true},
+		{"MaximumName", "example.com/" + strings.Repeat("a", 40), true},
+		{"Empty", "", false},
+		{"LegacyTooShort", "a", false},
+		{"LegacyTooLong", strings.Repeat("a", 41), false},
+		{"LegacyUpperCase", "Custom", false},
+		{"LegacyUnderscore", "custom_key", false},
+		{"LegacyDot", "custom.key", false},
+		{"EmptyPrefix", "/custom-key", false},
+		{"EmptyName", "example.com/", false},
+		{"MultipleSlashes", "example.com/custom/key", false},
+		{"PrefixTooLong", prefix + "e/custom-key", false},
+		{"PrefixUpperCase", "Example.com/custom-key", false},
+		{"PrefixUnderscore", "example_com/custom-key", false},
+		{"PrefixEmptyLabel", "example..com/custom-key", false},
+		{"PrefixLeadingHyphen", "-example.com/custom-key", false},
+		{"PrefixTrailingHyphen", "example-.com/custom-key", false},
+		{"PrefixTrailingDot", "example.com./custom-key", false},
+		{"PrefixWhitespace", "example .com/custom-key", false},
+		{"PrefixUnicode", "éxample.com/custom-key", false},
+		{"NameTooShort", "example.com/a", false},
+		{"NameTooLong", "example.com/" + strings.Repeat("a", 41), false},
+		{"NameUpperCase", "example.com/Custom", false},
+		{"NameUnderscore", "example.com/custom_key", false},
+		{"NameTrailingHyphen", "example.com/custom-key-", false},
+		{"NameNewline", "example.com/custom-key\n", false},
+		{"NameNull", "example.com/custom-key\x00", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &metav1.Metadata{Annotations: map[string]string{tc.key: vutils.UUIDv4()}}
+			before := proto.Clone(m)
+			err := ValidateMetadata(m, nil)
+			assert.Equal(t, tc.ok, err == nil, "%+v", err)
+			if err != nil {
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			}
+			assert.True(t, proto.Equal(before, m))
+		})
+	}
+}
+
+func TestValidateMetadataQualifiedAnnotationLimits(t *testing.T) {
+	m := &metav1.Metadata{Annotations: map[string]string{}}
+	for i := range 64 {
+		m.Annotations[fmt.Sprintf("example.com/key-%02d", i)] = strings.Repeat("a", 63)
+	}
+	assert.Nil(t, ValidateMetadata(m, nil))
+
+	m.Annotations["example.com/extra"] = "value"
+	assert.Equal(t, codes.InvalidArgument, status.Code(ValidateMetadata(m, nil)))
+	delete(m.Annotations, "example.com/extra")
+	m.Annotations["example.com/key-00"] += "a"
+	assert.Equal(t, codes.InvalidArgument, status.Code(ValidateMetadata(m, nil)))
+
+	assert.Equal(t, codes.InvalidArgument, status.Code(ValidateMetadata(&metav1.Metadata{
+		Labels: map[string]string{"example.com/custom-key": "value"},
+	}, nil)))
+	assert.Equal(t, codes.InvalidArgument, status.Code(ValidateMetadata(&metav1.Metadata{
+		Tags: []string{"example.com/custom-key"},
+	}, nil)))
+}
+
 func TestValidateResourceFields(t *testing.T) {
 	sec := &corev1.Secret{Metadata: &metav1.Metadata{Name: "secret"}, Spec: &corev1.Secret_Spec{}}
 	opts := &ValidateCommonOpts{RequireStatus: true, RequireData: true}

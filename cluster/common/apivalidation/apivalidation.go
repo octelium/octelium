@@ -36,6 +36,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/common/rgx"
 	"github.com/pkg/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 type ValidateMetadataOpts struct {
@@ -156,7 +157,11 @@ func doValidateMetadata(m *metav1.Metadata, opts *ValidateMetadataOpts) error {
 	}
 
 	for k, v := range m.Annotations {
-		if !rgx.NameMain.MatchString(k) {
+		prefix, name, qualified := strings.Cut(k, "/")
+		if !qualified {
+			name = k
+		}
+		if !rgx.NameMain.MatchString(name) || (qualified && len(validation.IsDNS1123Subdomain(prefix)) != 0) {
 			return errors.Errorf("Invalid annotation key: %s", k)
 		}
 
