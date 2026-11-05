@@ -26,12 +26,14 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
@@ -97,6 +99,58 @@ func createBlockedGenesisJob(t *testing.T, h *harness.H) *batchv1.Job {
 		return errors.Errorf("The Job %s has not reported an image failure yet", job.Name)
 	})
 	return job
+}
+
+func testDeploymentProgressDeadline(t *testing.T, h *harness.H) {
+	labels := map[string]string{"app": "e2e-progress-deadline"}
+	deployments := h.K8sC().AppsV1().Deployments(vutils.K8sNS)
+	dep, err := deployments.Create(t.Context(), &appsv1.Deployment{
+		ObjectMeta: k8smetav1.ObjectMeta{GenerateName: "e2e-progress-deadline-"},
+		Spec: appsv1.DeploymentSpec{
+			ProgressDeadlineSeconds: new(int32(5)),
+			Selector:                &k8smetav1.LabelSelector{MatchLabels: labels},
+			Template: k8scorev1.PodTemplateSpec{
+				ObjectMeta: k8smetav1.ObjectMeta{Labels: labels},
+				Spec: k8scorev1.PodSpec{
+					Containers: []k8scorev1.Container{{
+						Name: "slow", Image: "nginx",
+						Command: []string{"sh", "-c", "sleep 40 && touch /tmp/ready && exec sleep 3600"},
+						ReadinessProbe: &k8scorev1.Probe{
+							PeriodSeconds: 1,
+							ProbeHandler: k8scorev1.ProbeHandler{
+								Exec: &k8scorev1.ExecAction{Command: []string{"cat", "/tmp/ready"}},
+							},
+						},
+					}},
+				},
+			},
+		},
+	}, k8smetav1.CreateOptions{})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := deployments.Delete(ctx, dep.Name, k8smetav1.DeleteOptions{Preconditions: &k8smetav1.Preconditions{UID: &dep.UID}})
+		if !k8serr.IsNotFound(err) {
+			assert.NoError(t, err)
+		}
+	})
+	h.Within(t, "Kubernetes to report the stalled rollout", 2*time.Minute, func(ctx context.Context) error {
+		current, err := deployments.Get(ctx, dep.Name, k8smetav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for _, condition := range current.Status.Conditions {
+			if condition.Type == appsv1.DeploymentProgressing && condition.Status == k8scorev1.ConditionFalse &&
+				condition.Reason == "ProgressDeadlineExceeded" {
+				return nil
+			}
+		}
+		return errors.Errorf("The Deployment %s has not exceeded its progress deadline yet", dep.Name)
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	require.NoError(t, k8sutils.WaitReadinessDeploymentWithNS(ctx, h.K8sC(), dep.Name, vutils.K8sNS))
 }
 
 func testGenesisInitializationReplay(t *testing.T, h *harness.H) {

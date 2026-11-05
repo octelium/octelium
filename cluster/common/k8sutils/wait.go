@@ -32,6 +32,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+const deploymentStallGrace = 10 * time.Minute
+
 func WaitReadinessDeploymentWithNS(ctx context.Context, k8sC kubernetes.Interface, name string, ns string) error {
 	if ldflags.IsTest() {
 		return nil
@@ -66,7 +68,8 @@ func deploymentReadiness(dep *appsv1.Deployment) (bool, error) {
 	}
 	if !dep.Spec.Paused {
 		for _, condition := range dep.Status.Conditions {
-			if condition.Type == appsv1.DeploymentProgressing && condition.Status == k8scorev1.ConditionFalse && condition.Reason == "ProgressDeadlineExceeded" {
+			if condition.Type == appsv1.DeploymentProgressing && condition.Status == k8scorev1.ConditionFalse && condition.Reason == "ProgressDeadlineExceeded" &&
+				time.Since(condition.LastTransitionTime.Time) >= deploymentStallGrace {
 				return false, errors.Errorf("Deployment %s/%s exceeded its progress deadline: %s", dep.Namespace, dep.Name, condition.Message)
 			}
 		}

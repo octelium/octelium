@@ -32,10 +32,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func readyDeployment() *appsv1.Deployment {
@@ -121,12 +123,17 @@ func TestDeploymentReadiness(t *testing.T) {
 }
 
 func TestDeploymentReadinessConditions(t *testing.T) {
-	for _, state := range []string{"deadline", "old-deadline", "recovered", "paused", "unknown", "true", "replica-failure", "available-is-not-complete"} {
+	stalled := metav1.NewTime(time.Now().Add(-deploymentStallGrace - time.Minute))
+	for _, state := range []string{"deadline", "just-exceeded", "within-grace", "old-deadline", "recovered", "paused", "unknown", "true", "replica-failure", "available-is-not-complete"} {
 		t.Run(state, func(t *testing.T) {
 			d := readyDeployment()
 			d.Status.AvailableReplicas = 3
-			condition := appsv1.DeploymentCondition{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", Message: "the new replicas did not become available"}
+			condition := appsv1.DeploymentCondition{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", Message: "the new replicas did not become available", LastTransitionTime: stalled}
 			switch state {
+			case "just-exceeded":
+				condition.LastTransitionTime = metav1.Now()
+			case "within-grace":
+				condition.LastTransitionTime = metav1.NewTime(time.Now().Add(-deploymentStallGrace + time.Minute))
 			case "old-deadline":
 				d.Status.ObservedGeneration--
 			case "recovered":
@@ -205,7 +212,7 @@ func TestReadinessCompatibility(t *testing.T) {
 	previous := ldflags.TestMode
 	ldflags.TestMode = "false"
 	t.Cleanup(func() { ldflags.TestMode = previous })
-	for _, state := range []string{"zero-deployment", "default-replicas", "progress-deadline", "old-progress-deadline", "paused-progress-deadline", "zero-daemonset", "on-delete-daemonset"} {
+	for _, state := range []string{"zero-deployment", "default-replicas", "progress-deadline", "recent-progress-deadline", "old-progress-deadline", "paused-progress-deadline", "zero-daemonset", "on-delete-daemonset"} {
 		t.Run(state, func(t *testing.T) {
 			deployment := readyDeployment()
 			ds := readyDaemonSet()
@@ -216,9 +223,12 @@ func TestReadinessCompatibility(t *testing.T) {
 			case "default-replicas":
 				deployment.Spec.Replicas = nil
 				deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: 4, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1}
-			case "progress-deadline", "old-progress-deadline", "paused-progress-deadline":
+			case "progress-deadline", "recent-progress-deadline", "old-progress-deadline", "paused-progress-deadline":
 				deployment.Status.AvailableReplicas = 3
-				deployment.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded"}}
+				deployment.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", LastTransitionTime: metav1.NewTime(time.Now().Add(-deploymentStallGrace - time.Minute))}}
+				if state == "recent-progress-deadline" {
+					deployment.Status.Conditions[0].LastTransitionTime = metav1.Now()
+				}
 				if state == "old-progress-deadline" {
 					deployment.Status.ObservedGeneration--
 				}
@@ -242,7 +252,7 @@ func TestReadinessCompatibility(t *testing.T) {
 			case "progress-deadline":
 				require.ErrorContains(t, err, "exceeded its progress deadline")
 				assert.NotErrorIs(t, err, context.DeadlineExceeded)
-			case "old-progress-deadline", "paused-progress-deadline":
+			case "recent-progress-deadline", "old-progress-deadline", "paused-progress-deadline":
 				require.ErrorIs(t, err, context.DeadlineExceeded)
 			default:
 				require.NoError(t, err)
@@ -253,6 +263,27 @@ func TestReadinessCompatibility(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeploymentCompletesAfterProgressDeadline(t *testing.T) {
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	stalled := readyDeployment()
+	stalled.Status.AvailableReplicas = 3
+	stalled.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", LastTransitionTime: metav1.Now()}}
+	c := fake.NewSimpleClientset()
+	var reads atomic.Int32
+	c.PrependReactor("get", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if reads.Add(1) == 1 {
+			return true, stalled, nil
+		}
+		return true, readyDeployment(), nil
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, WaitReadinessDeploymentWithNS(ctx, c, "test", "namespace"))
+	assert.Equal(t, int32(2), reads.Load())
 }
 
 func TestReadinessHTTP(t *testing.T) {
