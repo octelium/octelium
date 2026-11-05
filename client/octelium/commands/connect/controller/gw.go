@@ -16,6 +16,8 @@ package controller
 
 import (
 	"context"
+	"net"
+	"net/netip"
 
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/pkg/errors"
@@ -51,7 +53,7 @@ func (c *Controller) addGateway(ctx context.Context, gw *userv1.Gateway) error {
 		if c.dev == nil {
 			return errors.Errorf("The WireGuard device is not initialized")
 		}
-		if err := c.dev.IpcSet(c.toUAPI()); err != nil {
+		if err := c.setWGDev(); err != nil {
 			return err
 		}
 
@@ -92,7 +94,7 @@ func (c *Controller) updateGateway(ctx context.Context, gw *userv1.Gateway) erro
 				if c.dev == nil {
 					return errors.Errorf("The WireGuard device is not initialized")
 				}
-				if err := c.dev.IpcSet(c.toUAPI()); err != nil {
+				if err := c.setWGDev(); err != nil {
 					return err
 				}
 			} else {
@@ -145,7 +147,7 @@ func (c *Controller) deleteGateway(ctx context.Context, gwID string) error {
 				if c.dev == nil {
 					return errors.Errorf("The WireGuard device is not initialized")
 				}
-				if err := c.dev.IpcSet(c.toUAPI()); err != nil {
+				if err := c.setWGDev(); err != nil {
 					return err
 				}
 			} else {
@@ -170,4 +172,26 @@ func (c *Controller) removeGatewayFromState(gwID string) {
 			return
 		}
 	}
+}
+
+func (c *Controller) getGatewayEndpoint(gw *userv1.Gateway) (*net.UDPAddr, error) {
+	var selected netip.Addr
+	for _, raw := range gw.Addresses {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil || addr.IsUnspecified() || addr.IsMulticast() {
+			continue
+		}
+		addr = addr.Unmap()
+		if !selected.IsValid() {
+			selected = addr
+		}
+		if (addr.Is4() && c.gatewayIPv4Supported) || (addr.Is6() && c.gatewayIPv6Supported) {
+			selected = addr
+			break
+		}
+	}
+	if !selected.IsValid() {
+		return nil, errors.Errorf("Gateway %s does not have a valid endpoint address", gw.Id)
+	}
+	return &net.UDPAddr{IP: selected.AsSlice(), Port: int(gw.Wireguard.Port), Zone: selected.Zone()}, nil
 }

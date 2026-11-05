@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/protobuf/proto"
 )
@@ -70,7 +71,8 @@ func TestToUAPISkipsGatewaysWithoutWireGuard(t *testing.T) {
 		},
 	})
 
-	uapi := c.toUAPI()
+	uapi, err := c.toUAPI()
+	assert.NoError(t, err)
 
 	assert.Equal(t, 1, strings.Count(uapi, "public_key="))
 	assert.Equal(t, 1, strings.Count(uapi, "endpoint="))
@@ -139,4 +141,55 @@ func TestGatewayKnownIssues(t *testing.T) {
 		assert.NoError(t, c.UpdateGateway(t.Context(), updated))
 		assert.Equal(t, updated.Addresses, c.c.Connection.Gateways[0].Addresses)
 	})
+}
+
+func TestGatewayEndpointByHostIPFamily(t *testing.T) {
+	for _, mode := range testControllerIPModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, tt := range []struct {
+				name      string
+				addresses []string
+				ipv4      bool
+				ipv6      bool
+				want      string
+			}{
+				{"ipv4-host", []string{"2001:db8::1", "192.0.2.1"}, true, false, "192.0.2.1:51820"},
+				{"ipv6-host", []string{"192.0.2.1", "2001:db8::1"}, false, true, "[2001:db8::1]:51820"},
+				{"dual-stack-ipv6-first", []string{"2001:db8::1", "192.0.2.1"}, true, true, "[2001:db8::1]:51820"},
+				{"dual-stack-ipv4-first", []string{"192.0.2.1", "2001:db8::1"}, true, true, "192.0.2.1:51820"},
+				{"unknown-host", []string{"2001:db8::1", "192.0.2.1"}, false, false, "[2001:db8::1]:51820"},
+				{"unsupported-family", []string{"2001:db8::1"}, true, false, "[2001:db8::1]:51820"},
+				{"same-family-order", []string{"192.0.2.2", "192.0.2.1"}, true, false, "192.0.2.2:51820"},
+				{"mapped-ipv4", []string{"2001:db8::1", "::ffff:192.0.2.1"}, true, false, "192.0.2.1:51820"},
+				{"invalid-first", []string{"invalid", "", "192.0.2.1"}, true, false, "192.0.2.1:51820"},
+				{"unusable-first", []string{"::", "0.0.0.0", "ff02::1", "224.0.0.1", "192.0.2.1"}, true, false, "192.0.2.1:51820"},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					c := newTestGatewayCtl(nil)
+					c.ipv4Supported = mode.v4
+					c.ipv6Supported = mode.v6
+					c.gatewayIPv4Supported = tt.ipv4
+					c.gatewayIPv6Supported = tt.ipv6
+					gw := &userv1.Gateway{Addresses: tt.addresses, Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820}}
+					c.c.Connection.Gateways = []*userv1.Gateway{gw}
+					original := proto.Clone(gw)
+					endpoint, err := c.getGatewayEndpoint(gw)
+					require.NoError(t, err)
+					assert.Equal(t, tt.want, endpoint.String())
+					uapi, err := c.toUAPI()
+					require.NoError(t, err)
+					assert.Contains(t, uapi, "endpoint="+tt.want+"\n")
+					assert.True(t, proto.Equal(original, gw))
+				})
+			}
+		})
+	}
+}
+
+func TestGatewayEndpointInvalidAddresses(t *testing.T) {
+	for _, addresses := range [][]string{nil, {"invalid"}, {"::", "224.0.0.1"}} {
+		c := newTestGatewayCtl(nil)
+		_, err := c.getGatewayEndpoint(&userv1.Gateway{Id: "gw", Addresses: addresses, Wireguard: &userv1.Gateway_WireGuard{}})
+		assert.ErrorContains(t, err, "does not have a valid endpoint address")
+	}
 }

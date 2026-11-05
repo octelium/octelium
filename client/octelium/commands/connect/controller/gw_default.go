@@ -18,7 +18,6 @@
 package controller
 
 import (
-	"net"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -42,15 +41,16 @@ func (c *Controller) SetGatewayWGPeer(gw *userv1.Gateway) error {
 	if err != nil {
 		return err
 	}
+	endpoint, err := c.getGatewayEndpoint(gw)
+	if err != nil {
+		return err
+	}
 
 	peerCfg := wgtypes.PeerConfig{
 		PublicKey:         gwPubK,
 		AllowedIPs:        allowedIPs,
 		ReplaceAllowedIPs: true,
-		Endpoint: &net.UDPAddr{
-			IP:   net.ParseIP(gw.Addresses[0]),
-			Port: int(gw.Wireguard.Port),
-		},
+		Endpoint:          endpoint,
 
 		PersistentKeepaliveInterval: func() *time.Duration {
 			if c.c.Preferences.KeepAliveSeconds == 0 {

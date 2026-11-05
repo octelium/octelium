@@ -435,3 +435,28 @@ func TestWindowsWireGuardKeepaliveReconfigurationPreservesPreviousConfig(t *test
 	assert.Equal(t, enabled.Peers[0].Endpoint, updated.Peers[0].Endpoint)
 	assert.Equal(t, enabled.Interface, updated.Interface)
 }
+
+func TestWindowsWireGuardEndpointByHostIPFamily(t *testing.T) {
+	for _, mode := range testControllerIPModes {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, ipv6 := range []bool{false, true} {
+				c := newTestPlatformController(t, mode.mode)
+				c.gatewayIPv4Supported = !ipv6
+				c.gatewayIPv6Supported = ipv6
+				c.c.Connection.Gateways = []*userv1.Gateway{{
+					Addresses: []string{"2001:db8::1", "192.0.2.1"},
+					Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820},
+				}}
+				config, err := c.getWgConf()
+				require.NoError(t, err)
+				require.Len(t, config.Peers, 1)
+				want := "192.0.2.1"
+				if ipv6 {
+					want = "2001:db8::1"
+				}
+				assert.Equal(t, want, config.Peers[0].Endpoint.Host)
+				assert.Equal(t, uint16(51820), config.Peers[0].Endpoint.Port)
+			}
+		})
+	}
+}

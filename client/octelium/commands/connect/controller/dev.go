@@ -59,8 +59,12 @@ func (c *Controller) doInitDevNetstack(ctx context.Context) error {
 		fmt.Sprintf("(%s) ", c.c.Preferences.DeviceName),
 	)
 
+	uapi, err := c.toUAPI()
+	if err != nil {
+		return err
+	}
 	dev := device.NewDevice(c.getTUNDev(), conn.NewDefaultBind(), logger)
-	if err := dev.IpcSet(c.toUAPI()); err != nil {
+	if err := dev.IpcSet(uapi); err != nil {
 		dev.Close()
 		return err
 	}

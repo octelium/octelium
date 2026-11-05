@@ -28,7 +28,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-func (c *Controller) toUAPI() string {
+func (c *Controller) toUAPI() (string, error) {
 
 	var output strings.Builder
 	output.WriteString(fmt.Sprintf("private_key=%s\n", wgKeyB64ToHex(c.wgPrivateKey.String())))
@@ -41,8 +41,12 @@ func (c *Controller) toUAPI() string {
 			continue
 		}
 
+		endpoint, err := c.getGatewayEndpoint(gw)
+		if err != nil {
+			return "", err
+		}
 		output.WriteString(fmt.Sprintf("public_key=%s\n", wgKeyB64ToHex(gw.Wireguard.PublicKey)))
-		output.WriteString(fmt.Sprintf("endpoint=%s\n", net.JoinHostPort(gw.Addresses[0], fmt.Sprintf("%d", gw.Wireguard.Port))))
+		output.WriteString(fmt.Sprintf("endpoint=%s\n", endpoint.String()))
 		output.WriteString(fmt.Sprintf("persistent_keepalive_interval=%d\n", c.c.Preferences.KeepAliveSeconds))
 
 		output.WriteString("replace_allowed_ips=true\n")
@@ -57,7 +61,7 @@ func (c *Controller) toUAPI() string {
 		}
 
 	}
-	return output.String()
+	return output.String(), nil
 }
 
 func wgKeyB64ToHex(arg string) string {

@@ -38,7 +38,11 @@ func (c *Controller) setWGDev() error {
 		if c.dev == nil {
 			return errors.Errorf("The WireGuard device is not initialized")
 		}
-		return c.dev.IpcSet(c.toUAPI())
+		uapi, err := c.toUAPI()
+		if err != nil {
+			return err
+		}
+		return c.dev.IpcSet(uapi)
 	}
 
 	if c.wgC == nil {
@@ -62,15 +66,16 @@ func (c *Controller) setWGDev() error {
 		if err != nil {
 			return err
 		}
+		endpoint, err := c.getGatewayEndpoint(gw)
+		if err != nil {
+			return err
+		}
 
 		peers = append(peers, wgtypes.PeerConfig{
 			PublicKey:         gwPubK,
 			AllowedIPs:        allowedIPs,
 			ReplaceAllowedIPs: true,
-			Endpoint: &net.UDPAddr{
-				IP:   net.ParseIP(gw.Addresses[0]),
-				Port: int(gw.Wireguard.Port),
-			},
+			Endpoint:          endpoint,
 
 			PersistentKeepaliveInterval: func() *time.Duration {
 				if c.c.Preferences.KeepAliveSeconds == 0 {

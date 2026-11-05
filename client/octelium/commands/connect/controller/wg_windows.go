@@ -78,6 +78,10 @@ func (c *Controller) getWgConf() (*conf.Config, error) {
 		if err != nil {
 			return nil, err
 		}
+		endpoint, err := c.getGatewayEndpoint(gw)
+		if err != nil {
+			return nil, err
+		}
 
 		allowedIPs := []netip.Prefix{}
 		for _, svcCIDR := range gw.CIDRs {
@@ -99,7 +103,7 @@ func (c *Controller) getWgConf() (*conf.Config, error) {
 			AllowedIPs:          allowedIPs,
 			PersistentKeepalive: keepalive,
 			Endpoint: conf.Endpoint{
-				Host: gw.Addresses[0],
+				Host: endpoint.IP.String(),
 				Port: uint16(gw.Wireguard.Port),
 			},
 		})
@@ -126,7 +130,11 @@ func (c *Controller) setWGDev() error {
 		if c.dev == nil {
 			return errors.Errorf("The WireGuard device is not initialized")
 		}
-		return c.dev.IpcSet(c.toUAPI())
+		uapi, err := c.toUAPI()
+		if err != nil {
+			return err
+		}
+		return c.dev.IpcSet(uapi)
 	}
 
 	conf, err := c.getWgConf()
