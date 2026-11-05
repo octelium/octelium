@@ -1685,6 +1685,314 @@ func TestGenesisSubmissionDeletionRace(t *testing.T) {
 	assert.Equal(t, newUID, current.UID)
 }
 
+func blockedPodStatus(reason string) k8scorev1.PodStatus {
+	return k8scorev1.PodStatus{Phase: k8scorev1.PodPending, ContainerStatuses: []k8scorev1.ContainerStatus{
+		{Name: "genesis", State: k8scorev1.ContainerState{Waiting: &k8scorev1.ContainerStateWaiting{Reason: reason, Message: "image not found"}}},
+	}}
+}
+
+func unschedulablePodStatus() k8scorev1.PodStatus {
+	return k8scorev1.PodStatus{Phase: k8scorev1.PodPending, Conditions: []k8scorev1.PodCondition{
+		{Type: k8scorev1.PodScheduled, Status: k8scorev1.ConditionFalse, Reason: k8scorev1.PodReasonUnschedulable},
+	}}
+}
+
+func TestGenesisPodCannotStart(t *testing.T) {
+	started := k8scorev1.ContainerStatus{Name: "init", State: k8scorev1.ContainerState{Terminated: &k8scorev1.ContainerStateTerminated{ExitCode: 0}}}
+	running := k8scorev1.ContainerStatus{Name: "sidecar", State: k8scorev1.ContainerState{Running: &k8scorev1.ContainerStateRunning{}}}
+	restarted := blockedPodStatus("ImagePullBackOff")
+	restarted.ContainerStatuses[0].LastTerminationState.Terminated = &k8scorev1.ContainerStateTerminated{ExitCode: 1}
+	initFailure := blockedPodStatus("ImagePullBackOff")
+	initFailure.InitContainerStatuses, initFailure.ContainerStatuses = initFailure.ContainerStatuses, nil
+	afterInit := blockedPodStatus("ImagePullBackOff")
+	afterInit.InitContainerStatuses = []k8scorev1.ContainerStatus{started}
+	withSidecar := blockedPodStatus("ImagePullBackOff")
+	withSidecar.ContainerStatuses = append(withSidecar.ContainerStatuses, running)
+	scheduled := unschedulablePodStatus()
+	scheduled.Conditions[0].Status = k8scorev1.ConditionTrue
+	gated := unschedulablePodStatus()
+	gated.Conditions[0].Reason = k8scorev1.PodReasonSchedulingGated
+	wrongPhase := blockedPodStatus("ImagePullBackOff")
+	wrongPhase.Phase = k8scorev1.PodRunning
+	for _, tc := range []struct {
+		name   string
+		status k8scorev1.PodStatus
+		want   bool
+	}{
+		{"image pull error", blockedPodStatus("ErrImagePull"), true},
+		{"image pull backoff", blockedPodStatus("ImagePullBackOff"), true},
+		{"invalid image", blockedPodStatus("InvalidImageName"), true},
+		{"init container image", initFailure, true},
+		{"unschedulable", unschedulablePodStatus(), true},
+		{"just created", k8scorev1.PodStatus{Phase: k8scorev1.PodPending}, false},
+		{"creating container", blockedPodStatus("ContainerCreating"), false},
+		{"unknown waiting reason", blockedPodStatus("CreateContainerError"), false},
+		{"scheduled", scheduled, false},
+		{"scheduling gated", gated, false},
+		{"already ran before", restarted, false},
+		{"init container already ran", afterInit, false},
+		{"other container running", withSidecar, false},
+		{"not pending", wrongPhase, false},
+		{"running", k8scorev1.PodStatus{Phase: k8scorev1.PodRunning}, false},
+		{"unknown", k8scorev1.PodStatus{Phase: k8scorev1.PodUnknown}, false},
+		{"failed", k8scorev1.PodStatus{Phase: k8scorev1.PodFailed}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, genesisPodCannotStart(&k8scorev1.Pod{Status: tc.status}))
+		})
+	}
+}
+
+func genesisJobPod(job *batchv1.Job, name string, status k8scorev1.PodStatus) *k8scorev1.Pod {
+	pod := initializationPod(job)
+	pod.Name, pod.Status = name, status
+	pod.Labels = map[string]string{"octelium.com/component": "genesis", "job-name": job.Name}
+	return pod
+}
+
+func TestGenesisJobCannotStart(t *testing.T) {
+	job := &batchv1.Job{ObjectMeta: k8smetav1.ObjectMeta{Name: "job", Namespace: "octelium", UID: "job-uid"}}
+	other := &batchv1.Job{ObjectMeta: k8smetav1.ObjectMeta{Name: "other", Namespace: "octelium", UID: "other-uid"}}
+	blocked := genesisJobPod(job, "blocked", blockedPodStatus("ImagePullBackOff"))
+	failed := genesisJobPod(job, "failed", k8scorev1.PodStatus{Phase: k8scorev1.PodFailed})
+	running := genesisJobPod(job, "running", k8scorev1.PodStatus{Phase: k8scorev1.PodRunning})
+	creating := genesisJobPod(job, "creating", blockedPodStatus("ContainerCreating"))
+	unowned := blocked.DeepCopy()
+	unowned.OwnerReferences = nil
+	for _, tc := range []struct {
+		name string
+		pods []*k8scorev1.Pod
+		want bool
+	}{
+		{"no Pods", nil, false},
+		{"only finished attempts", []*k8scorev1.Pod{failed}, false},
+		{"blocked", []*k8scorev1.Pod{blocked}, true},
+		{"blocked after a failed attempt", []*k8scorev1.Pod{failed, blocked}, true},
+		{"blocked beside a running attempt", []*k8scorev1.Pod{blocked, running}, false},
+		{"blocked beside a starting attempt", []*k8scorev1.Pod{blocked, creating}, false},
+		{"another Job's Pod", []*k8scorev1.Pod{genesisJobPod(other, "other", blockedPodStatus("ImagePullBackOff"))}, false},
+		{"Pod without an owner", []*k8scorev1.Pod{unowned}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var pods []k8scorev1.Pod
+			for _, pod := range tc.pods {
+				pods = append(pods, *pod)
+			}
+			assert.Equal(t, tc.want, genesisJobCannotStart(job, pods))
+		})
+	}
+}
+
+func addGenesisJobWithPods(t *testing.T, c *fakek8s.Clientset, name, namespace string, statuses ...k8scorev1.PodStatus) *batchv1.Job {
+	t.Helper()
+	job := testSubmissionJob("missing")
+	job.Name, job.Namespace, job.UID, job.ResourceVersion = name, namespace, types.UID(uuid.NewString()), "1"
+	job.Status.Active = 1
+	require.NoError(t, c.Tracker().Add(job))
+	for i, status := range statuses {
+		require.NoError(t, c.Tracker().Add(genesisJobPod(job, fmt.Sprintf("%s-%d", name, i), status)))
+	}
+	c.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetNamespace() != namespace || action.(k8stesting.DeleteAction).GetName() != name {
+			return false, nil, nil
+		}
+		for i := range statuses {
+			require.NoError(t, c.Tracker().Delete(k8scorev1.SchemeGroupVersion.WithResource("pods"), namespace, fmt.Sprintf("%s-%d", name, i)))
+		}
+		return false, nil, nil
+	})
+	return job
+}
+
+func jobDeletions(c *fakek8s.Clientset) []k8stesting.DeleteAction {
+	var ret []k8stesting.DeleteAction
+	for _, action := range c.Actions() {
+		if deletion, ok := action.(k8stesting.DeleteAction); ok && action.GetResource().Resource == "jobs" {
+			ret = append(ret, deletion)
+		}
+	}
+	return ret
+}
+
+func TestGenesisSubmissionReplacesBlockedJob(t *testing.T) {
+	failedAttempt := k8scorev1.PodStatus{Phase: k8scorev1.PodFailed}
+	for name, statuses := range map[string][]k8scorev1.PodStatus{
+		"image pull error":     {blockedPodStatus("ErrImagePull")},
+		"image pull backoff":   {blockedPodStatus("ImagePullBackOff")},
+		"invalid image":        {blockedPodStatus("InvalidImageName")},
+		"unschedulable":        {unschedulablePodStatus()},
+		"after failed attempt": {failedAttempt, blockedPodStatus("ImagePullBackOff")},
+	} {
+		for _, namespace := range []string{"default", "octelium"} {
+			t.Run(name+"/"+namespace, func(t *testing.T) {
+				c := newGenesisJobClient(t)
+				blocked := addGenesisJobWithPods(t, c, "octelium-genesis-upgrade-typo", namespace, statuses...)
+				job, err := SubmitGenesisJobWithResult(t.Context(), c, testSubmissionJob("1.2.3"), nil)
+				require.NoError(t, err)
+				assert.Equal(t, submissionJobName, job.Name)
+				_, err = c.BatchV1().Jobs(namespace).Get(t.Context(), blocked.Name, k8smetav1.GetOptions{})
+				assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+				deletions := jobDeletions(c)
+				require.Len(t, deletions, 1)
+				options := deletions[0].GetDeleteOptions()
+				assert.Equal(t, k8smetav1.DeletePropagationForeground, *options.PropagationPolicy)
+				assert.Equal(t, blocked.UID, *options.Preconditions.UID)
+				assert.Equal(t, blocked.ResourceVersion, *options.Preconditions.ResourceVersion)
+			})
+		}
+	}
+}
+
+func TestGenesisSubmissionReplacesBlockedInitialization(t *testing.T) {
+	c := newGenesisJobClient(t)
+	desired := testSubmissionJob("1.2.3")
+	blocked := addGenesisJobWithPods(t, c, desired.Name, desired.Namespace, blockedPodStatus("ImagePullBackOff"))
+	prepared := false
+	job, err := SubmitGenesisJobWithResult(t.Context(), c, desired, func(context.Context) error { prepared = true; return nil })
+	require.NoError(t, err)
+	assert.True(t, prepared)
+	assert.NotEqual(t, blocked.UID, job.UID)
+	assert.False(t, *job.Spec.Suspend)
+	assert.Equal(t, "genesis:1.2.3", job.Spec.Template.Spec.Containers[0].Image)
+}
+
+func TestGenesisSubmissionRepeatsBlockedRequest(t *testing.T) {
+	c := newGenesisJobClient(t)
+	desired := testSubmissionJob("1.2.3")
+	require.NoError(t, SubmitGenesisJob(t.Context(), c, desired, nil))
+	first, err := c.BatchV1().Jobs(desired.Namespace).Get(t.Context(), desired.Name, k8smetav1.GetOptions{})
+	require.NoError(t, err)
+	require.NoError(t, c.Tracker().Add(genesisJobPod(first, "pod", blockedPodStatus("ImagePullBackOff"))))
+	c.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+		require.NoError(t, c.Tracker().Delete(k8scorev1.SchemeGroupVersion.WithResource("pods"), first.Namespace, "pod"))
+		return false, nil, nil
+	})
+	require.NoError(t, SubmitGenesisJob(t.Context(), c, desired, nil))
+	second, err := c.BatchV1().Jobs(desired.Namespace).Get(t.Context(), desired.Name, k8smetav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotEqual(t, first.UID, second.UID)
+}
+
+func TestGenesisSubmissionKeepsJobThatMayRun(t *testing.T) {
+	running := k8scorev1.PodStatus{Phase: k8scorev1.PodRunning}
+	for name, statuses := range map[string][]k8scorev1.PodStatus{
+		"no Pods yet":         nil,
+		"running":             {running},
+		"unknown":             {{Phase: k8scorev1.PodUnknown}},
+		"just created":        {{Phase: k8scorev1.PodPending}},
+		"creating container":  {blockedPodStatus("ContainerCreating")},
+		"blocked and running": {blockedPodStatus("ImagePullBackOff"), running},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newGenesisJobClient(t)
+			active := addGenesisJobWithPods(t, c, "octelium-genesis-upgrade-active", "octelium", statuses...)
+			_, err := SubmitGenesisJobWithResult(t.Context(), c, testSubmissionJob("1.2.3"), nil)
+			require.ErrorContains(t, err, "still active")
+			assert.Empty(t, jobDeletions(c))
+			current, err := c.BatchV1().Jobs("octelium").Get(t.Context(), active.Name, k8smetav1.GetOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, active.UID, current.UID)
+			_, err = c.BatchV1().Jobs("octelium").Get(t.Context(), submissionJobName, k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+		})
+	}
+}
+
+func TestGenesisSubmissionKeepsFinishedJobWithBlockedPod(t *testing.T) {
+	c := newGenesisJobClient(t)
+	finished := addGenesisJobWithPods(t, c, "octelium-genesis-upgrade-done", "octelium", blockedPodStatus("ImagePullBackOff"))
+	finished.Status.Active = 0
+	finished.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: k8scorev1.ConditionTrue}}
+	require.NoError(t, c.Tracker().Update(batchv1.SchemeGroupVersion.WithResource("jobs"), finished, finished.Namespace))
+	_, err := SubmitGenesisJobWithResult(t.Context(), c, testSubmissionJob("1.2.3"), nil)
+	require.ErrorContains(t, err, "may still be running")
+	assert.Empty(t, jobDeletions(c))
+}
+
+func changeJobAfterInspection(t *testing.T, c *fakek8s.Clientset, job *batchv1.Job, change func(*batchv1.Job)) {
+	t.Helper()
+	changed := false
+	c.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if !changed && action.GetNamespace() == job.Namespace {
+			changed = true
+			current := job.DeepCopy()
+			change(current)
+			require.NoError(t, c.Tracker().Update(batchv1.SchemeGroupVersion.WithResource("jobs"), current, current.Namespace))
+		}
+		return false, nil, nil
+	})
+}
+
+func TestGenesisSubmissionBlockedJobRemovalFailures(t *testing.T) {
+	denied := k8serr.NewForbidden(batchv1.Resource("jobs"), "job", pkgerrors.New("denied"))
+	for _, tc := range []struct {
+		name    string
+		prepare func(*fakek8s.Clientset, *batchv1.Job)
+		check   func(*testing.T, error)
+		removed bool
+	}{
+		{
+			name: "job list denied",
+			prepare: func(c *fakek8s.Clientset, _ *batchv1.Job) {
+				c.PrependReactor("list", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, denied })
+			},
+			check: func(t *testing.T, err error) { require.ErrorIs(t, err, denied) },
+		},
+		{
+			name: "pod list denied",
+			prepare: func(c *fakek8s.Clientset, _ *batchv1.Job) {
+				c.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, denied })
+			},
+			check: func(t *testing.T, err error) { require.ErrorIs(t, err, denied) },
+		},
+		{
+			name: "delete denied",
+			prepare: func(c *fakek8s.Clientset, _ *batchv1.Job) {
+				c.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, denied })
+			},
+			check: func(t *testing.T, err error) {
+				require.ErrorIs(t, err, denied)
+				require.ErrorContains(t, err, "Could not remove the genesis Job")
+			},
+		},
+		{
+			name: "job changed after inspection",
+			prepare: func(c *fakek8s.Clientset, job *batchv1.Job) {
+				changeJobAfterInspection(t, c, job, func(job *batchv1.Job) { job.ResourceVersion = "2" })
+			},
+			check: func(t *testing.T, err error) { require.ErrorContains(t, err, "The resource changed") },
+		},
+		{
+			name: "job replaced after inspection",
+			prepare: func(c *fakek8s.Clientset, job *batchv1.Job) {
+				changeJobAfterInspection(t, c, job, func(job *batchv1.Job) { job.UID = types.UID(uuid.NewString()) })
+			},
+			check: func(t *testing.T, err error) { require.ErrorContains(t, err, "The resource was replaced") },
+		},
+		{
+			name: "job never disappears",
+			prepare: func(c *fakek8s.Clientset, _ *batchv1.Job) {
+				c.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, nil })
+			},
+			check: func(t *testing.T, err error) { require.ErrorIs(t, err, context.DeadlineExceeded) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newGenesisJobClient(t)
+			blocked := addGenesisJobWithPods(t, c, "octelium-genesis-upgrade-typo", "octelium", blockedPodStatus("ImagePullBackOff"))
+			tc.prepare(c, blocked)
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			_, err := SubmitGenesisJobWithResult(ctx, c, testSubmissionJob("1.2.3"), nil)
+			tc.check(t, err)
+			_, err = c.BatchV1().Jobs("octelium").Get(t.Context(), blocked.Name, k8smetav1.GetOptions{})
+			require.NoError(t, err)
+			_, err = c.BatchV1().Jobs("octelium").Get(t.Context(), submissionJobName, k8smetav1.GetOptions{})
+			assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+		})
+	}
+}
+
 func TestBootstrapReplacementIsRefused(t *testing.T) {
 	c := newGenesisJobClient(t)
 	o := &Opts{K8sC: c, ClusterDomain: "original.example"}

@@ -401,6 +401,99 @@ func TestConflictingGenesisCommandsE2E(t *testing.T) {
 	}
 }
 
+func newBlockedGenesisJob(t *testing.T, name, namespace string) (*batchv1.Job, *k8scorev1.Pod) {
+	t.Helper()
+	labels := map[string]string{"octelium.com/component": "genesis"}
+	job := &batchv1.Job{
+		ObjectMeta: k8smetav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID(uuid.NewString()), ResourceVersion: "1", Labels: labels},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	pod := &k8scorev1.Pod{
+		ObjectMeta: k8smetav1.ObjectMeta{
+			Name: name + "-worker", Namespace: namespace, Labels: labels,
+			OwnerReferences: []k8smetav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: name, UID: job.UID, Controller: new(true)}},
+		},
+		Status: k8scorev1.PodStatus{Phase: k8scorev1.PodPending, ContainerStatuses: []k8scorev1.ContainerStatus{
+			{Name: "genesis", State: k8scorev1.ContainerState{Waiting: &k8scorev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "manifest unknown"}}},
+		}},
+	}
+	return job, pod
+}
+
+func collectGenesisJobPods(t *testing.T, c *fake.Clientset, pod *k8scorev1.Pod) {
+	t.Helper()
+	c.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.(k8stesting.DeleteAction).GetName() == pod.OwnerReferences[0].Name {
+			assert.NoError(t, c.Tracker().Delete(k8scorev1.SchemeGroupVersion.WithResource("pods"), pod.Namespace, pod.Name))
+		}
+		return false, nil, nil
+	})
+}
+
+func TestBlockedGenesisJobIsReplacedE2E(t *testing.T) {
+	for _, args := range [][]string{
+		{"upgrade", "example.com", "--version=2.0.0"},
+		{"install-package", "example.com", "--package=octeliumee", "--version=2.0.0"},
+		{"install-package", "example.com", "--package=cordium", "--upgrade", "--version=2.0.0"},
+	} {
+		for _, namespace := range []string{"default", "octelium"} {
+			t.Run(strings.Join(args, " ")+"/"+namespace, func(t *testing.T) {
+				blocked, pod := newBlockedGenesisJob(t, "octelium-genesis-upgrade-typo", namespace)
+				c, config := newTestKubernetes(t, blocked, pod)
+				collectGenesisJobPods(t, c, pod)
+				out, err := executeTestCommand(t, t.Context(), append(slices.Clone(args), "--kubeconfig="+config)...)
+				require.NoError(t, err)
+				assert.Contains(t, out, "Removing the genesis Job "+namespace+"/"+blocked.Name)
+				assert.Contains(t, out, "started")
+				_, err = c.BatchV1().Jobs(namespace).Get(t.Context(), blocked.Name, k8smetav1.GetOptions{})
+				assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+				_, err = c.CoreV1().Pods(namespace).Get(t.Context(), pod.Name, k8smetav1.GetOptions{})
+				assert.True(t, k8serr.IsNotFound(err), "%+v", err)
+				jobs, err := c.BatchV1().Jobs("octelium").List(t.Context(), k8smetav1.ListOptions{})
+				require.NoError(t, err)
+				require.Len(t, jobs.Items, 1)
+				assert.Contains(t, jobs.Items[0].Spec.Template.Spec.Containers[0].Image, ":2.0.0")
+			})
+		}
+	}
+}
+
+func TestBlockedInitializationIsReplacedE2E(t *testing.T) {
+	blocked, pod := newBlockedGenesisJob(t, "octelium-genesis", "default")
+	c, config := newTestKubernetes(t, blocked, pod)
+	collectGenesisJobPods(t, c, pod)
+	c.PrependReactor("update", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		assert.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("admin-token")}}))
+		job := action.(k8stesting.UpdateAction).GetObject().(*batchv1.Job)
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	out, err := executeTestCommand(t, ctx, "init", "example.com", "--bootstrap="+newTestBootstrap(t), "--kubeconfig="+config, "--version=1.2.3")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Removing the genesis Job default/octelium-genesis")
+	job, err := c.BatchV1().Jobs("default").Get(ctx, "octelium-genesis", k8smetav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotEqual(t, blocked.UID, job.UID)
+	assert.Contains(t, job.Spec.Template.Spec.Containers[0].Image, "octelium-genesis:1.2.3")
+}
+
+func TestActiveGenesisJobIsNotReplacedE2E(t *testing.T) {
+	active, pod := newBlockedGenesisJob(t, "octelium-genesis-upgrade-active", "octelium")
+	pod.Status = k8scorev1.PodStatus{Phase: k8scorev1.PodRunning}
+	c, config := newTestKubernetes(t, active, pod)
+	_, err := executeTestCommand(t, t.Context(), "upgrade", "example.com", "--version=2.0.0", "--kubeconfig="+config)
+	require.ErrorContains(t, err, "still active")
+	jobs, err := c.BatchV1().Jobs("octelium").List(t.Context(), k8smetav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, jobs.Items, 1)
+	assert.Equal(t, active.UID, jobs.Items[0].UID)
+	for _, action := range c.Actions() {
+		assert.NotEqual(t, "delete", action.GetVerb())
+	}
+}
+
 func TestCertificateCommandsE2E(t *testing.T) {
 	for _, name := range []string{"certificate", "cert", "crt"} {
 		for _, namespace := range []string{"", "engineering"} {

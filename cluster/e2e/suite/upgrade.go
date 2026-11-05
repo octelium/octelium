@@ -35,6 +35,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
+	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -518,7 +520,11 @@ func upgradeDisruptions() []upgradeDisruption {
 			name:  "GenesisUpgrade",
 			drops: true,
 			run: func(t *testing.T, e *upgradeEnv) time.Duration {
-				return e.h.UpgradeCluster(t)
+				blocked := createBlockedGenesisJob(t, e.h)
+				upgraded := e.h.UpgradeCluster(t)
+				_, err := e.h.K8sC().BatchV1().Jobs(blocked.Namespace).Get(t.Context(), blocked.Name, k8smetav1.GetOptions{})
+				require.True(t, k8serr.IsNotFound(err), "The blocked genesis Job was not removed: %+v", err)
+				return upgraded
 			},
 		},
 	}

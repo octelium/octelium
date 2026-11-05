@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -516,6 +517,75 @@ func genesisJobFinished(job *batchv1.Job) bool {
 	return false
 }
 
+var genesisImageFailures = []string{"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
+
+func genesisPodCannotStart(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodPending {
+		return false
+	}
+	blocked := false
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse && condition.Reason == corev1.PodReasonUnschedulable {
+			blocked = true
+		}
+	}
+	for _, containers := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, container := range containers {
+			if container.State.Running != nil || container.State.Terminated != nil || container.LastTerminationState.Terminated != nil {
+				return false
+			}
+			if state := container.State.Waiting; state != nil && slices.Contains(genesisImageFailures, state.Reason) {
+				blocked = true
+			}
+		}
+	}
+	return blocked
+}
+
+func genesisJobCannotStart(job *batchv1.Job, pods []corev1.Pod) bool {
+	blocked := false
+	for i := range pods {
+		pod := &pods[i]
+		owner := metav1.GetControllerOf(pod)
+		if owner == nil || owner.UID != job.UID || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		if !genesisPodCannotStart(pod) {
+			return false
+		}
+		blocked = true
+	}
+	return blocked
+}
+
+func removeBlockedGenesisJobs(ctx context.Context, c kubernetes.Interface) error {
+	for _, namespace := range []string{"default", octeliumNS} {
+		jobs, err := k8sretry.Read(ctx, func(ctx context.Context) (*batchv1.JobList, error) {
+			return c.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{LabelSelector: "octelium.com/component=genesis"})
+		})
+		if err != nil {
+			return err
+		}
+		pods, err := k8sretry.Read(ctx, func(ctx context.Context) (*corev1.PodList, error) {
+			return c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "octelium.com/component=genesis"})
+		})
+		if err != nil {
+			return err
+		}
+		for i := range jobs.Items {
+			job := &jobs.Items[i]
+			if genesisJobFinished(job) || !genesisJobCannotStart(job, pods.Items) {
+				continue
+			}
+			cliutils.LineWarn("Removing the genesis Job %s/%s that cannot start: %s\n", job.Namespace, job.Name, genesisPodStatus(ctx, c, job))
+			if err := removeGenesisJob(ctx, c, job); err != nil {
+				return errors.Wrapf(err, "Could not remove the genesis Job %s/%s that cannot start", job.Namespace, job.Name)
+			}
+		}
+	}
+	return nil
+}
+
 func checkGenesisJobs(ctx context.Context, c kubernetes.Interface, own *batchv1.Job) error {
 	for _, namespace := range []string{"default", octeliumNS} {
 		jobs, err := k8sretry.Read(ctx, func(ctx context.Context) (*batchv1.JobList, error) {
@@ -572,6 +642,9 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 	sum := sha256.Sum256(data)
 	hash := hex.EncodeToString(sum[:])
 	jobs := c.BatchV1().Jobs(desired.Namespace)
+	if err := removeBlockedGenesisJobs(ctx, c); err != nil {
+		return nil, err
+	}
 	if prepare == nil {
 		if err := checkGenesisJobs(ctx, c, nil); err != nil {
 			return nil, err
@@ -618,23 +691,7 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 		if err := checkGenesisJobs(ctx, c, nil); err != nil {
 			return nil, err
 		}
-		uid := job.UID
-		if err := deleteGenesisJob(ctx, c, job, new(metav1.DeletePropagationForeground)); err != nil {
-			return nil, err
-		}
-		if err := k8sretry.Wait(ctx, 100*time.Millisecond, 15*time.Second, func(ctx context.Context) (bool, error) {
-			current, err := jobs.Get(ctx, desired.Name, metav1.GetOptions{})
-			if k8serr.IsNotFound(err) {
-				return true, nil
-			}
-			if err != nil {
-				return false, err
-			}
-			if current.UID != uid {
-				return false, errors.Errorf("Another genesis Job replaced the completed operation. Retry the command")
-			}
-			return false, nil
-		}); err != nil {
+		if err := removeGenesisJob(ctx, c, job); err != nil {
 			return nil, err
 		}
 		job, err = nil, k8serr.NewNotFound(batchv1.Resource("jobs"), desired.Name)
@@ -706,6 +763,25 @@ func submitGenesisJob(ctx context.Context, c kubernetes.Interface, desired *batc
 		return err
 	})
 	return job, err
+}
+
+func removeGenesisJob(ctx context.Context, c kubernetes.Interface, job *batchv1.Job) error {
+	if err := deleteGenesisJob(ctx, c, job, new(metav1.DeletePropagationForeground)); err != nil {
+		return err
+	}
+	return k8sretry.Wait(ctx, 100*time.Millisecond, 15*time.Second, func(ctx context.Context) (bool, error) {
+		current, err := c.BatchV1().Jobs(job.Namespace).Get(ctx, job.Name, metav1.GetOptions{})
+		if k8serr.IsNotFound(err) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if current.UID != job.UID {
+			return false, errors.Errorf("Another genesis Job replaced the previous operation. Retry the command")
+		}
+		return false, nil
+	})
 }
 
 func deleteGenesisJob(ctx context.Context, c kubernetes.Interface, job *batchv1.Job, propagation *metav1.DeletionPropagation) error {

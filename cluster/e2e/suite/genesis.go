@@ -33,6 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	batchv1 "k8s.io/api/batch/v1"
+	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -52,6 +53,50 @@ func genesisSecretDigests(t *testing.T, db *sql.DB) map[string]string {
 	}
 	require.NoError(t, rows.Err())
 	return ret
+}
+
+func createBlockedGenesisJob(t *testing.T, h *harness.H) *batchv1.Job {
+	t.Helper()
+	labels := map[string]string{"octelium.com/component": "genesis"}
+	jobs := h.K8sC().BatchV1().Jobs(vutils.K8sNS)
+	job, err := jobs.Create(t.Context(), &batchv1.Job{
+		ObjectMeta: k8smetav1.ObjectMeta{GenerateName: "genesis-blocked-e2e-", Labels: labels},
+		Spec: batchv1.JobSpec{Template: k8scorev1.PodTemplateSpec{
+			ObjectMeta: k8smetav1.ObjectMeta{Labels: labels},
+			Spec: k8scorev1.PodSpec{
+				RestartPolicy: k8scorev1.RestartPolicyNever,
+				Containers: []k8scorev1.Container{{
+					Name: "genesis", Image: "localhost:1/octelium/genesis:missing", ImagePullPolicy: k8scorev1.PullAlways,
+				}},
+			},
+		}},
+	}, k8smetav1.CreateOptions{})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := jobs.Delete(ctx, job.Name, k8smetav1.DeleteOptions{
+			Preconditions: &k8smetav1.Preconditions{UID: &job.UID}, PropagationPolicy: new(k8smetav1.DeletePropagationBackground),
+		})
+		if !k8serr.IsNotFound(err) {
+			assert.NoError(t, err)
+		}
+	})
+	h.Within(t, "the blocked genesis Job to report its image failure", 2*time.Minute, func(ctx context.Context) error {
+		pods, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).List(ctx, k8smetav1.ListOptions{LabelSelector: batchv1.JobNameLabel + "=" + job.Name})
+		if err != nil {
+			return err
+		}
+		for _, pod := range pods.Items {
+			for _, container := range pod.Status.ContainerStatuses {
+				if state := container.State.Waiting; state != nil && (state.Reason == "ErrImagePull" || state.Reason == "ImagePullBackOff") {
+					return nil
+				}
+			}
+		}
+		return errors.Errorf("The Job %s has not reported an image failure yet", job.Name)
+	})
+	return job
 }
 
 func testGenesisInitializationReplay(t *testing.T, h *harness.H) {
