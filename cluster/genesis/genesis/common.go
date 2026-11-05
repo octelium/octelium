@@ -34,6 +34,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	k8scorev1 "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
@@ -127,7 +128,12 @@ func waitGatewayAgentReady(ctx context.Context, k8sC kubernetes.Interface) error
 		return nil
 	}
 	return k8sutils.WaitReadiness(ctx, 2*time.Second, 20000*time.Second, func(ctx context.Context) (bool, error) {
-		return gatewayAgentReadiness(ctx, k8sC)
+		ready, err := gatewayAgentReadiness(ctx, k8sC)
+		if err != nil || ready {
+			return ready, err
+		}
+		_, err = listDataPlaneNodes(ctx, k8sC)
+		return false, err
 	})
 }
 
@@ -137,6 +143,23 @@ func gatewayAgentReadiness(ctx context.Context, k8sC kubernetes.Interface) (bool
 		return false, err
 	}
 	return ds.Status.DesiredNumberScheduled > 0 && k8sutils.IsDaemonSetReady(ds), nil
+}
+
+func listDataPlaneNodes(ctx context.Context, k8sC kubernetes.Interface) (*k8scorev1.NodeList, error) {
+	nodeList, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
+		LabelSelector: vutils.NodeLabelDataPlane + "=",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nodeList.Items) == 0 {
+		return nil, errors.Errorf(
+			"No Kubernetes node is labeled as an Octelium data-plane node. At least one node must be labeled via: kubectl label nodes <NODE_NAME> %s=",
+			vutils.NodeLabelDataPlane)
+	}
+
+	return nodeList, nil
 }
 
 func waitGatewayAgentsRegistered(ctx context.Context, k8sC kubernetes.Interface) error {
@@ -151,17 +174,9 @@ func waitGatewayAgentsRegistered(ctx context.Context, k8sC kubernetes.Interface)
 		if err != nil || !ready {
 			return false, err
 		}
-		nodeList, err := k8sC.CoreV1().Nodes().List(ctx, k8smetav1.ListOptions{
-			LabelSelector: vutils.NodeLabelDataPlane + "=",
-		})
+		nodeList, err := listDataPlaneNodes(ctx, k8sC)
 		if err != nil {
 			return false, err
-		}
-
-		if len(nodeList.Items) == 0 {
-			return false, errors.Errorf(
-				"No Kubernetes node is labeled as an Octelium data-plane node. At least one node must be labeled via: kubectl label nodes <NODE_NAME> %s=",
-				vutils.NodeLabelDataPlane)
 		}
 
 		for _, node := range nodeList.Items {

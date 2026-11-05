@@ -50,6 +50,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -386,6 +387,35 @@ func TestInitializationRejectsExistingRedisE2E(t *testing.T) {
 			f.checkPreserved(t)
 		})
 	}
+}
+
+func TestInitializationRecoversLostRedisClaimE2E(t *testing.T) {
+	f := newInitializationFixture(t)
+	denied := k8serr.NewForbidden(k8scorev1.Resource("secrets"), "init-token", fmt.Errorf("denied"))
+	fail := true
+	f.client.K8sC.(*k8sfake.Clientset).PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if fail && action.(k8stesting.CreateAction).GetObject().(k8smetav1.Object).GetName() == "init-token" {
+			return true, nil, denied
+		}
+		return false, nil, nil
+	})
+	require.ErrorIs(t, f.genesis.RunInit(t.Context(), nil), denied)
+	fail = false
+	owner := f.redis.Get(t.Context(), initializationRedisKey).Val()
+	require.NotEmpty(t, owner)
+
+	require.NoError(t, f.redis.Set(t.Context(), initializationRedisKey, "another-initialization", 0).Err())
+	restarted := &Genesis{k8sC: f.client.K8sC, nadC: f.client.NadC, rscServer: f.genesis.rscServer}
+	require.ErrorContains(t, restarted.RunInit(t.Context(), nil), "belongs to another Cluster initialization")
+
+	require.NoError(t, f.redis.Del(t.Context(), initializationRedisKey).Err())
+	require.NoError(t, f.redis.Set(t.Context(), "rsc:repopulated", "cache", 0).Err())
+	t.Cleanup(func() { f.redis.Del(context.Background(), "rsc:repopulated") })
+	restarted = &Genesis{k8sC: f.client.K8sC, nadC: f.client.NadC, rscServer: f.genesis.rscServer}
+	require.NoError(t, restarted.RunInit(t.Context(), nil))
+	assert.Equal(t, owner, f.redis.Get(t.Context(), initializationRedisKey).Val())
+	_, err := restarted.getInitAuthenticationToken(t.Context())
+	require.NoError(t, err)
 }
 
 func TestInitializationLockE2E(t *testing.T) {

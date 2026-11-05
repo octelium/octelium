@@ -59,6 +59,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	appsv1 "k8s.io/api/apps/v1"
 	k8scorev1 "k8s.io/api/core/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1248,6 +1249,15 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 		return err
 	}
 
+	hasGateway := true
+	if _, err := k8sretry.Read(ctx, func(ctx context.Context) (*appsv1.DaemonSet, error) {
+		return g.k8sC.AppsV1().DaemonSets(vutils.K8sNS).Get(ctx, "octelium-gwagent", k8smetav1.GetOptions{})
+	}); k8serr.IsNotFound(err) {
+		hasGateway = false
+	} else if err != nil {
+		return err
+	}
+
 	for _, item := range nodeList.Items {
 		nodeName := item.Name
 
@@ -1265,7 +1275,7 @@ func (g *Genesis) setDataPlaneNodeTaints(ctx context.Context) error {
 				node.Labels = make(map[string]string)
 			}
 			isRegistered := node.Labels[vutils.NodeLabelGatewayRegistered] == "true"
-			if isRegistered {
+			if isRegistered && hasGateway {
 				return nil
 			}
 
@@ -1796,22 +1806,6 @@ func preflightInitializationStorage(ctx context.Context, bootstrap *cbootstrapv1
 				return errors.New("The primary storage contains existing resources. Use octops upgrade instead of init")
 			}
 		}
-		for _, pattern := range []string{"octelium:*", "rsc:*"} {
-			var cursor uint64
-			for {
-				keys, next, err := redisC.Scan(ctx, cursor, pattern, 100).Result()
-				if err != nil {
-					return err
-				}
-				if len(keys) > 0 {
-					return errors.New("The Redis database contains existing Octelium state. Refusing to reset it")
-				}
-				cursor = next
-				if cursor == 0 {
-					break
-				}
-			}
-		}
-		return nil
+		return checkInitializationRedisEmpty(ctx, redisC)
 	})
 }

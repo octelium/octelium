@@ -748,6 +748,20 @@ func TestGatewayReadinessErrorsAndCancellation(t *testing.T) {
 	assert.Empty(t, c.Actions())
 }
 
+func TestGatewayReadyRequiresDataPlaneNodes(t *testing.T) {
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	ds := readyGatewayDaemonSet()
+	ds.Status = appsv1.DaemonSetStatus{ObservedGeneration: 2}
+	node := registeredGatewayNode("node")
+	node.Labels[vutils.NodeLabelDataPlane] = "true"
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	require.ErrorContains(t, waitGatewayAgentReady(ctx, fakek8s.NewSimpleClientset(ds, node)), "No Kubernetes node is labeled")
+	require.NoError(t, ctx.Err())
+}
+
 func TestGatewayReadinessHTTP(t *testing.T) {
 	previous := ldflags.TestMode
 	ldflags.TestMode = "false"

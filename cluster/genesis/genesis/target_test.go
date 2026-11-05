@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
@@ -379,6 +380,25 @@ func TestUpgradeTargetMismatchPreservesClusterE2E(t *testing.T) {
 			assert.Equal(t, owner, currentOwner)
 		})
 	}
+}
+
+func TestUpgradeAfterClusterConfigAppliedWithoutAnnotationsE2E(t *testing.T) {
+	f := newInitializationFixture(t)
+	require.NoError(t, f.genesis.RunInit(t.Context(), nil))
+	cc, err := f.genesis.octeliumC.CoreV1Utils().GetClusterConfig(t.Context())
+	require.NoError(t, err)
+	require.NotEmpty(t, cc.Metadata.Annotations[initializationIDKey])
+	_, err = admin.NewServer(&admin.Opts{OcteliumC: f.genesis.octeliumC, IsEmbedded: true}).UpdateClusterConfig(t.Context(), &corev1.ClusterConfig{
+		Kind:       cc.Kind,
+		ApiVersion: cc.ApiVersion,
+		Metadata:   &metav1.Metadata{Name: "default"},
+		Spec:       cc.Spec,
+	})
+	require.NoError(t, err)
+	cc, err = f.genesis.octeliumC.CoreV1Utils().GetClusterConfig(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, cc.Metadata.Annotations[initializationIDKey])
+	require.NoError(t, f.genesis.RunUpgrade(t.Context(), nil))
 }
 
 func TestCopiedKubernetesInstallationRejectedE2E(t *testing.T) {

@@ -360,17 +360,7 @@ func getInitializationResource(ctx context.Context, db *sql.DB, kind, name strin
 	return pbutils.UnmarshalJSON(data, out)
 }
 
-func claimInitializationRedis(ctx context.Context, c *redis.Client, id string) error {
-	owner, err := c.Get(ctx, initializationRedisKey).Result()
-	if err == nil {
-		if owner != id {
-			return errors.Errorf("The Redis database belongs to another Cluster initialization")
-		}
-		return nil
-	} else if !errors.Is(err, redis.Nil) {
-		return err
-	}
-
+func checkInitializationRedisEmpty(ctx context.Context, c *redis.Client) error {
 	for _, pattern := range []string{"octelium:*", "rsc:*"} {
 		var cursor uint64
 		for {
@@ -385,6 +375,25 @@ func claimInitializationRedis(ctx context.Context, c *redis.Client, id string) e
 			if cursor == 0 {
 				break
 			}
+		}
+	}
+	return nil
+}
+
+func claimInitializationRedis(ctx context.Context, c *redis.Client, id string, isOwner bool) error {
+	owner, err := c.Get(ctx, initializationRedisKey).Result()
+	if err == nil {
+		if owner != id {
+			return errors.Errorf("The Redis database belongs to another Cluster initialization")
+		}
+		return nil
+	} else if !errors.Is(err, redis.Nil) {
+		return err
+	}
+
+	if !isOwner {
+		if err := checkInitializationRedisEmpty(ctx, c); err != nil {
+			return err
 		}
 	}
 	claimed, err := c.SetNX(ctx, initializationRedisKey, id, 0).Result()
@@ -421,7 +430,7 @@ func initializeClusterResources(ctx context.Context, srv *rscserver.Server, init
 		return nil, errors.Errorf("The primary storage belongs to an existing Cluster. Use octops upgrade instead of init")
 	}
 
-	if err := claimInitializationRedis(ctx, srv.GetRedisC(), init.id); err != nil {
+	if err := claimInitializationRedis(ctx, srv.GetRedisC(), init.id, cc.GetMetadata() != nil); err != nil {
 		return nil, err
 	}
 	if cc.GetMetadata() == nil {

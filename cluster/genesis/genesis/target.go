@@ -96,7 +96,8 @@ func (g *Genesis) validateUpgradeTarget(ctx context.Context, input *LoadedCluste
 	}
 	state, err := g.getK8sSecret(ctx, vutils.K8sNS, initializationSecretName)
 	if err == nil {
-		if id := string(state.Data["id"]); id == "" || id != cc.Metadata.Annotations[initializationIDKey] {
+		id, owner := string(state.Data["id"]), cc.Metadata.Annotations[initializationIDKey]
+		if id == "" || (owner != "" && owner != id) {
 			return errors.Errorf("The primary storage belongs to another Cluster initialization")
 		}
 		if err := g.validateInitializationNamespace(ctx, state); err != nil {

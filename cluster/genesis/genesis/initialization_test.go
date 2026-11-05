@@ -432,12 +432,33 @@ func TestInitializationPreservesRegisteredNodes(t *testing.T) {
 	ldflags.TestMode = "false"
 	t.Cleanup(func() { ldflags.TestMode = previous })
 	node := &k8scorev1.Node{ObjectMeta: k8smetav1.ObjectMeta{Name: "gateway", Labels: map[string]string{vutils.NodeLabelDataPlane: "", vutils.NodeLabelGatewayRegistered: "true"}}}
-	c := fakek8s.NewSimpleClientset(node)
+	c := fakek8s.NewSimpleClientset(node, readyGatewayDaemonSet())
 	g := &Genesis{k8sC: c}
 	require.NoError(t, g.setDataPlaneNodeTaints(t.Context()))
 	updated, err := c.CoreV1().Nodes().Get(t.Context(), node.Name, k8smetav1.GetOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, node, updated)
+	for _, action := range c.Actions() {
+		assert.NotEqual(t, "update", action.GetVerb())
+	}
+}
+
+func TestInitializationResetsStaleGatewayRegistration(t *testing.T) {
+	previous := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() { ldflags.TestMode = previous })
+	node := &k8scorev1.Node{ObjectMeta: k8smetav1.ObjectMeta{Name: "gateway", Labels: map[string]string{vutils.NodeLabelDataPlane: "", vutils.NodeLabelGatewayRegistered: "true", "custom": "preserved"}}}
+	c := fakek8s.NewSimpleClientset(node)
+	g := &Genesis{k8sC: c}
+	require.NoError(t, g.setDataPlaneNodeTaints(t.Context()))
+	updated, err := c.CoreV1().Nodes().Get(t.Context(), node.Name, k8smetav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotContains(t, updated.Labels, vutils.NodeLabelGatewayRegistered)
+	assert.Equal(t, "preserved", updated.Labels["custom"])
+	require.Len(t, updated.Spec.Taints, 1)
+	assert.Equal(t, vutils.NodeTaintGatewayInit, updated.Spec.Taints[0].Key)
+	c.ClearActions()
+	require.NoError(t, g.setDataPlaneNodeTaints(t.Context()))
 	for _, action := range c.Actions() {
 		assert.NotEqual(t, "update", action.GetVerb())
 	}
