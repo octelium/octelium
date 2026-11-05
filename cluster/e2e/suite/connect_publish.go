@@ -149,6 +149,7 @@ func newClientServedService(t *testing.T, h *harness.H, port int) *corev1.Servic
 		},
 		Spec: &corev1.Service_Spec{
 			Mode: corev1.Service_Spec_HTTP,
+			Port: 80,
 			Config: &corev1.Service_Spec_Config{
 				Upstream: &corev1.Service_Spec_Config_Upstream{
 					Type: &corev1.Service_Spec_Config_Upstream_Url{

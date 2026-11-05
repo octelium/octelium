@@ -66,8 +66,14 @@ spec:
         env:
           - name: discovery.type
             value: single-node
-          - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
-            value: Password_123456
+          - name: node.store.allow_mmap
+            value: "false"
+          - name: OPENSEARCH_JAVA_OPTS
+            value: -Xms512m -Xmx512m
+          - name: DISABLE_INSTALL_DEMO_CONFIG
+            value: "true"
+          - name: DISABLE_SECURITY_PLUGIN
+            value: "true"
 ---
 kind: Service
 metadata:

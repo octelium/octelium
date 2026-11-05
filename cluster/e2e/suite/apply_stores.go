@@ -17,10 +17,11 @@
 package suite
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -28,12 +29,14 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/elastic/go-elasticsearch/v9"
+	"github.com/go-resty/resty/v2"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/nats-io/nats.go"
+	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
+	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,23 +108,36 @@ func applyNATS(t *testing.T, a *applyCtx) {
 func applyOpenSearch(t *testing.T, a *applyCtx) {
 	a.h.MustWaitServiceUpstream(t, "opensearch")
 
-	c, err := elasticsearch.NewClient(elasticsearch.Config{
-		Addresses:  []string{a.url("opensearch")},
-		Username:   "admin",
-		Password:   "Password_123456",
-		MaxRetries: 20,
-	})
+	c := a.h.HTTPNoRetry().SetBaseURL(a.url("opensearch")).
+		SetHeader("Content-Type", "application/json")
+	t.Cleanup(c.GetClient().CloseIdleConnections)
+
+	a.h.Eventually(t, "OpenSearch to serve its API", harness.DeploymentBudget,
+		func(ctx context.Context) error {
+			body, err := openSearchRequest(ctx, c, http.MethodGet, "/", nil, http.StatusOK)
+			if err != nil {
+				return err
+			}
+			var info struct {
+				Version struct {
+					Distribution string `json:"distribution"`
+				} `json:"version"`
+			}
+			if err := json.Unmarshal(body, &info); err != nil {
+				return err
+			}
+			if info.Version.Distribution != "opensearch" {
+				return errors.Errorf("Unexpected OpenSearch info: %s", body)
+			}
+			return nil
+		})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+
+	idx := "octelium-" + a.h.Name()
+	_, err := openSearchRequest(ctx, c, http.MethodPut, "/"+idx, nil, http.StatusOK)
 	require.Nil(t, err)
-
-	resI, err := c.Info()
-	require.Nil(t, err)
-	defer resI.Body.Close()
-
-	zap.L().Debug("OpenSearch info", zap.String("info", drainBody(t, resI.Body)))
-
-	const idx = "octelium-index"
-	_, err = c.Indices.Create(idx)
-	assert.Nil(t, err)
 
 	type myDoc struct {
 		ID    int    `json:"id"`
@@ -136,14 +152,39 @@ func applyOpenSearch(t *testing.T, a *applyCtx) {
 			Price: utilrand.GetRandomRangeMath(1, 4000),
 		}
 
-		docJSON, err := json.Marshal(doc)
+		path := fmt.Sprintf("/%s/_doc/%d", idx, doc.ID)
+		_, err := openSearchRequest(ctx, c, http.MethodPut, path, doc, http.StatusCreated)
 		require.Nil(t, err)
 
-		_, err = c.Index(idx, bytes.NewReader(docJSON), c.Index.WithContext(t.Context()))
-		assert.Nil(t, err)
+		body, err := openSearchRequest(ctx, c, http.MethodGet, path, nil, http.StatusOK)
+		require.Nil(t, err)
+
+		var got struct {
+			Found  bool  `json:"found"`
+			Source myDoc `json:"_source"`
+		}
+		require.Nil(t, json.Unmarshal(body, &got))
+		assert.True(t, got.Found)
+		assert.Equal(t, *doc, got.Source)
 	}
 
+	_, err = openSearchRequest(ctx, c, http.MethodDelete, "/"+idx, nil, http.StatusOK)
+	require.Nil(t, err)
+
 	a.h.MustRun(t, "octeliumctl del svc opensearch")
+}
+
+func openSearchRequest(ctx context.Context, c *resty.Client,
+	method, path string, body any, want int) ([]byte, error) {
+	res, err := c.R().SetContext(ctx).SetBody(body).Execute(method, path)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode() != want {
+		return nil, errors.Errorf("OpenSearch %s %s returned status %d, want %d: %s",
+			method, path, res.StatusCode(), want, res.String())
+	}
+	return res.Body(), nil
 }
 
 func applyClickHouse(t *testing.T, a *applyCtx) {

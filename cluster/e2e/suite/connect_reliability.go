@@ -135,6 +135,8 @@ func testConnectReliabilityLocalDNSAcrossAPIRestarts(t *testing.T, h *harness.H)
 			fmt.Sprintf("--localdns-addr %s", listen)},
 	})
 
+	requireClusterDNSViaTunnel(t, h)
+
 	c := h.DNSClientAt(listen)
 	waitLocalDNSAddrs(t, h, c, fqdn, dns.TypeA, want)
 
