@@ -1083,7 +1083,6 @@ func TestDNSConfigWatch(t *testing.T) {
 	initCancel()
 	s, err := Initialize(initCtx, &tstDNSClusterClient{ClientInterface: tst.C.OcteliumC, cc: cc})
 	require.Nil(t, err)
-	require.Nil(t, s.ccCtl.Run(ctx))
 
 	cc.Spec.Dns = &corev1.ClusterConfig_Spec_DNS{
 		FallbackZone: &corev1.ClusterConfig_Spec_DNS_Zone{Servers: []string{"192.0.2.1"}},
@@ -1093,6 +1092,7 @@ func TestDNSConfigWatch(t *testing.T) {
 	}
 	cc, err = tst.C.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
 	require.Nil(t, err)
+	require.Nil(t, s.ccCtl.Run(ctx))
 	require.Eventually(t, func() bool {
 		zone := s.getDNSZone("www.example.net.")
 		return zone.upstreams[0].host == "192.0.2.2"

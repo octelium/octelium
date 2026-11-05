@@ -23,6 +23,8 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/watchers"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
@@ -53,17 +55,34 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface, o *Opts) (*Co
 
 func (c *Controller) Run(ctx context.Context) error {
 
-	return watchers.NewCoreV1(c.octeliumC).ClusterConfig(ctx, nil, func(ctx context.Context, new, old *corev1.ClusterConfig) error {
+	initial := c.Get()
+	onUpdate := func(ctx context.Context, new, old umetav1.ResourceObjectI) error {
+		cc := new.(*corev1.ClusterConfig)
 		c.mu.Lock()
-		c.cc = pbutils.Clone(new).(*corev1.ClusterConfig)
+		c.cc = pbutils.Clone(cc).(*corev1.ClusterConfig)
 		c.mu.Unlock()
 
 		if c.opts != nil && c.opts.OnUpdate != nil {
-			return c.opts.OnUpdate(ctx, new, old)
+			return c.opts.OnUpdate(ctx, cc, old.(*corev1.ClusterConfig))
 		}
 
 		return nil
-	})
+	}
+	watcher, err := watchers.NewWatcher(ucorev1.API, ucorev1.Version, ucorev1.KindClusterConfig,
+		func(ctx context.Context, item umetav1.ResourceObjectI) error {
+			if item.GetMetadata().GetUid() != initial.Metadata.Uid || pbutils.IsEqual(item, initial) {
+				return nil
+			}
+			return onUpdate(ctx, item, pbutils.Clone(initial).(*corev1.ClusterConfig))
+		},
+		onUpdate, nil, c.octeliumC.CoreC(), func() (umetav1.ResourceObjectI, error) {
+			return &corev1.ClusterConfig{}, nil
+		},
+	)
+	if err != nil {
+		return err
+	}
+	return watcher.Run(ctx)
 }
 
 func (c *Controller) Get() *corev1.ClusterConfig {

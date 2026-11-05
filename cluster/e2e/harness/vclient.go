@@ -271,6 +271,11 @@ func (c *VClient) recvLoop(ctx context.Context, stream userv1.MainService_Connec
 			break
 		}
 
+		if err := c.readGate.wait(ctx); err != nil {
+			streamErr = err
+			break
+		}
+
 		if c.handleEvent(msg) {
 			streamErr = errServerDisconnect
 			break

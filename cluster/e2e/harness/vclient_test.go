@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -611,6 +612,67 @@ func TestVClientPauseReading(t *testing.T) {
 	waitFor(t, "the buffered events after resuming", 5*time.Second, func() bool {
 		return c.EventCount(EventUpdateDNS) == 3
 	})
+}
+
+type fakeConnectClient struct {
+	userv1.MainService_ConnectClient
+	ctx    context.Context
+	events <-chan *userv1.ConnectResponse
+}
+
+func (c *fakeConnectClient) Recv() (*userv1.ConnectResponse, error) {
+	select {
+	case <-c.ctx.Done():
+		return nil, c.ctx.Err()
+	case msg := <-c.events:
+		return msg, nil
+	}
+}
+
+func TestVClientPausePendingRead(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		resume bool
+	}{
+		{name: "Resume", resume: true},
+		{name: "Cancel"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				events := make(chan *userv1.ConnectResponse, 3)
+				stream := &fakeConnectClient{ctx: ctx, events: events}
+				c := NewVClient(nil, nil, VClientOpts{})
+				c.done = make(chan struct{})
+				go c.recvLoop(ctx, stream, c.done)
+				synctest.Wait()
+
+				c.PauseReading()
+				for range 3 {
+					events <- &userv1.ConnectResponse{
+						Event: &userv1.ConnectResponse_UpdateDNS_{UpdateDNS: &userv1.ConnectResponse_UpdateDNS{}},
+					}
+				}
+				synctest.Wait()
+				assert.Zero(t, c.EventCount(EventUpdateDNS))
+
+				if tc.resume {
+					c.ResumeReading()
+					synctest.Wait()
+					assert.Equal(t, 3, c.EventCount(EventUpdateDNS))
+				}
+				cancel()
+				synctest.Wait()
+				select {
+				case <-c.Done():
+				default:
+					t.Fatal("The paused client did not stop")
+				}
+				assert.ErrorIs(t, c.StreamErr(), context.Canceled)
+			})
+		})
+	}
 }
 
 func TestVConnPoolSharing(t *testing.T) {

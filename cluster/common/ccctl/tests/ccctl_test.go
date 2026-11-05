@@ -278,6 +278,53 @@ func TestRunDoesNotShareUpdatedClusterConfig(t *testing.T) {
 	assert.True(t, proto.Equal(cc, c.Get()))
 }
 
+func TestRunReconcilesInitialClusterConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		withOpts bool
+	}{
+		{name: "WithOpts", withOpts: true},
+		{name: "WithoutOpts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			initial := &corev1.ClusterConfig{
+				Metadata: &metav1.Metadata{Name: "default", Uid: "cluster-config", ResourceVersion: "initial"},
+				Status:   &corev1.ClusterConfig_Status{Domain: "example.com"},
+			}
+			cc := proto.Clone(initial).(*corev1.ClusterConfig)
+			cc.Metadata.ResourceVersion = "updated"
+			cc.Metadata.LastResourceVersion = initial.Metadata.ResourceVersion
+			cc.Status.Domain = "updated.example.com"
+			client := &tstClusterConfigClient{cc: initial, events: make(chan *rmetav1.WatchEvent, 1)}
+			client.events <- &rmetav1.WatchEvent{
+				Event: &rmetav1.WatchEvent_Event{
+					Type: &rmetav1.WatchEvent_Event_Create_{
+						Create: &rmetav1.WatchEvent_Event_Create{Item: pbutils.MessageToAnyMust(cc)},
+					},
+				},
+			}
+			updates := &tstClusterConfigUpdates{}
+			var opts *ccctl.Opts
+			if tc.withOpts {
+				opts = &ccctl.Opts{OnUpdate: updates.onUpdate}
+			}
+			c, err := ccctl.New(ctx, client, opts)
+			require.Nil(t, err)
+			require.Nil(t, c.Run(ctx))
+
+			require.Eventually(t, func() bool { return proto.Equal(cc, c.Get()) }, 5*time.Second, 50*time.Millisecond)
+			if tc.withOpts {
+				require.Eventually(t, func() bool { return len(updates.get()) == 1 }, 5*time.Second, 50*time.Millisecond)
+				assert.True(t, proto.Equal(cc, updates.get()[0][0]))
+				assert.True(t, proto.Equal(initial, updates.get()[0][1]))
+			}
+		})
+	}
+}
+
 func TestRunIgnoresUnchangedInitialClusterConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

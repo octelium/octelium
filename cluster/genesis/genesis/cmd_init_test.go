@@ -352,6 +352,7 @@ func TestRunInitNodesReadiness(t *testing.T) {
 
 func TestRunInit(t *testing.T) {
 	reserveInitializationRedis(t)
+	t.Setenv("OCTELIUM_DOMAIN", "example.com")
 	t.Setenv("OCTELIUM_REGION_NAME", "default")
 
 	ldflags.TestMode = "true"
@@ -405,7 +406,7 @@ func TestRunInit(t *testing.T) {
 		assert.Nil(t, err)
 
 		err = g.RunInit(ctx, nil)
-		assert.Nil(t, err, "%+v", err)
+		require.Nil(t, err, "%+v", err)
 		t.Cleanup(func() {
 			if g.rscServer != nil {
 				g.rscServer.Stop()
