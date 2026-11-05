@@ -33,7 +33,7 @@ require (
 	golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	golang.zx2c4.com/wireguard/windows v1.1.1
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	gvisor.dev/gvisor v0.0.0-20261103030936-1899f71d79be
 )
@@ -78,7 +78,7 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 

@@ -11,13 +11,13 @@ require (
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/zap v1.28.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )
 
 require (
 	cel.dev/cel-go v0.32.0 // indirect
-	cel.dev/expr v0.25.2 // indirect
+	cel.dev/expr v0.25.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/agnivade/levenshtein v1.2.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
