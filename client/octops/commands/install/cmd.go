@@ -87,13 +87,7 @@ func setInitialAuthToken(o *Opts, secret *k8scorev1.Secret) error {
 	authToken := string(secret.Data["data"])
 
 	if o.AuthTokenSavePath != "" {
-		dir := filepath.Dir(o.AuthTokenSavePath)
-
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return err
-		}
-
-		if err := os.WriteFile(o.AuthTokenSavePath, []byte(authToken), 0600); err != nil {
+		if err := saveAuthToken(o.AuthTokenSavePath, authToken); err != nil {
 			return err
 		}
 	}
@@ -113,6 +107,31 @@ func setInitialAuthToken(o *Opts, secret *k8scorev1.Secret) error {
 	}
 
 	return nil
+}
+
+func saveAuthToken(path, authToken string) error {
+	dir := filepath.Dir(path)
+
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+
+	file, err := os.CreateTemp(dir, ".octelium-init-token-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+
+	if _, err := file.WriteString(authToken); err != nil {
+		file.Close()
+		return err
+	}
+
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(file.Name(), path)
 }
 
 func printClusterMsgs() {

@@ -182,6 +182,41 @@ func TestGetKubeConfigFilePath(t *testing.T) {
 	})
 }
 
+func TestBuildConfigFromKubeConfigList(t *testing.T) {
+	clusters := path.Join(t.TempDir(), "clusters")
+	users := path.Join(t.TempDir(), "users")
+	require.NoError(t, os.WriteFile(clusters, []byte(`apiVersion: v1
+kind: Config
+current-context: merged
+clusters:
+- name: cluster-1
+  cluster:
+    server: https://merged.example.com
+contexts:
+- name: merged
+  context:
+    cluster: cluster-1
+    user: user-1
+`), 0600))
+	require.NoError(t, os.WriteFile(users, []byte(`apiVersion: v1
+kind: Config
+users:
+- name: user-1
+  user:
+    token: merged-token
+`), 0600))
+	t.Setenv("KUBECONFIG", strings.Join([]string{clusters, users}, string(os.PathListSeparator)))
+
+	cfg, err := BuildConfigFromFlags("", "")
+	require.NoError(t, err)
+	assert.Equal(t, "https://merged.example.com", cfg.Host)
+	assert.Equal(t, "merged-token", cfg.BearerToken)
+
+	cfg, err = BuildConfigFromFlags("", clusters)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.BearerToken)
+}
+
 func TestBuildConfigFromFlags(t *testing.T) {
 
 	kubeConfigPath := path.Join(t.TempDir(), "config")

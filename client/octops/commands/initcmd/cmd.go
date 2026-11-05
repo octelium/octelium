@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/asaskevich/govalidator"
@@ -86,8 +87,13 @@ func BuildConfigFromFlags(kubeContext, kubeconfigPath string) (*rest.Config, err
 		return nil, err
 	}
 
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeConfigFilePath}
+	if paths := filepath.SplitList(kubeConfigFilePath); kubeconfigPath == "" && len(paths) > 1 {
+		loadingRules = &clientcmd.ClientConfigLoadingRules{Precedence: paths}
+	}
+
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeConfigFilePath},
+		loadingRules,
 		&clientcmd.ConfigOverrides{
 			CurrentContext: kubeContext,
 		}).ClientConfig()

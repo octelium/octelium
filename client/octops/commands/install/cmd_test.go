@@ -211,6 +211,29 @@ func TestInitialTokenSaveAndOutput(t *testing.T) {
 	assert.Error(t, setInitialAuthToken(&Opts{ClusterDomain: "example.com", AuthTokenSavePath: t.TempDir()}, legacyInitialToken()))
 }
 
+func TestInitialTokenReplacesInsecureFile(t *testing.T) {
+	if filepath.Separator == '\\' {
+		t.Skip("Windows does not support Unix file permissions")
+	}
+	t.Setenv("OCTELIUM_SKIP_MESSAGES", "true")
+	require.NoError(t, cliutils.OpenDB("mem"))
+	d := cliutils.GetDB()
+	t.Cleanup(func() { d.Close() })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token")
+	require.NoError(t, os.WriteFile(path, []byte("a longer previous value"), 0644))
+	require.NoError(t, setInitialAuthToken(&Opts{ClusterDomain: "example.com", AuthTokenSavePath: path}, legacyInitialToken()))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "token", string(data))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+}
+
 func TestInitialTokenRetry(t *testing.T) {
 	job := completedInstallationJob()
 	c := fakek8s.NewSimpleClientset(job)
