@@ -355,7 +355,7 @@ func (s *server) doAuthenticateAuthenticatorBegin(ctx context.Context,
 		return nil, err
 	}
 
-	if sess.Status.DeviceRef != nil && authn.Status.DeviceRef != nil {
+	if isDeviceBound(authn) && sess.Status.DeviceRef != nil && authn.Status.DeviceRef != nil {
 		if sess.Status.DeviceRef.Uid != authn.Status.DeviceRef.Uid {
 			return nil, s.errPermissionDenied("Invalid Authenticator Device")
 		}
@@ -789,7 +789,10 @@ func (s *server) doRegisterAuthenticatorFinish(ctx context.Context,
 
 	authn.Status.AuthenticationAttempt = nil
 	authn.Status.IsRegistered = true
-	authn.Status.DeviceRef = sess.Status.DeviceRef
+
+	if isDeviceBound(authn) {
+		authn.Status.DeviceRef = sess.Status.DeviceRef
+	}
 
 	switch sess.Status.AuthenticatorAction {
 	case corev1.Session_Status_REGISTRATION_RECOMMENDED,

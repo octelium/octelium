@@ -138,6 +138,17 @@ func (s *server) doCreateAuthenticator(ctx context.Context,
 	return s.toAuthenticator(authenticator), nil
 }
 
+func isDeviceBound(authn *corev1.Authenticator) bool {
+	return authn.Status.Type == corev1.Authenticator_Status_TPM
+}
+
+func isDeviceProof(authn *corev1.Authenticator) bool {
+	return isDeviceBound(authn) &&
+		authn.Status.IsRegistered &&
+		authn.Status.DeviceRef != nil &&
+		authn.Spec.State == corev1.Authenticator_Spec_ACTIVE
+}
+
 func (s *server) toAuthenticator(i *corev1.Authenticator) *authv1.Authenticator {
 	if i == nil {
 		return nil
@@ -227,6 +238,11 @@ func (s *server) doDeleteAuthenticator(ctx context.Context,
 	}, sess)
 	if err != nil {
 		return nil, err
+	}
+
+	if isDeviceProof(authn) &&
+		(sess.Status.DeviceRef == nil || sess.Status.DeviceRef.Uid != authn.Status.DeviceRef.Uid) {
+		return nil, s.errPermissionDenied("This Authenticator can only be deleted from its Device")
 	}
 
 	_, err = s.octeliumC.CoreC().DeleteAuthenticator(ctx, apivalidation.ObjectToRDeleteOptions(authn))

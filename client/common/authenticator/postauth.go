@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/authc"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/common/commands/auth/authcommon/deviceprobe"
 	authn "github.com/octelium/octelium/client/common/commands/auth/authenticator"
 	"github.com/octelium/octelium/client/common/commands/auth/device/register"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
@@ -131,27 +132,38 @@ func (a *authenticator) doPostAuth(ctx context.Context) error {
 
 	if st.User.Spec != nil &&
 		st.User.Spec.Type == userv1.GetStatusResponse_User_Spec_HUMAN && !cliutils.IsSuggestedWorkloadHost() {
-		if err := register.DoRegisterDevice(ctx, domain); err != nil {
-			zap.L().Debug("Could not register Device", zap.Error(err))
-		}
+		return doPostAuthDevice(ctx, domain)
+	}
 
-		authC, err := cliutils.NewAuthClient(ctx, domain, nil)
-		if err != nil {
-			return err
-		}
+	return nil
+}
 
-		defer authC.Close()
+func doPostAuthDevice(ctx context.Context, domain string) error {
+	if err := register.DoRegisterDevice(ctx, domain); err != nil {
+		zap.L().Debug("Could not register Device", zap.Error(err))
+	}
 
-		if resp, err := authC.C().GetAvailableAuthenticator(ctx,
-			&authv1.GetAvailableAuthenticatorRequest{}); err == nil {
-			if resp.MainAuthenticator != nil {
-				zap.L().Debug("Found main Authenticator", zap.Any("authn", resp.MainAuthenticator))
-				if err := authn.DoAuthenticate(ctx,
-					domain, authC, umetav1.GetObjectReference(resp.MainAuthenticator)); err != nil {
-					return err
-				}
-			}
-		}
+	authC, err := cliutils.NewAuthClient(ctx, domain, nil)
+	if err != nil {
+		return err
+	}
+
+	defer authC.Close()
+
+	resp, err := authC.C().GetAvailableAuthenticator(ctx, &authv1.GetAvailableAuthenticatorRequest{})
+	if err != nil || resp.MainAuthenticator == nil {
+		return nil
+	}
+
+	zap.L().Debug("Found main Authenticator", zap.Any("authn", resp.MainAuthenticator))
+
+	if err := authn.DoAuthenticate(ctx,
+		domain, authC, umetav1.GetObjectReference(resp.MainAuthenticator)); err != nil {
+		return err
+	}
+
+	if err := deviceprobe.Run(ctx, authC.C()); err != nil {
+		zap.L().Warn("Could not run the Device probes", zap.Error(err))
 	}
 
 	return nil

@@ -26,6 +26,7 @@ import (
 
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -65,7 +66,16 @@ func newVirtualFIDO(domain string, usr *corev1.User,
 			Origin: fmt.Sprintf("https://%s", domain),
 		},
 		auth: virtualwebauthn.NewAuthenticatorWithOptions(opts),
-		cred: virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2),
+		cred: newVirtualCredential(),
+	}
+}
+
+func newVirtualCredential() virtualwebauthn.Credential {
+	for {
+		cred := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+		if _, err := webauthncose.ParsePublicKey(cred.Key.AttestationData()); err == nil {
+			return cred
+		}
 	}
 }
 

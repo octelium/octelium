@@ -460,20 +460,16 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 					return corev1.Authenticator_Status_Info_FIDO_TYPE_UNKNOWN
 				}(),
 				IsAttestationVerified: func() bool {
-					switch parsedResponse.Response.AttestationObject.Format {
-					case "none":
-						return false
-					default:
-						if c.mds != nil {
-							if err := cred.Verify(c.mds, webauthnctl.Config.Attestation, webauthnctl.Config.Signature); err == nil {
-								return true
-							} else {
-								zap.L().Debug("Could not verify attestation", zap.Error(err))
-							}
-						}
-
+					if c.mds == nil || !hasTrustPath(&parsedResponse.Response.AttestationObject) {
 						return false
 					}
+
+					if err := cred.Verify(c.mds, webauthnctl.Config.Attestation, webauthnctl.Config.Signature); err != nil {
+						zap.L().Debug("Could not verify attestation", zap.Error(err))
+						return false
+					}
+
+					return true
 				}(),
 			},
 		},
@@ -488,10 +484,14 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 			keyProtection := entry.MetadataStatement.KeyProtection
 
 			fido.IsSoftware = slices.Contains(keyProtection, "software")
-			fido.IsHardware = (slices.Contains(keyProtection, "hardware") &&
-				slices.Contains(keyProtection, "secure_element")) ||
-				(slices.Contains(keyProtection, "hardware") &&
-					slices.Contains(keyProtection, "tee"))
+
+			if fido.IsAttestationVerified {
+				fido.Type = getAttestedType(entry.MetadataStatement.AttachmentHint)
+				fido.IsHardware = (slices.Contains(keyProtection, "hardware") &&
+					slices.Contains(keyProtection, "secure_element")) ||
+					(slices.Contains(keyProtection, "hardware") &&
+						slices.Contains(keyProtection, "tee"))
+			}
 		} else if err != nil {
 			zap.L().Debug("Could not get MDS entry",
 				zap.String("aaguid", aaguid.String()), zap.Error(err))
@@ -499,6 +499,34 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 	}
 
 	return &authenticators.FinishRegistrationResp{}, nil
+}
+
+func hasTrustPath(obj *protocol.AttestationObject) bool {
+	switch protocol.AttestationFormat(obj.Format) {
+	case protocol.AttestationFormatPacked,
+		protocol.AttestationFormatTPM,
+		protocol.AttestationFormatAndroidKey,
+		protocol.AttestationFormatApple:
+	default:
+		return false
+	}
+
+	x5c, _ := obj.AttStatement["x5c"].([]any)
+
+	return len(x5c) > 0
+}
+
+func getAttestedType(hints []string) corev1.Authenticator_Status_Info_FIDO_Type {
+	isInternal := slices.Contains(hints, "internal")
+
+	switch {
+	case isInternal && len(hints) == 1:
+		return corev1.Authenticator_Status_Info_FIDO_PLATFORM
+	case !isInternal && len(hints) > 0:
+		return corev1.Authenticator_Status_Info_FIDO_ROAMING
+	default:
+		return corev1.Authenticator_Status_Info_FIDO_TYPE_UNKNOWN
+	}
 }
 
 func DefaultTimeout() webauthn.TimeoutConfig {

@@ -671,3 +671,112 @@ func TestAuthenticatorUserState(t *testing.T) {
 		})
 	}
 }
+
+func TestIsDeviceProof(t *testing.T) {
+	deviceRef := &metav1.ObjectReference{Uid: "device"}
+
+	tbl := []struct {
+		name  string
+		authn *corev1.Authenticator
+		bound bool
+		proof bool
+	}{
+		{
+			name: "TPM",
+			authn: &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{State: corev1.Authenticator_Spec_ACTIVE},
+				Status: &corev1.Authenticator_Status{
+					Type:         corev1.Authenticator_Status_TPM,
+					IsRegistered: true,
+					DeviceRef:    deviceRef,
+				},
+			},
+			bound: true,
+			proof: true,
+		},
+		{
+			name: "TPMWithoutDevice",
+			authn: &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{State: corev1.Authenticator_Spec_ACTIVE},
+				Status: &corev1.Authenticator_Status{
+					Type:         corev1.Authenticator_Status_TPM,
+					IsRegistered: true,
+				},
+			},
+			bound: true,
+		},
+		{
+			name: "UnregisteredTPM",
+			authn: &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{State: corev1.Authenticator_Spec_ACTIVE},
+				Status: &corev1.Authenticator_Status{
+					Type:      corev1.Authenticator_Status_TPM,
+					DeviceRef: deviceRef,
+				},
+			},
+			bound: true,
+		},
+		{
+			name: "PendingTPM",
+			authn: &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{State: corev1.Authenticator_Spec_PENDING},
+				Status: &corev1.Authenticator_Status{
+					Type:         corev1.Authenticator_Status_TPM,
+					IsRegistered: true,
+					DeviceRef:    deviceRef,
+				},
+			},
+			bound: true,
+		},
+		{
+			name: "RejectedTPM",
+			authn: &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{State: corev1.Authenticator_Spec_REJECTED},
+				Status: &corev1.Authenticator_Status{
+					Type:         corev1.Authenticator_Status_TPM,
+					IsRegistered: true,
+					DeviceRef:    deviceRef,
+				},
+			},
+			bound: true,
+		},
+		{
+			name: "TOTP",
+			authn: &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{State: corev1.Authenticator_Spec_ACTIVE},
+				Status: &corev1.Authenticator_Status{
+					Type:         corev1.Authenticator_Status_TOTP,
+					IsRegistered: true,
+					DeviceRef:    deviceRef,
+				},
+			},
+		},
+		{
+			name: "AttestedPlatformFIDO",
+			authn: &corev1.Authenticator{
+				Spec: &corev1.Authenticator_Spec{State: corev1.Authenticator_Spec_ACTIVE},
+				Status: &corev1.Authenticator_Status{
+					Type:         corev1.Authenticator_Status_FIDO,
+					IsRegistered: true,
+					DeviceRef:    deviceRef,
+					Info: &corev1.Authenticator_Status_Info{
+						Type: &corev1.Authenticator_Status_Info_Fido{
+							Fido: &corev1.Authenticator_Status_Info_FIDO{
+								Type:                  corev1.Authenticator_Status_Info_FIDO_PLATFORM,
+								IsAttestationVerified: true,
+								IsHardware:            true,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, itm := range tbl {
+		t.Run(itm.name, func(t *testing.T) {
+			assert.Equal(t, itm.bound, isDeviceBound(itm.authn))
+			assert.Equal(t, itm.proof, isDeviceProof(itm.authn))
+		})
+	}
+}

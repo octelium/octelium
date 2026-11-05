@@ -677,3 +677,126 @@ func TestGetUserVerificationRequirement(t *testing.T) {
 		assert.Equal(t, e.ret, getUserVerificationRequirement(cc), "%v", e.arg)
 	}
 }
+
+func TestHasTrustPath(t *testing.T) {
+	chain := []any{[]byte("cert")}
+
+	tbl := []struct {
+		name string
+		obj  *protocol.AttestationObject
+		ret  bool
+	}{
+		{
+			name: "PackedChain",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatPacked),
+				AttStatement: map[string]any{"x5c": chain},
+			},
+			ret: true,
+		},
+		{
+			name: "TPM",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatTPM),
+				AttStatement: map[string]any{"x5c": chain},
+			},
+			ret: true,
+		},
+		{
+			name: "AndroidKey",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatAndroidKey),
+				AttStatement: map[string]any{"x5c": chain},
+			},
+			ret: true,
+		},
+		{
+			name: "Apple",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatApple),
+				AttStatement: map[string]any{"x5c": chain},
+			},
+			ret: true,
+		},
+		{
+			name: "PackedSelf",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatPacked),
+				AttStatement: map[string]any{"alg": int64(-7), "sig": []byte("sig")},
+			},
+		},
+		{
+			name: "EmptyChain",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatPacked),
+				AttStatement: map[string]any{"x5c": []any{}},
+			},
+		},
+		{
+			name: "InvalidChain",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatPacked),
+				AttStatement: map[string]any{"x5c": "cert"},
+			},
+		},
+		{
+			name: "None",
+			obj: &protocol.AttestationObject{
+				Format: string(protocol.AttestationFormatNone),
+			},
+		},
+		{
+			name: "SafetyNetIgnoresTheChain",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatAndroidSafetyNet),
+				AttStatement: map[string]any{"x5c": chain},
+			},
+		},
+		{
+			name: "FIDOU2F",
+			obj: &protocol.AttestationObject{
+				Format:       string(protocol.AttestationFormatFIDOUniversalSecondFactor),
+				AttStatement: map[string]any{"x5c": chain},
+			},
+		},
+		{
+			name: "Compound",
+			obj: &protocol.AttestationObject{
+				Format: string(protocol.AttestationFormatCompound),
+			},
+		},
+		{
+			name: "Unknown",
+			obj: &protocol.AttestationObject{
+				Format:       "unknown",
+				AttStatement: map[string]any{"x5c": chain},
+			},
+		},
+	}
+
+	for _, itm := range tbl {
+		t.Run(itm.name, func(t *testing.T) {
+			assert.Equal(t, itm.ret, hasTrustPath(itm.obj))
+		})
+	}
+}
+
+func TestGetAttestedType(t *testing.T) {
+	tbl := []struct {
+		hints []string
+		ret   corev1.Authenticator_Status_Info_FIDO_Type
+	}{
+		{nil, corev1.Authenticator_Status_Info_FIDO_TYPE_UNKNOWN},
+		{[]string{}, corev1.Authenticator_Status_Info_FIDO_TYPE_UNKNOWN},
+		{[]string{"internal"}, corev1.Authenticator_Status_Info_FIDO_PLATFORM},
+		{[]string{"internal", "wireless"}, corev1.Authenticator_Status_Info_FIDO_TYPE_UNKNOWN},
+		{[]string{"external", "internal"}, corev1.Authenticator_Status_Info_FIDO_TYPE_UNKNOWN},
+		{[]string{"external"}, corev1.Authenticator_Status_Info_FIDO_ROAMING},
+		{[]string{"external", "wired"}, corev1.Authenticator_Status_Info_FIDO_ROAMING},
+		{[]string{"wireless", "nfc"}, corev1.Authenticator_Status_Info_FIDO_ROAMING},
+	}
+
+	for _, itm := range tbl {
+		assert.Equal(t, itm.ret, getAttestedType(itm.hints), "%v", itm.hints)
+	}
+}

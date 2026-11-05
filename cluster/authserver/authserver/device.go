@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -140,12 +141,51 @@ func (s *server) doRegisterDevice(ctx context.Context, req *authv1.RegisterDevic
 		}
 	}
 
-	sess.Status.DeviceRef = umetav1.GetObjectReference(dev)
-	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
-		return nil, s.errInternalErr(err)
+	if err := s.attachSessionDevice(ctx, sess, usr, dev); err != nil {
+		return nil, err
 	}
 
 	return &authv1.RegisterDeviceResponse{}, nil
+}
+
+func (s *server) attachSessionDevice(ctx context.Context,
+	sess *corev1.Session, usr *corev1.User, dev *corev1.Device) error {
+	authn, err := s.getDeviceAuthenticator(ctx, usr, dev)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case authn == nil:
+		sess.Status.DeviceRef = umetav1.GetObjectReference(dev)
+	case sess.Status.RequiredAuthenticatorRef == nil:
+		sess.Status.RequiredAuthenticatorRef = umetav1.GetObjectReference(authn)
+	}
+
+	if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
+		return s.errInternalErr(err)
+	}
+
+	return nil
+}
+
+func (s *server) getDeviceAuthenticator(ctx context.Context,
+	usr *corev1.User, dev *corev1.Device) (*corev1.Authenticator, error) {
+	itmList, err := s.octeliumC.CoreC().ListAuthenticator(ctx, &rmetav1.ListOptions{
+		Filters: []*rmetav1.ListOptions_Filter{
+			urscsrv.FilterStatusUserUID(usr.Metadata.Uid),
+			urscsrv.FilterFieldEQValStr("status.deviceRef.uid", dev.Metadata.Uid),
+		},
+	})
+	if err != nil {
+		return nil, s.errInternalErr(err)
+	}
+
+	if idx := slices.IndexFunc(itmList.Items, isDeviceProof); idx >= 0 {
+		return itmList.Items[idx], nil
+	}
+
+	return nil, nil
 }
 
 func (s *server) getDeviceRegistrationSession(ctx context.Context) (*corev1.Session, error) {
@@ -196,9 +236,8 @@ func (s *server) doRegisterDeviceBegin(ctx context.Context, req *authv1.Register
 	}
 
 	if existing != nil {
-		sess.Status.DeviceRef = umetav1.GetObjectReference(existing)
-		if _, err := s.octeliumC.CoreC().UpdateSession(ctx, sess); err != nil {
-			return nil, s.errInternalErr(err)
+		if err := s.attachSessionDevice(ctx, sess, usr, existing); err != nil {
+			return nil, err
 		}
 		return nil, s.errAlreadyExists("Device is already registered")
 	}

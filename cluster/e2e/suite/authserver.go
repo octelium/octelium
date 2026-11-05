@@ -671,6 +671,50 @@ func testDeviceRegistration(t *testing.T, h *harness.H) {
 		require.NotNil(t, cur)
 		assert.Equal(t, deviceRef.Uid, cur.Uid)
 	})
+
+	t.Run("TOTPOnTwoDevices", func(t *testing.T) {
+		first := newHumanSession(t, h)
+
+		_, err := first.C().RegisterDevice(first.Ctx(t.Context()),
+			&authv1.RegisterDeviceRequest{Info: deviceInfo()})
+		require.Nil(t, err, "could not register the first Device")
+
+		authn, secret := registerTOTPAuthenticator(t, first, "e2e totp device")
+
+		second := h.NewAuthSession(t, harness.AuthSessionOpts{
+			User:        first.User,
+			SessionType: corev1.Session_Status_CLIENT,
+		})
+
+		_, err = second.C().RegisterDevice(second.Ctx(t.Context()),
+			&authv1.RegisterDeviceRequest{Info: deviceInfo()})
+		require.Nil(t, err, "could not register the second Device")
+
+		deviceRef := second.Session(t).Status.DeviceRef
+		require.NotNil(t, deviceRef)
+
+		_, err = second.C().AuthenticateAuthenticatorBegin(second.Ctx(t.Context()),
+			&authv1.AuthenticateAuthenticatorBeginRequest{
+				AuthenticatorRef: authenticatorRef(authn),
+			})
+		require.Nil(t, err, "a TOTP Authenticator must be usable on every Device of its User")
+
+		tkn, err := second.C().AuthenticateWithAuthenticator(second.Ctx(t.Context()),
+			&authv1.AuthenticateWithAuthenticatorRequest{
+				AuthenticatorRef: authenticatorRef(authn),
+				ChallengeResponse: totpResponse(
+					harness.TOTPCode(t, secret, harness.TOTPStep(time.Now())+1)),
+			})
+		require.Nil(t, err, "could not authenticate on the second Device")
+		second.SetToken(tkn)
+
+		assert.Equal(t, deviceRef.Uid, second.Session(t).Status.DeviceRef.Uid)
+
+		got, err := h.CoreC().GetAuthenticator(t.Context(),
+			&metav1.GetOptions{Uid: authn.Metadata.Uid})
+		require.Nil(t, err)
+		assert.Nil(t, got.Status.DeviceRef, "a TOTP Authenticator must not be bound to a Device")
+	})
 }
 
 func testAuthServerLogout(t *testing.T, h *harness.H) {

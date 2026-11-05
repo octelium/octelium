@@ -611,19 +611,13 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 		return nil, err
 	}
 
-	switch {
-	case authn.Status.DeviceRef != nil && sess.Status.DeviceRef == nil:
-		sess.Status.DeviceRef = authn.Status.DeviceRef
-	case authn.Status.DeviceRef != nil && sess.Status.DeviceRef != nil:
-		if authn.Status.DeviceRef.Uid != sess.Status.DeviceRef.Uid {
+	if isDeviceBound(authn) && authn.Status.DeviceRef != nil {
+		switch {
+		case sess.Status.DeviceRef == nil:
+			sess.Status.DeviceRef = authn.Status.DeviceRef
+		case sess.Status.DeviceRef.Uid != authn.Status.DeviceRef.Uid:
 			attempt.SetReason(authevents.ReasonNotAllowed)
 			return nil, grpcutils.PermissionDenied("Invalid Device")
-		}
-	case authn.Status.DeviceRef == nil && sess.Status.DeviceRef != nil:
-		authn.Status.DeviceRef = sess.Status.DeviceRef
-		_, err = s.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
-		if err != nil {
-			return nil, grpcutils.InternalWithErr(err)
 		}
 	}
 

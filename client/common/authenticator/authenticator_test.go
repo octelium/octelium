@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -650,6 +651,84 @@ func newAuthenticationTestContext(t *testing.T, path string, handler grpc.UnaryS
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	return cliutils.WithDB(ctx, d), d
+}
+
+func TestPostAuthDeviceProbes(t *testing.T) {
+	main := &authv1.Authenticator{
+		Metadata: &metav1.Metadata{Uid: "authenticator", Name: "tpm"},
+		Status:   &authv1.Authenticator_Status{IsRegistered: true},
+	}
+
+	const (
+		methodBegin = "AuthenticateAuthenticatorBegin"
+		methodProbe = "RunDeviceProbeBegin"
+	)
+
+	tbl := []struct {
+		name  string
+		main  *authv1.Authenticator
+		begin error
+		isErr bool
+		last  []string
+	}{
+		{
+			name:  "ProbesFollowTheAuthenticator",
+			main:  main,
+			begin: status.Error(codes.AlreadyExists, "already authenticated"),
+			last:  []string{methodBegin, methodProbe},
+		},
+		{
+			name:  "NoProbesWithoutTheProof",
+			main:  main,
+			begin: status.Error(codes.PermissionDenied, "not available"),
+			isErr: true,
+			last:  []string{"GetAuthenticator", methodBegin},
+		},
+		{
+			name: "NoMainAuthenticator",
+			last: []string{"GetAvailableAuthenticator"},
+		},
+	}
+
+	for _, itm := range tbl {
+		t.Run(itm.name, func(t *testing.T) {
+			var calls []string
+
+			ctx, d := newAuthenticationTestContext(t, "mem",
+				func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+					method := path.Base(info.FullMethod)
+					calls = append(calls, method)
+
+					switch method {
+					case "RegisterDevice":
+						return &authv1.RegisterDeviceResponse{}, nil
+					case methodProbe:
+						return &authv1.RunDeviceProbeBeginResponse{}, nil
+					case "GetAvailableAuthenticator":
+						return &authv1.GetAvailableAuthenticatorResponse{MainAuthenticator: itm.main}, nil
+					case "GetAuthenticator":
+						return itm.main, nil
+					case methodBegin:
+						return nil, itm.begin
+					default:
+						return handler(ctx, req)
+					}
+				})
+
+			require.NoError(t, d.SetSessionToken("example.invalid",
+				&authv1.SessionToken{AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 7200, RefreshTokenExpiresIn: 86400}))
+
+			err := doPostAuthDevice(ctx, "example.invalid")
+			if itm.isErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			require.GreaterOrEqual(t, len(calls), len(itm.last))
+			assert.Equal(t, itm.last, calls[len(calls)-len(itm.last):])
+		})
+	}
 }
 
 func TestAssertionAuthenticationE2E(t *testing.T) {
