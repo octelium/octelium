@@ -177,10 +177,26 @@ func (c *QUICController) Run(ctx context.Context) error {
 	}
 
 	go c.startLoop(ctx)
+	go c.runFirewallLoop(ctx)
 
 	zap.L().Debug("QUIC controller is now running")
 
 	return nil
+}
+
+const firewallCheckPeriod = 5 * time.Second
+
+func (c *QUICController) runFirewallLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(firewallCheckPeriod):
+			if err := ensureFirewall(c.fwRules); err != nil {
+				zap.L().Warn("Could not ensure the QUICv0 firewall rules", zap.Error(err))
+			}
+		}
+	}
 }
 
 func (c *QUICController) startLoop(ctx context.Context) {

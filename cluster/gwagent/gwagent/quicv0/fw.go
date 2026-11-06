@@ -108,6 +108,27 @@ func (i *iptablesCtl) OnAdd(rules []fwRule) error {
 	return nil
 }
 
+func (i *iptablesCtl) Ensure(rules []fwRule) error {
+	for _, rule := range rules {
+		exists, err := i.get(rule.isV6).Exists(tableFilter, chainForward, rule.spec...)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+
+		zap.L().Warn("The QUICv0 firewall rule is missing. Setting it again",
+			zap.Strings("spec", rule.spec))
+
+		if err := i.OnAdd([]fwRule{rule}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (i *iptablesCtl) OnDelete(rules []fwRule) {
 	for _, rule := range rules {
 		if err := deleteRules(i.get(rule.isV6), chainForward, rule.spec...); err != nil {
@@ -171,6 +192,15 @@ func setFirewall(rules []fwRule) error {
 	ipt.deleteLegacyChains()
 
 	return ipt.OnAdd(rules)
+}
+
+func ensureFirewall(rules []fwRule) error {
+	ipt, err := newIPTables()
+	if err != nil {
+		return err
+	}
+
+	return ipt.Ensure(rules)
 }
 
 func unsetFirewall(rules []fwRule) {

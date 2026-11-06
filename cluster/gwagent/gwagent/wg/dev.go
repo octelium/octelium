@@ -193,7 +193,7 @@ func (wg *Wg) initializeDev(gw *corev1.Gateway, cc *corev1.ClusterConfig) error 
 		return err
 	}
 
-	if err := ipt.OnAdd(gw, cc); err != nil {
+	if err := ipt.OnAdd(gw, cc, hasV4, hasV6); err != nil {
 		return err
 	}
 
@@ -300,15 +300,12 @@ func newIPTables() (*iptablesCtl, error) {
 // ugly solution to mitigate `iptables: Resource temporarily unavailable` error
 var xtablesMtx sync.Mutex
 
-func (i *iptablesCtl) OnAdd(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
+func (i *iptablesCtl) OnAdd(gw *corev1.Gateway, cc *corev1.ClusterConfig, hasV4, hasV6 bool) error {
 	xtablesMtx.Lock()
 	defer xtablesMtx.Unlock()
 
 	connSubnet := cc.Status.Network.WgConnSubnet
 	gwSubnet := gw.Status.Cidr
-
-	hasV4 := gw.Status.Cidr.V4 != ""
-	hasV6 := gw.Status.Cidr.V6 != ""
 
 	fwChain := fmt.Sprintf("%s-fw", devName)
 	inputChain := fmt.Sprintf("%s-in", devName)
@@ -527,4 +524,62 @@ func (i *iptablesCtl) OnDelete(hasV4, hasV6 bool) error {
 	doDeleteChain(tableFilter, inputChain)
 
 	return err
+}
+
+func ensureFirewall(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
+	ipt, err := newIPTables()
+	if err != nil {
+		return err
+	}
+
+	return ipt.Ensure(gw, cc)
+}
+
+func (i *iptablesCtl) Ensure(gw *corev1.Gateway, cc *corev1.ClusterConfig) error {
+	isMissingV4, err := isFirewallMissing(i.iptv4, gw.Status.Cidr.V4)
+	if err != nil {
+		return err
+	}
+
+	isMissingV6, err := isFirewallMissing(i.iptv6, gw.Status.Cidr.V6)
+	if err != nil {
+		return err
+	}
+
+	if !isMissingV4 && !isMissingV6 {
+		return nil
+	}
+
+	zap.L().Warn("The WireGuard firewall rules are missing. Setting them again",
+		zap.Bool("v4", isMissingV4), zap.Bool("v6", isMissingV6))
+
+	i.OnDelete(isMissingV4, isMissingV6)
+
+	return i.OnAdd(gw, cc, isMissingV4, isMissingV6)
+}
+
+func isFirewallMissing(ipt *iptables.IPTables, gwSubnet string) (bool, error) {
+	if gwSubnet == "" {
+		return false, nil
+	}
+
+	for parent, chain := range map[string]string{"FORWARD": fwChain, "INPUT": inputChain} {
+		exists, err := ipt.ChainExists(tableFilter, chain)
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return true, nil
+		}
+
+		exists, err = ipt.Exists(tableFilter, parent, "-j", chain)
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

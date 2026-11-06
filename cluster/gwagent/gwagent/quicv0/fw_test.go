@@ -17,10 +17,16 @@
 package quicv0
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	gwtests "github.com/octelium/octelium/cluster/gwagent/internal/tests"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 
@@ -167,4 +173,103 @@ func TestSetFirewall(t *testing.T) {
 		assertRuleExists(rule, false)
 	}
 	assertNoLegacyChains()
+}
+
+func TestEnsureFirewall(t *testing.T) {
+	{
+		usr, err := osuser.Current()
+		assert.Nil(t, err)
+		if usr.Uid != "0" {
+			zap.L().Warn("Skipping this test since the running user is not root")
+			return
+		}
+	}
+
+	gwtests.LockGateway(t)
+
+	rules := getFWRules(newTstFWGW("100.64.1.0/24", "fdee::100:0/112"), newTstFWCC())
+	assert.Equal(t, 2, len(rules))
+
+	ipt, err := newIPTables()
+	assert.Nil(t, err)
+
+	unsetFirewall(rules)
+	t.Cleanup(func() {
+		unsetFirewall(rules)
+	})
+
+	assert.Nil(t, ipt.OnAdd(rules))
+
+	countRules := func(rule fwRule) int {
+		lst, err := ipt.get(rule.isV6).List(tableFilter, chainForward)
+		assert.Nil(t, err)
+
+		ret := 0
+		for _, cur := range lst {
+			if strings.Contains(cur, "-i "+devName) {
+				ret++
+			}
+		}
+		return ret
+	}
+
+	assert.Nil(t, ipt.Ensure(rules))
+	for _, rule := range rules {
+		assert.Equal(t, 1, countRules(rule))
+	}
+
+	assert.Nil(t, ipt.get(false).Delete(tableFilter, chainForward, rules[0].spec...))
+	assert.Equal(t, 0, countRules(rules[0]))
+
+	assert.Nil(t, ipt.Ensure(rules))
+	for _, rule := range rules {
+		assert.Equal(t, 1, countRules(rule))
+	}
+}
+
+func TestRunFirewallLoopRetriesIPTablesClient(t *testing.T) {
+	dir := t.TempDir()
+	callsPath := filepath.Join(dir, "calls")
+
+	t.Setenv("PATH", dir)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		(&QUICController{
+			fwRules: getFWRules(newTstFWGW("100.64.1.0/24", ""), newTstFWCC()),
+		}).runFirewallLoop(ctx)
+	}()
+
+	time.Sleep(firewallCheckPeriod + time.Second)
+
+	select {
+	case <-doneCh:
+		assert.Fail(t, "the firewall loop must survive a missing iptables binary")
+		return
+	default:
+	}
+
+	script := `#!/bin/sh
+echo "$@" >> "` + callsPath + `"
+case "$*" in
+*--version*) echo "iptables v1.8.13 (nf_tables)" ;;
+*) exit 4 ;;
+esac
+`
+
+	for _, name := range []string{"iptables", "ip6tables"} {
+		assert.Nil(t, os.WriteFile(filepath.Join(dir, name), []byte(script), 0700))
+	}
+
+	assert.Eventually(t, func() bool {
+		calls, err := os.ReadFile(callsPath)
+		return err == nil && strings.Contains(string(calls), " -C ")
+	}, 2*firewallCheckPeriod, 100*time.Millisecond)
+
+	cancel()
+	<-doneCh
 }

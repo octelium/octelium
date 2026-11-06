@@ -40,6 +40,7 @@ const (
 	opQueueSize            = 20000
 	opTimeout              = 30 * time.Second
 	keyRotationCheckPeriod = 3 * time.Minute
+	firewallCheckPeriod    = 5 * time.Second
 )
 
 type opType int
@@ -60,6 +61,8 @@ type Wg struct {
 	client    *wgctrl.Client
 	octeliumC octeliumc.ClientInterface
 	gwName    string
+	gw        *corev1.Gateway
+	cc        *corev1.ClusterConfig
 
 	opCh   chan *op
 	doneCh chan struct{}
@@ -93,6 +96,9 @@ func New(ctx context.Context, node *k8scorev1.Node, octeliumC octeliumc.ClientIn
 	if err := ret.initWG(ctx, gw, cc, initPrivateKey); err != nil {
 		return nil, err
 	}
+
+	ret.gw = gw
+	ret.cc = cc
 
 	return ret, nil
 }
@@ -403,5 +409,19 @@ func (wg *Wg) doRotateKey(ctx context.Context, gw *corev1.Gateway) error {
 
 func (wg *Wg) Run(ctx context.Context) error {
 	go wg.runLoop(ctx)
+	go wg.runFirewallLoop(ctx)
 	return nil
+}
+
+func (wg *Wg) runFirewallLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(firewallCheckPeriod):
+			if err := ensureFirewall(wg.gw, wg.cc); err != nil {
+				zap.L().Warn("Could not ensure the WireGuard firewall rules", zap.Error(err))
+			}
+		}
+	}
 }
