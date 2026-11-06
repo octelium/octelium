@@ -144,6 +144,38 @@ func TestCanCreateDevice(t *testing.T) {
 		usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, nil, nil)
 		assert.Nil(t, err)
 
+		info := &authv1.RegisterDeviceRequest_Info{
+			Id:           utilrand.GetRandomString(12),
+			SerialNumber: utilrand.GetRandomString(12),
+			Hostname:     utilrand.GetRandomString(6),
+			OsType:       authv1.RegisterDeviceRequest_Info_LINUX,
+		}
+
+		dev, err := srv.doBuildDevice(ctx, cc, info, usr.Usr)
+		assert.Nil(t, err)
+		_, err = srv.octeliumC.CoreC().CreateDevice(ctx, dev)
+		assert.Nil(t, err)
+
+		_, err = srv.checkCanCreateDevice(ctx, cc, usr.Usr, &authv1.RegisterDeviceRequest_Info{
+			Id:     info.Id,
+			OsType: authv1.RegisterDeviceRequest_Info_WINDOWS,
+		})
+		assert.NotNil(t, err, "a machine ID cannot change its OS")
+		assert.True(t, grpcerr.IsInvalidArg(err))
+
+		existing, err := srv.checkCanCreateDevice(ctx, cc, usr.Usr, &authv1.RegisterDeviceRequest_Info{
+			Id:           utilrand.GetRandomString(12),
+			SerialNumber: info.SerialNumber,
+			OsType:       authv1.RegisterDeviceRequest_Info_WINDOWS,
+		})
+		assert.Nil(t, err, "%+v", err)
+		assert.Nil(t, existing, "the same serial number on another OS is another Device")
+	}
+
+	{
+		usr, err := tstuser.NewUser(fakeC.OcteliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
 		for i := 0; i < defaultMaxDevicePerUser; i++ {
 			req := &authv1.RegisterDeviceBeginRequest{
 				Info: &authv1.RegisterDeviceRequest_Info{
@@ -363,6 +395,39 @@ func TestDeviceRegister(t *testing.T) {
 		otherDevUID := getSessionDeviceUID(otherT)
 		assert.NotEqual(t, "", otherDevUID)
 		assert.NotEqual(t, devUID, otherDevUID)
+	}
+
+	{
+		lateT, err := tstuser.NewUserWithType(srv.octeliumC, adminSrv, nil, nil,
+			corev1.User_Spec_HUMAN, corev1.Session_Status_CLIENT)
+		assert.Nil(t, err)
+
+		detachSession(lateT)
+
+		lateReq := pbutils.Clone(req).(*authv1.RegisterDeviceBeginRequest)
+		lateReq.Info.Id = fmt.Sprintf("%x", sha256.Sum256([]byte(utilrand.GetRandomBytesMust(32))))
+		lateReq.Info.SerialNumber = utilrand.GetRandomString(12)
+
+		resp, err := srv.doRegisterDeviceBegin(getCtxRT(lateT), lateReq)
+		assert.Nil(t, err, "%+v", err)
+
+		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		sameSerial := pbutils.Clone(lateReq.Info).(*authv1.RegisterDeviceRequest_Info)
+		sameSerial.Id = fmt.Sprintf("%x", sha256.Sum256([]byte(utilrand.GetRandomBytesMust(32))))
+
+		dev, err := srv.doBuildDevice(ctx, cc, sameSerial, lateT.Usr)
+		assert.Nil(t, err)
+		_, err = srv.octeliumC.CoreC().CreateDevice(ctx, dev)
+		assert.Nil(t, err)
+
+		_, err = srv.doRegisterDeviceFinish(getCtxRT(lateT), &authv1.RegisterDeviceFinishRequest{
+			Uid: resp.Uid,
+		})
+		assert.NotNil(t, err, "a Device with the same serial number was created since the begin step")
+		assert.True(t, grpcerr.AlreadyExists(err))
+		assert.Equal(t, "", getSessionDeviceUID(lateT))
 	}
 }
 
@@ -1374,6 +1439,43 @@ func TestRunDeviceProbe(t *testing.T) {
 		assert.Nil(t, err, "an identical retry of a processed attempt must be idempotent: %+v", err)
 
 		resp := begin()
+		assert.Equal(t, []string{"dm2-file"}, getProbeIDs(resp),
+			"a Session without a proof must only run the probes of what the provider issued")
+
+		setDeviceProof := func(proof *corev1.Session_Status_DeviceProof) {
+			sess, err := srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{
+				Uid: usrT.Session.Metadata.Uid,
+			})
+			assert.Nil(t, err)
+			sess.Status.DeviceProof = proof
+			_, err = srv.octeliumC.CoreC().UpdateSession(ctx, sess)
+			assert.Nil(t, err)
+		}
+
+		clearAttempt()
+		setDeviceProof(&corev1.Session_Status_DeviceProof{
+			Type:       corev1.Session_Status_DeviceProof_PROBE,
+			BindingUID: "another-binding",
+		})
+
+		resp = begin()
+		assert.Equal(t, []string{"dm2-file"}, getProbeIDs(resp),
+			"a proof of another Binding must not count")
+
+		clearAttempt()
+		setDeviceProof(&corev1.Session_Status_DeviceProof{
+			Type: corev1.Session_Status_DeviceProof_HARDWARE_KEY,
+		})
+
+		resp = begin()
+		assert.Equal(t, "", resp.AttemptUID, "a valid Binding must not be probed")
+
+		setDeviceProof(&corev1.Session_Status_DeviceProof{
+			Type:       corev1.Session_Status_DeviceProof_PROBE,
+			BindingUID: "binding",
+		})
+
+		resp = begin()
 		assert.Equal(t, "", resp.AttemptUID, "a valid Binding must not be probed")
 
 		updateDevice(func(dev *corev1.Device) {

@@ -319,6 +319,64 @@ func TestRegionIsDefault(t *testing.T) {
 	}).IsDefault())
 }
 
+func TestSessionHasDeviceProof(t *testing.T) {
+	binding := &corev1.Device_Status_Binding{Uid: "binding"}
+
+	getSession := func(proof *corev1.Session_Status_DeviceProof) *corev1.Session {
+		return &corev1.Session{
+			Status: &corev1.Session_Status{
+				DeviceProof: proof,
+			},
+		}
+	}
+
+	assert.False(t, ToSession(nil).HasDeviceProof(binding))
+	assert.False(t, ToSession(&corev1.Session{}).HasDeviceProof(binding))
+	assert.False(t, ToSession(getSession(nil)).HasDeviceProof(binding))
+	assert.False(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{})).HasDeviceProof(binding))
+
+	assert.True(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type: corev1.Session_Status_DeviceProof_HARDWARE_KEY,
+	})).HasDeviceProof(binding))
+	assert.True(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type: corev1.Session_Status_DeviceProof_HARDWARE_KEY,
+	})).HasDeviceProof(nil), "a hardware key proves the Device and not a Binding")
+
+	assert.True(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_PROBE,
+		BindingUID: "binding",
+	})).HasDeviceProof(binding))
+	assert.False(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_PROBE,
+		BindingUID: "another-binding",
+	})).HasDeviceProof(binding))
+	assert.False(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type: corev1.Session_Status_DeviceProof_PROBE,
+	})).HasDeviceProof(&corev1.Device_Status_Binding{}))
+	assert.False(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_PROBE,
+		BindingUID: "binding",
+	})).HasDeviceProof(nil))
+}
+
+func TestDeviceBindingStoredWithConfidence(t *testing.T) {
+	ret := &corev1.Device{}
+	assert.Nil(t, pbutils.UnmarshalJSON([]byte(`{
+		"status": {
+			"binding": {
+				"uid": "binding",
+				"confidence": "HIGH",
+				"evidence": ["OWNER_EMAIL", "SERIAL_NUMBER"]
+			}
+		}
+	}`), ret))
+
+	assert.Equal(t, "binding", ret.Status.Binding.Uid)
+	assert.Equal(t, corev1.Device_Status_Binding_ASSURANCE_UNKNOWN, ret.Status.Binding.Assurance)
+	assert.False(t, ret.Status.Binding.IsOwnerMatched)
+	assert.Equal(t, 2, len(ret.Status.Binding.Evidence))
+}
+
 func TestDevicePostureStoredBeforeRedesign(t *testing.T) {
 	ret := &corev1.Device{}
 	assert.Nil(t, pbutils.UnmarshalJSON([]byte(`{

@@ -36,11 +36,11 @@ import (
 func TestGetEffectiveDevice(t *testing.T) {
 	now := time.Now()
 
-	assert.Nil(t, getEffectiveDevice(nil, now))
+	assert.Nil(t, getEffectiveDevice(nil, nil, now))
 
 	{
 		dev := &corev1.Device{}
-		assert.True(t, dev == getEffectiveDevice(dev, now))
+		assert.True(t, dev == getEffectiveDevice(dev, nil, now))
 	}
 
 	{
@@ -52,7 +52,7 @@ func TestGetEffectiveDevice(t *testing.T) {
 				},
 			},
 		}
-		assert.True(t, dev == getEffectiveDevice(dev, now))
+		assert.True(t, dev == getEffectiveDevice(dev, nil, now))
 	}
 
 	getDevice := func() *corev1.Device {
@@ -77,7 +77,7 @@ func TestGetEffectiveDevice(t *testing.T) {
 
 	{
 		dev := getDevice()
-		res := getEffectiveDevice(dev, now)
+		res := getEffectiveDevice(dev, nil, now)
 		assert.False(t, dev == res)
 		assert.NotNil(t, res.Status.Posture)
 		assert.Equal(t, corev1.Device_Status_Posture_PASS, res.Status.Posture.ThreatFree)
@@ -89,7 +89,7 @@ func TestGetEffectiveDevice(t *testing.T) {
 	{
 		dev := getDevice()
 		dev.Status.Posture.ExpiresAt = timestamppb.New(now.Add(-time.Minute))
-		res := getEffectiveDevice(dev, now)
+		res := getEffectiveDevice(dev, nil, now)
 		assert.Nil(t, res.Status.Posture)
 		assert.NotNil(t, dev.Status.Posture)
 	}
@@ -97,7 +97,7 @@ func TestGetEffectiveDevice(t *testing.T) {
 	{
 		dev := getDevice()
 		dev.Status.Binding.Validity = corev1.Device_Status_Binding_SUSPENDED
-		res := getEffectiveDevice(dev, now)
+		res := getEffectiveDevice(dev, nil, now)
 		assert.Nil(t, res.Status.Posture)
 		assert.NotNil(t, res.Status.Binding)
 	}
@@ -105,8 +105,67 @@ func TestGetEffectiveDevice(t *testing.T) {
 	{
 		dev := getDevice()
 		dev.Status.Binding = nil
-		res := getEffectiveDevice(dev, now)
+		res := getEffectiveDevice(dev, nil, now)
 		assert.Nil(t, res.Status.Posture)
+	}
+}
+
+func TestGetEffectiveDeviceAssurance(t *testing.T) {
+	now := time.Now()
+
+	getDevice := func(assurance corev1.Device_Status_Binding_Assurance) *corev1.Device {
+		return &corev1.Device{
+			Status: &corev1.Device_Status{
+				Binding: &corev1.Device_Status_Binding{
+					Uid:       "binding",
+					Assurance: assurance,
+				},
+			},
+		}
+	}
+
+	getSession := func(proof *corev1.Session_Status_DeviceProof) *corev1.Session {
+		return &corev1.Session{
+			Status: &corev1.Session_Status{
+				DeviceProof: proof,
+			},
+		}
+	}
+
+	probe := getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_PROBE,
+		BindingUID: "binding",
+	})
+	staleProbe := getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_PROBE,
+		BindingUID: "another-binding",
+	})
+	hardwareKey := getSession(&corev1.Session_Status_DeviceProof{
+		Type: corev1.Session_Status_DeviceProof_HARDWARE_KEY,
+	})
+
+	for _, tc := range []struct {
+		assurance corev1.Device_Status_Binding_Assurance
+		sess      *corev1.Session
+		want      corev1.Device_Status_Binding_Assurance
+	}{
+		{corev1.Device_Status_Binding_ASSURANCE_UNKNOWN, nil, corev1.Device_Status_Binding_ASSURANCE_UNKNOWN},
+		{corev1.Device_Status_Binding_OWNER_ONLY, nil, corev1.Device_Status_Binding_OWNER_ONLY},
+		{corev1.Device_Status_Binding_IDENTIFIER, nil, corev1.Device_Status_Binding_IDENTIFIER},
+		{corev1.Device_Status_Binding_PROVIDER_ID, nil, corev1.Device_Status_Binding_IDENTIFIER},
+		{corev1.Device_Status_Binding_SIGNED, nil, corev1.Device_Status_Binding_IDENTIFIER},
+		{corev1.Device_Status_Binding_HARDWARE, nil, corev1.Device_Status_Binding_IDENTIFIER},
+		{corev1.Device_Status_Binding_PROVIDER_ID, getSession(nil), corev1.Device_Status_Binding_IDENTIFIER},
+		{corev1.Device_Status_Binding_PROVIDER_ID, staleProbe, corev1.Device_Status_Binding_IDENTIFIER},
+		{corev1.Device_Status_Binding_PROVIDER_ID, probe, corev1.Device_Status_Binding_PROVIDER_ID},
+		{corev1.Device_Status_Binding_PROVIDER_ID, hardwareKey, corev1.Device_Status_Binding_PROVIDER_ID},
+		{corev1.Device_Status_Binding_HARDWARE, hardwareKey, corev1.Device_Status_Binding_HARDWARE},
+		{corev1.Device_Status_Binding_OWNER_ONLY, hardwareKey, corev1.Device_Status_Binding_OWNER_ONLY},
+	} {
+		dev := getDevice(tc.assurance)
+		res := getEffectiveDevice(dev, tc.sess, now)
+		assert.Equal(t, tc.want, res.Status.Binding.Assurance, "%+v", tc)
+		assert.Equal(t, tc.assurance, dev.Status.Binding.Assurance, "the Device must not be changed")
 	}
 }
 
@@ -251,8 +310,8 @@ func TestIsAuthorizedDevicePosture(t *testing.T) {
 
 	svc.Spec.Authorization.InlinePolicies[0].Spec.Rules[0].Condition = &corev1.Condition{
 		Type: &corev1.Condition_Match{
-			Match: `has(ctx.device.status.posture) && ctx.device.status.binding.confidence == "HIGH" && ` +
-				`"SERIAL_NUMBER" in ctx.device.status.binding.evidence`,
+			Match: `has(ctx.device.status.posture) && ctx.device.status.binding.isOwnerMatched && ` +
+				`ctx.device.status.binding.assurance in ["PROVIDER_ID", "SIGNED", "HARDWARE"]`,
 		},
 	}
 	svc, err = adminSrv.UpdateService(ctx, svc)
@@ -261,22 +320,76 @@ func TestIsAuthorizedDevicePosture(t *testing.T) {
 
 	assert.False(t, isAuthorized())
 
+	setDeviceProof := func(proof *corev1.Session_Status_DeviceProof) {
+		usr.Session.Status.DeviceProof = proof
+		srv.cache.SetSession(usr.Session)
+	}
+
 	{
 		b := getBinding()
-		b.Confidence = corev1.Device_Status_Binding_MEDIUM
-		b.Evidence = []corev1.Device_Status_Binding_Evidence{corev1.Device_Status_Binding_OWNER_EMAIL}
+		b.IsOwnerMatched = true
+		b.Assurance = corev1.Device_Status_Binding_OWNER_ONLY
 		setDevice(b, getPosture(time.Now().Add(time.Hour)))
 		assert.False(t, isAuthorized())
 	}
 
 	{
 		b := getBinding()
-		b.Confidence = corev1.Device_Status_Binding_HIGH
-		b.Evidence = []corev1.Device_Status_Binding_Evidence{
-			corev1.Device_Status_Binding_OWNER_EMAIL,
-			corev1.Device_Status_Binding_SERIAL_NUMBER,
-		}
+		b.IsOwnerMatched = true
+		b.Assurance = corev1.Device_Status_Binding_IDENTIFIER
 		setDevice(b, getPosture(time.Now().Add(time.Hour)))
+		assert.False(t, isAuthorized())
+	}
+
+	{
+		b := getBinding()
+		b.IsOwnerMatched = true
+		b.Assurance = corev1.Device_Status_Binding_PROVIDER_ID
+		setDevice(b, getPosture(time.Now().Add(time.Hour)))
+		assert.False(t, isAuthorized(), "a strong Binding must not pass to a Session without a proof")
+
+		setDeviceProof(&corev1.Session_Status_DeviceProof{
+			Type:       corev1.Session_Status_DeviceProof_PROBE,
+			BindingUID: "another-binding",
+		})
+		assert.False(t, isAuthorized())
+
+		setDeviceProof(&corev1.Session_Status_DeviceProof{
+			Type:       corev1.Session_Status_DeviceProof_PROBE,
+			BindingUID: "binding",
+		})
+		assert.True(t, isAuthorized())
+
+		setDeviceProof(&corev1.Session_Status_DeviceProof{
+			Type: corev1.Session_Status_DeviceProof_HARDWARE_KEY,
+		})
 		assert.True(t, isAuthorized())
 	}
+
+	{
+		b := getBinding()
+		b.Assurance = corev1.Device_Status_Binding_PROVIDER_ID
+		setDevice(b, getPosture(time.Now().Add(time.Hour)))
+		assert.False(t, isAuthorized())
+	}
+
+	svc.Spec.Authorization.InlinePolicies[0].Spec.Rules[0].Condition = &corev1.Condition{
+		Type: &corev1.Condition_Match{
+			Match: `ctx.session.status.deviceProof.type == "HARDWARE_KEY"`,
+		},
+	}
+	svc, err = adminSrv.UpdateService(ctx, svc)
+	assert.Nil(t, err)
+	srv.cache.SetService(svc)
+
+	assert.True(t, isAuthorized())
+
+	setDeviceProof(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_PROBE,
+		BindingUID: "binding",
+	})
+	assert.False(t, isAuthorized())
+
+	setDeviceProof(nil)
+	assert.False(t, isAuthorized())
 }

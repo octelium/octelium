@@ -210,7 +210,7 @@ func (s *Server) getReqCtx(di *acache.DownstreamInfo, req *corev1.RequestContext
 	} else {
 		reqCtx = &corev1.RequestContext{
 			User:    di.User,
-			Device:  getEffectiveDevice(di.Device, time.Now()),
+			Device:  getEffectiveDevice(di.Device, di.Session, time.Now()),
 			Service: svc,
 			Session: di.Session,
 			Groups:  di.Groups,
@@ -223,12 +223,15 @@ func (s *Server) getReqCtx(di *acache.DownstreamInfo, req *corev1.RequestContext
 	return reqCtx
 }
 
-func getEffectiveDevice(dev *corev1.Device, now time.Time) *corev1.Device {
+func getEffectiveDevice(dev *corev1.Device, sess *corev1.Session, now time.Time) *corev1.Device {
 	if dev == nil || dev.Status == nil {
 		return dev
 	}
 
-	if dev.Status.Posture == nil && dev.Status.ProbeAttempt == nil {
+	isCapped := dev.Status.Binding.GetAssurance() > corev1.Device_Status_Binding_IDENTIFIER &&
+		!ucorev1.ToSession(sess).HasDeviceProof(dev.Status.Binding)
+
+	if dev.Status.Posture == nil && dev.Status.ProbeAttempt == nil && !isCapped {
 		return dev
 	}
 
@@ -237,6 +240,10 @@ func getEffectiveDevice(dev *corev1.Device, now time.Time) *corev1.Device {
 		ret.Status.Posture = nil
 	}
 	ret.Status.ProbeAttempt = nil
+
+	if isCapped {
+		ret.Status.Binding.Assurance = corev1.Device_Status_Binding_IDENTIFIER
+	}
 
 	return ret
 }

@@ -111,7 +111,7 @@ func (s *internalService) GetDownstreamFromSessionUID(
 		Session: di.Session,
 		User:    di.User,
 		Groups:  di.Groups,
-		Device:  getEffectiveDevice(di.Device, time.Now()),
+		Device:  getEffectiveDevice(di.Device, di.Session, time.Now()),
 	}, nil
 }
 

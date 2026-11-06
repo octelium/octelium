@@ -368,6 +368,7 @@ func TestDeviceAuthenticatorProof(t *testing.T) {
 		})
 		assert.NotNil(t, err)
 		assertWithheld(t, c)
+		assert.Nil(t, c.session(t).Status.DeviceProof)
 	})
 
 	t.Run("OtherAuthenticatorIsNoProof", func(t *testing.T) {
@@ -394,6 +395,9 @@ func TestDeviceAuthenticatorProof(t *testing.T) {
 		sess := c.session(t)
 		assert.Equal(t, deviceRef.Uid, sess.Status.DeviceRef.GetUid())
 		assert.Equal(t, authn.Metadata.Uid, sess.Status.RequiredAuthenticatorRef.GetUid())
+		assert.Equal(t, corev1.Session_Status_DeviceProof_HARDWARE_KEY, sess.Status.DeviceProof.GetType())
+		assert.True(t, sess.Status.DeviceProof.GetProvedAt().IsValid())
+		assert.Empty(t, sess.Status.DeviceProof.GetBindingUID(), "a hardware key proves the Device and not a Binding")
 
 		_, err := srv.doRegisterDevice(c.ctx(), &authv1.RegisterDeviceRequest{Info: info})
 		assert.NotNil(t, err)
@@ -455,6 +459,8 @@ func TestDeviceAuthenticatorProof(t *testing.T) {
 		assert.Nil(t, vTPM.authenticate(t, c, authn))
 		assert.Nil(t, srv.mustGetAuthenticator(t, authn).Status.DeviceRef,
 			"only the registration binds an Authenticator to a Device")
+		assert.Nil(t, c.session(t).Status.DeviceProof,
+			"an Authenticator that is not bound to the Device must not prove it")
 	})
 
 	t.Run("OwnerOfAnotherDeviceClaim", func(t *testing.T) {

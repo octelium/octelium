@@ -140,6 +140,95 @@ func TestConditionDevicePosture(t *testing.T) {
 		assert.True(t, res)
 	})
 
+	t.Run("Binding", func(t *testing.T) {
+		const assurance = `ctx.device.status.binding.assurance in ["PROVIDER_ID", "SIGNED", "HARDWARE"]`
+
+		getBindingInput := func(binding *corev1.Device_Status_Binding,
+			proof *corev1.Session_Status_DeviceProof) map[string]any {
+			ret, err := pbutils.ConvertToMap(&corev1.RequestContext{
+				Device: &corev1.Device{
+					Status: &corev1.Device_Status{
+						Binding: binding,
+					},
+				},
+				Session: &corev1.Session{
+					Status: &corev1.Session_Status{
+						DeviceProof: proof,
+					},
+				},
+			})
+			assert.Nil(t, err)
+
+			return map[string]any{
+				"ctx": ret,
+			}
+		}
+
+		strong := getBindingInput(&corev1.Device_Status_Binding{
+			Assurance:      corev1.Device_Status_Binding_PROVIDER_ID,
+			IsOwnerMatched: true,
+		}, &corev1.Session_Status_DeviceProof{
+			Type: corev1.Session_Status_DeviceProof_HARDWARE_KEY,
+		})
+		weak := getBindingInput(&corev1.Device_Status_Binding{
+			Assurance: corev1.Device_Status_Binding_IDENTIFIER,
+		}, nil)
+		empty := getBindingInput(&corev1.Device_Status_Binding{}, nil)
+
+		for _, tc := range []struct {
+			expr string
+			opa  string
+			want bool
+		}{
+			{
+				expr: assurance,
+				opa:  `input.` + assurance,
+				want: true,
+			},
+			{
+				expr: `ctx.device.status.binding.isOwnerMatched`,
+				opa:  `input.ctx.device.status.binding.isOwnerMatched`,
+				want: true,
+			},
+			{
+				expr: `ctx.session.status.deviceProof.type == "HARDWARE_KEY"`,
+				opa:  `input.ctx.session.status.deviceProof.type == "HARDWARE_KEY"`,
+				want: true,
+			},
+			{
+				expr: `ctx.session.status.deviceProof.type == "PROBE"`,
+				opa:  `input.ctx.session.status.deviceProof.type == "PROBE"`,
+			},
+		} {
+			celCond := &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: tc.expr,
+				},
+			}
+			opaCond := &corev1.Condition{
+				Type: &corev1.Condition_Opa{
+					Opa: &corev1.Condition_OPA{
+						Type: &corev1.Condition_OPA_Inline{
+							Inline: fmt.Sprintf("package octelium.condition\n\nmatch if {\n\t%s\n}\n", tc.opa),
+						},
+					},
+				},
+			}
+
+			for _, cond := range []*corev1.Condition{celCond, opaCond} {
+				res, err := srv.EvalCondition(ctx, cond, strong)
+				assert.Nil(t, err, "%+v", err)
+				assert.Equal(t, tc.want, res, "%s", tc.expr)
+
+				for _, input := range []map[string]any{weak, empty} {
+					res, err = srv.EvalCondition(ctx, cond, input)
+					assert.Nil(t, err, "%+v", err)
+					assert.False(t, res, "%s", tc.expr)
+				}
+			}
+		}
+	})
+
 	t.Run("GracePeriodAccepted", func(t *testing.T) {
 		const set = `["PASS", "GRACE_PERIOD"]`
 

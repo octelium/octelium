@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/opkce"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -618,6 +619,11 @@ func (s *server) doAuthenticateWithAuthenticator(ctx context.Context,
 		case sess.Status.DeviceRef.Uid != authn.Status.DeviceRef.Uid:
 			attempt.SetReason(authevents.ReasonNotAllowed)
 			return nil, grpcutils.PermissionDenied("Invalid Device")
+		}
+
+		sess.Status.DeviceProof = &corev1.Session_Status_DeviceProof{
+			Type:     corev1.Session_Status_DeviceProof_HARDWARE_KEY,
+			ProvedAt: pbutils.Now(),
 		}
 	}
 

@@ -1328,6 +1328,21 @@ func (s *Service) IsUpstreamHTTP2() bool {
 	return s.IsUpstreamHTTP2ByConfig(s.Spec.Config)
 }
 
+func (s *Session) HasDeviceProof(binding *corev1.Device_Status_Binding) bool {
+	if s.Session == nil || s.Status == nil || s.Status.DeviceProof == nil {
+		return false
+	}
+
+	switch s.Status.DeviceProof.Type {
+	case corev1.Session_Status_DeviceProof_HARDWARE_KEY:
+		return true
+	case corev1.Session_Status_DeviceProof_PROBE:
+		return binding.GetUid() != "" && s.Status.DeviceProof.BindingUID == binding.GetUid()
+	default:
+		return false
+	}
+}
+
 func (d *Device) IsPostureUsable(now time.Time) bool {
 	if d.Device == nil || d.Status == nil || d.Status.Posture == nil || d.Status.Binding == nil {
 		return false

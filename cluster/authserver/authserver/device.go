@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -308,15 +309,18 @@ func (s *server) doRegisterDeviceFinish(ctx context.Context, reqi *authv1.Regist
 		return nil, err
 	}
 
-	if dev, err := s.getDeviceByID(ctx, req.Info.Id); err == nil &&
-		dev.Status.UserRef != nil &&
-		dev.Status.UserRef.Uid == usr.Metadata.Uid {
-		return nil, grpcutils.AlreadyExists("This Device is already registered")
-	}
-
 	cc, err := s.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	if err != nil {
 		return nil, s.errInternalErr(err)
+	}
+
+	existing, err := s.checkCanCreateDevice(ctx, cc, usr, req.Info)
+	if err != nil {
+		return nil, err
+	}
+
+	if existing != nil {
+		return nil, grpcutils.AlreadyExists("This Device is already registered")
 	}
 
 	devReq, err := s.doBuildDevice(ctx, cc, req.Info, usr)
@@ -503,7 +507,8 @@ func (s *server) checkCanCreateDevice(ctx context.Context,
 		}
 		if len(devList.Items) > 0 {
 			dev := devList.Items[0]
-			if dev.Status.UserRef.Uid != usr.Metadata.Uid {
+			if dev.Status.UserRef.Uid != usr.Metadata.Uid ||
+				dev.Status.OsType != corev1.Device_Status_OSType(info.OsType) {
 				return nil, s.errInvalidArg("Invalid ID")
 			}
 			return dev, nil
@@ -517,7 +522,8 @@ func (s *server) checkCanCreateDevice(ctx context.Context,
 
 	if info.SerialNumber != "" {
 		for _, dev := range devList.Items {
-			if dev.Status.SerialNumber == info.SerialNumber {
+			if dev.Status.SerialNumber == info.SerialNumber &&
+				dev.Status.OsType == corev1.Device_Status_OSType(info.OsType) {
 				return dev, nil
 			}
 		}
@@ -549,22 +555,6 @@ func (s *server) checkCanCreateDevice(ctx context.Context,
 	}
 
 	return nil, nil
-}
-
-func (s *server) getDeviceByID(ctx context.Context, id string) (*corev1.Device, error) {
-	devList, err := s.octeliumC.CoreC().ListDevice(ctx, &rmetav1.ListOptions{
-		Filters: []*rmetav1.ListOptions_Filter{
-			urscsrv.FilterFieldEQValStr("status.id", id),
-		},
-	})
-	if err != nil {
-		return nil, s.errInternalErr(err)
-	}
-	if len(devList.Items) != 1 {
-		return nil, s.errNotFound("Invalid Device ID")
-	}
-
-	return devList.Items[0], nil
 }
 
 const (
@@ -669,7 +659,7 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 		}
 	}
 
-	probes := s.getIssuableProbes(ctx, cc, usr, dev, now)
+	probes := s.getIssuableProbes(ctx, cc, usr, dev, sess, now)
 	if len(probes) == 0 {
 		return &authv1.RunDeviceProbeBeginResponse{}, nil
 	}
@@ -708,7 +698,8 @@ func isProbeAttemptExpired(attempt *corev1.Device_Status_ProbeAttempt, now time.
 }
 
 func (s *server) getIssuableProbes(ctx context.Context,
-	cc *corev1.ClusterConfig, usr *corev1.User, dev *corev1.Device, now time.Time) []*corev1.ClusterConfig_Status_Device_Probe {
+	cc *corev1.ClusterConfig, usr *corev1.User, dev *corev1.Device,
+	sess *corev1.Session, now time.Time) []*corev1.ClusterConfig_Status_Device_Probe {
 
 	plan := cc.GetStatus().GetDevice()
 	if plan == nil || len(plan.Probes) == 0 {
@@ -716,7 +707,13 @@ func (s *server) getIssuableProbes(ctx context.Context,
 	}
 
 	ownerUID, ok := getProbeOwnerFilter(dev, now)
-	if !ok {
+	isProofOnly := !ok && !ucorev1.ToSession(sess).HasDeviceProof(dev.Status.Binding)
+
+	switch {
+	case ok:
+	case isProofOnly:
+		ownerUID = dev.Status.Binding.OwnerRef.GetUid()
+	default:
 		return nil
 	}
 
@@ -748,6 +745,10 @@ func (s *server) getIssuableProbes(ctx context.Context,
 		}
 
 		if p.Type == nil {
+			continue
+		}
+
+		if isProofOnly && p.GetPlatformIdentifier() != nil {
 			continue
 		}
 
