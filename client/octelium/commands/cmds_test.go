@@ -479,7 +479,7 @@ func TestClientServedListenerRecoveryE2E(t *testing.T) {
 					messages <- &userv1.ConnectResponse{Event: &userv1.ConnectResponse_UpdateService_{UpdateService: &userv1.ConnectResponse_UpdateService{Service: pending}}}
 					require.NoError(t, blocker.Close())
 				}
-				require.Eventually(t, func() bool { return roundTrip(targetAddr) }, 6*time.Second, 10*time.Millisecond)
+				require.Eventually(t, func() bool { return roundTrip(targetAddr) }, 4*time.Second, 10*time.Millisecond)
 				require.True(t, roundTrip(healthyAddr))
 				if scenario == "APIReconnect" || scenario == "UpdateWhilePending" {
 					assert.False(t, roundTrip(blocker.LocalAddr().String()), "an old controller must not restore its pending listener")

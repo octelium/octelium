@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"google.golang.org/protobuf/proto"
 )
 
 type Controller struct {
@@ -451,6 +453,11 @@ func (c *Controller) reconfigure() error {
 		return err
 	}
 
+	return c.reconfigureNetwork()
+}
+
+func (c *Controller) reconfigureNetwork() error {
+
 	if err := c.setDevAddrsAndRoutes(); err != nil {
 		return err
 	}
@@ -460,6 +467,12 @@ func (c *Controller) reconfigure() error {
 	}
 
 	return nil
+}
+
+func isGatewaysEqual(a, b []*userv1.Gateway) bool {
+	return slices.EqualFunc(a, b, func(x, y *userv1.Gateway) bool {
+		return proto.Equal(x, y)
+	})
 }
 
 func (c *Controller) SetConnectionState(state *userv1.ConnectionState) error {
@@ -482,7 +495,12 @@ func (c *Controller) SetConnectionState(state *userv1.ConnectionState) error {
 
 	c.c.Connection = state
 
-	if err := c.reconfigure(); err != nil {
+	apply := c.reconfigure
+	if isGatewaysEqual(old.GetGateways(), state.GetGateways()) {
+		apply = c.reconfigureNetwork
+	}
+
+	if err := apply(); err != nil {
 		zap.L().Warn("Could not apply the new Connection state. Rolling back", zap.Error(err))
 		c.c.Connection = old
 		return err

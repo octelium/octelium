@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/protobuf/proto"
@@ -530,6 +531,51 @@ func TestControllerSetConnectionStateRollsBackInvalidAddresses(t *testing.T) {
 			assert.Nil(t, c.Reconfigure())
 		})
 	}
+}
+
+func TestControllerSetConnectionStateKeepsUnchangedGatewayPeers(t *testing.T) {
+	c := newTestPlatformController(t, userv1.ConnectionState_BOTH)
+	c.isQUIC = false
+	c.c.Preferences.ConnectionType = cliconfigv1.Connection_Preferences_CONNECTION_TYPE_WG
+	if !assert.Nil(t, c.doInitDevNetstack(context.Background())) {
+		return
+	}
+	t.Cleanup(func() { assert.Nil(t, c.Close()) })
+	key, err := wgtypes.GeneratePrivateKey()
+	if !assert.Nil(t, err) {
+		return
+	}
+	gw := &userv1.Gateway{
+		Id: "gw-1", Addresses: []string{"127.0.0.1"}, CIDRs: []string{"100.64.0.1/32", "fd00::1/128"},
+		Wireguard: &userv1.Gateway_WireGuard{Port: 51820, PublicKey: key.PublicKey().String()},
+	}
+	if !assert.Nil(t, c.AddGateway(context.Background(), gw)) {
+		return
+	}
+	getPeer := func() *device.Peer { return c.dev.LookupPeer(device.NoisePublicKey(key.PublicKey())) }
+	peer := getPeer()
+	if !assert.NotNil(t, peer) {
+		return
+	}
+
+	state := proto.Clone(c.c.Connection).(*userv1.ConnectionState)
+	state.Addresses = append(state.Addresses, &metav1.DualStackNetwork{V4: "100.64.0.3/32", V6: "fd00::3/128"})
+	assert.Nil(t, c.SetConnectionState(state))
+	assert.Same(t, state, c.c.Connection)
+	assert.Contains(t, testControllerNetstackAddresses(c), "100.64.0.3/32")
+	assert.Same(t, peer, getPeer())
+
+	state = proto.Clone(c.c.Connection).(*userv1.ConnectionState)
+	state.Gateways[0].Wireguard.Port = 51821
+	assert.Nil(t, c.SetConnectionState(state))
+	assert.NotSame(t, peer, getPeer())
+	uapi, err := c.dev.IpcGet()
+	assert.Nil(t, err)
+	assert.Contains(t, uapi, "endpoint=127.0.0.1:51821")
+
+	peer = getPeer()
+	assert.Nil(t, c.Reconfigure())
+	assert.NotSame(t, peer, getPeer())
 }
 
 func TestControllerUpdatePrivateKeyNetstack(t *testing.T) {
