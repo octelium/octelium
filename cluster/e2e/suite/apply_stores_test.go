@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +15,7 @@ import (
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 )
 
 func TestOpenSearchRequest(t *testing.T) {
@@ -87,4 +91,60 @@ func TestOpenSearchRequestDeadline(t *testing.T) {
 			assert.Less(t, time.Since(started), 2*time.Second)
 		})
 	}
+}
+
+func TestOpenSearchManifestMemoryLimit(t *testing.T) {
+	content, err := manifestFS.ReadFile("testdata/manifests/datastores.yaml")
+	require.Nil(t, err)
+
+	type manifest struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Spec struct {
+			Config struct {
+				Upstream struct {
+					Container struct {
+						ResourceLimit struct {
+							Memory struct {
+								Megabytes int `json:"megabytes"`
+							} `json:"memory"`
+						} `json:"resourceLimit"`
+						Env []struct {
+							Name  string `json:"name"`
+							Value string `json:"value"`
+						} `json:"env"`
+					} `json:"container"`
+				} `json:"upstream"`
+			} `json:"config"`
+		} `json:"spec"`
+	}
+
+	for _, doc := range strings.Split(string(content), "\n---\n") {
+		var m manifest
+		require.Nil(t, yaml.Unmarshal([]byte(doc), &m))
+		if m.Metadata.Name != "opensearch" {
+			continue
+		}
+
+		container := m.Spec.Config.Upstream.Container
+
+		for _, env := range container.Env {
+			if env.Name != "OPENSEARCH_JAVA_OPTS" {
+				continue
+			}
+
+			match := regexp.MustCompile(`-Xmx(\d+)m`).FindStringSubmatch(env.Value)
+			require.Len(t, match, 2)
+
+			heap, err := strconv.Atoi(match[1])
+			require.Nil(t, err)
+
+			assert.GreaterOrEqual(t, container.ResourceLimit.Memory.Megabytes, 2*heap,
+				"the JVM needs off-heap memory on top of its heap")
+			return
+		}
+	}
+
+	require.Fail(t, "the OpenSearch heap size is not set in the manifest")
 }

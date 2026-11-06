@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,6 +83,45 @@ func TestHTTPNoKeepAlive(t *testing.T) {
 			require.Nil(t, err)
 			assert.Equal(t, http.StatusServiceUnavailable, res.StatusCode())
 			assert.Equal(t, int32(4), requests.Load())
+		})
+	}
+}
+
+func TestWaitHungAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		wait func(t *testing.T, h *H, c *resty.Client)
+	}{
+		{
+			name: "WaitStatus",
+			wait: func(t *testing.T, h *H, c *resty.Client) {
+				h.WaitStatus(t, c, "/", http.StatusOK)
+			},
+		},
+		{
+			name: "WaitGetStatus",
+			wait: func(t *testing.T, h *H, c *resty.Client) {
+				h.WaitGetStatus(t, c, "/", http.StatusOK)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if requests.Add(1) == 1 {
+					<-r.Context().Done()
+				}
+			}))
+			defer server.Close()
+
+			h := &H{}
+			c := h.HTTP().SetBaseURL(server.URL)
+			t.Cleanup(c.GetClient().CloseIdleConnections)
+
+			tc.wait(t, h, c)
+			assert.Equal(t, int32(2), requests.Load())
 		})
 	}
 }

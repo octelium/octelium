@@ -63,6 +63,9 @@ spec:
       container:
         image: opensearchproject/opensearch:latest
         port: 9200
+        resourceLimit:
+          memory:
+            megabytes: 1536
         env:
           - name: discovery.type
             value: single-node

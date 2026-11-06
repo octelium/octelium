@@ -31,6 +31,7 @@ import (
 )
 
 const DecisionBudget = 30 * time.Second
+const decisionAttemptTimeout = 10 * time.Second
 
 func (h *H) AccessToken(t *testing.T, usr *corev1.User) string {
 	t.Helper()
@@ -74,6 +75,9 @@ func (h *H) WaitStatus(t *testing.T, c *resty.Client, path string, want int) tim
 
 	return h.Within(t, fmt.Sprintf("GET %s to return %d", path, want), DecisionBudget,
 		func(ctx context.Context) error {
+			ctx, cancel := context.WithTimeout(ctx, decisionAttemptTimeout)
+			defer cancel()
+
 			got, err := h.StatusOf(ctx, c, path)
 			if err != nil {
 				return err

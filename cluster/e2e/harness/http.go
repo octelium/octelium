@@ -50,6 +50,9 @@ func (h *H) WaitGetStatus(t *testing.T, c *resty.Client, path string, want int) 
 
 	h.Eventually(t, fmt.Sprintf("GET %s to return %d", path, want), DecisionBudget,
 		func(ctx context.Context) error {
+			ctx, cancel := context.WithTimeout(ctx, decisionAttemptTimeout)
+			defer cancel()
+
 			res, err := c.R().SetContext(ctx).Get(path)
 			if err != nil {
 				return err
