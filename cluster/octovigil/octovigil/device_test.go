@@ -143,6 +143,10 @@ func TestGetEffectiveDeviceAssurance(t *testing.T) {
 	hardwareKey := getSession(&corev1.Session_Status_DeviceProof{
 		Type: corev1.Session_Status_DeviceProof_HARDWARE_KEY,
 	})
+	signed := getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_VENDOR_SIGNED,
+		BindingUID: "binding",
+	})
 
 	for _, tc := range []struct {
 		assurance corev1.Device_Status_Binding_Assurance
@@ -161,12 +165,48 @@ func TestGetEffectiveDeviceAssurance(t *testing.T) {
 		{corev1.Device_Status_Binding_PROVIDER_ID, hardwareKey, corev1.Device_Status_Binding_PROVIDER_ID},
 		{corev1.Device_Status_Binding_HARDWARE, hardwareKey, corev1.Device_Status_Binding_HARDWARE},
 		{corev1.Device_Status_Binding_OWNER_ONLY, hardwareKey, corev1.Device_Status_Binding_OWNER_ONLY},
+		{corev1.Device_Status_Binding_SIGNED, probe, corev1.Device_Status_Binding_PROVIDER_ID},
+		{corev1.Device_Status_Binding_SIGNED, signed, corev1.Device_Status_Binding_SIGNED},
+		{corev1.Device_Status_Binding_SIGNED, hardwareKey, corev1.Device_Status_Binding_SIGNED},
 	} {
 		dev := getDevice(tc.assurance)
 		res := getEffectiveDevice(dev, tc.sess, now)
 		assert.Equal(t, tc.want, res.Status.Binding.Assurance, "%+v", tc)
 		assert.Equal(t, tc.assurance, dev.Status.Binding.Assurance, "the Device must not be changed")
 	}
+}
+
+func TestGetEffectiveDeviceIsNotCloned(t *testing.T) {
+	now := time.Now()
+
+	dev := &corev1.Device{
+		Status: &corev1.Device_Status{
+			Binding: &corev1.Device_Status_Binding{
+				Uid:       "binding",
+				State:     corev1.Device_Status_Binding_ACCEPTED,
+				Validity:  corev1.Device_Status_Binding_VALID,
+				Assurance: corev1.Device_Status_Binding_PROVIDER_ID,
+			},
+			Posture: &corev1.Device_Status_Posture{
+				ExpiresAt: timestamppb.New(now.Add(time.Hour)),
+			},
+		},
+	}
+
+	sess := &corev1.Session{
+		Status: &corev1.Session_Status{
+			DeviceProof: &corev1.Session_Status_DeviceProof{
+				Type:       corev1.Session_Status_DeviceProof_PROBE,
+				BindingUID: "binding",
+			},
+		},
+	}
+
+	assert.True(t, dev == getEffectiveDevice(dev, sess, now))
+	assert.False(t, dev == getEffectiveDevice(dev, nil, now), "a capped Device must not change the cached Device")
+
+	dev.Status.Posture.ExpiresAt = timestamppb.New(now.Add(-time.Minute))
+	assert.False(t, dev == getEffectiveDevice(dev, sess, now), "an expired posture must not change the cached Device")
 }
 
 func TestIsAuthorizedDevicePosture(t *testing.T) {

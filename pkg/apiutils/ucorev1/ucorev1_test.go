@@ -357,6 +357,68 @@ func TestSessionHasDeviceProof(t *testing.T) {
 		Type:       corev1.Session_Status_DeviceProof_PROBE,
 		BindingUID: "binding",
 	})).HasDeviceProof(nil))
+
+	assert.True(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_VENDOR_SIGNED,
+		BindingUID: "binding",
+	})).HasDeviceProof(binding))
+	assert.False(t, ToSession(getSession(&corev1.Session_Status_DeviceProof{
+		Type:       corev1.Session_Status_DeviceProof_VENDOR_SIGNED,
+		BindingUID: "another-binding",
+	})).HasDeviceProof(binding))
+}
+
+func TestSessionGetDeviceAssurance(t *testing.T) {
+	getBinding := func(assurance corev1.Device_Status_Binding_Assurance) *corev1.Device_Status_Binding {
+		return &corev1.Device_Status_Binding{Uid: "binding", Assurance: assurance}
+	}
+
+	getSession := func(proofType corev1.Session_Status_DeviceProof_Type, bindingUID string) *corev1.Session {
+		return &corev1.Session{
+			Status: &corev1.Session_Status{
+				DeviceProof: &corev1.Session_Status_DeviceProof{
+					Type:       proofType,
+					BindingUID: bindingUID,
+				},
+			},
+		}
+	}
+
+	assert.Equal(t, corev1.Device_Status_Binding_ASSURANCE_UNKNOWN, ToSession(nil).GetDeviceAssurance(nil))
+
+	probe := getSession(corev1.Session_Status_DeviceProof_PROBE, "binding")
+	signed := getSession(corev1.Session_Status_DeviceProof_VENDOR_SIGNED, "binding")
+	staleSigned := getSession(corev1.Session_Status_DeviceProof_VENDOR_SIGNED, "another-binding")
+	hardwareKey := getSession(corev1.Session_Status_DeviceProof_HARDWARE_KEY, "")
+
+	for _, tc := range []struct {
+		sess      *corev1.Session
+		assurance corev1.Device_Status_Binding_Assurance
+		want      corev1.Device_Status_Binding_Assurance
+	}{
+		{nil, corev1.Device_Status_Binding_OWNER_ONLY, corev1.Device_Status_Binding_OWNER_ONLY},
+		{nil, corev1.Device_Status_Binding_IDENTIFIER, corev1.Device_Status_Binding_IDENTIFIER},
+		{nil, corev1.Device_Status_Binding_PROVIDER_ID, corev1.Device_Status_Binding_IDENTIFIER},
+		{nil, corev1.Device_Status_Binding_SIGNED, corev1.Device_Status_Binding_IDENTIFIER},
+		{nil, corev1.Device_Status_Binding_HARDWARE, corev1.Device_Status_Binding_IDENTIFIER},
+
+		{staleSigned, corev1.Device_Status_Binding_SIGNED, corev1.Device_Status_Binding_IDENTIFIER},
+
+		{probe, corev1.Device_Status_Binding_IDENTIFIER, corev1.Device_Status_Binding_IDENTIFIER},
+		{probe, corev1.Device_Status_Binding_PROVIDER_ID, corev1.Device_Status_Binding_PROVIDER_ID},
+		{probe, corev1.Device_Status_Binding_SIGNED, corev1.Device_Status_Binding_PROVIDER_ID},
+		{probe, corev1.Device_Status_Binding_HARDWARE, corev1.Device_Status_Binding_PROVIDER_ID},
+
+		{signed, corev1.Device_Status_Binding_PROVIDER_ID, corev1.Device_Status_Binding_PROVIDER_ID},
+		{signed, corev1.Device_Status_Binding_SIGNED, corev1.Device_Status_Binding_SIGNED},
+		{signed, corev1.Device_Status_Binding_HARDWARE, corev1.Device_Status_Binding_SIGNED},
+
+		{hardwareKey, corev1.Device_Status_Binding_OWNER_ONLY, corev1.Device_Status_Binding_OWNER_ONLY},
+		{hardwareKey, corev1.Device_Status_Binding_SIGNED, corev1.Device_Status_Binding_SIGNED},
+		{hardwareKey, corev1.Device_Status_Binding_HARDWARE, corev1.Device_Status_Binding_HARDWARE},
+	} {
+		assert.Equal(t, tc.want, ToSession(tc.sess).GetDeviceAssurance(getBinding(tc.assurance)), "%+v", tc)
+	}
 }
 
 func TestDeviceBindingStoredWithConfidence(t *testing.T) {

@@ -228,21 +228,22 @@ func getEffectiveDevice(dev *corev1.Device, sess *corev1.Session, now time.Time)
 		return dev
 	}
 
-	isCapped := dev.Status.Binding.GetAssurance() > corev1.Device_Status_Binding_IDENTIFIER &&
-		!ucorev1.ToSession(sess).HasDeviceProof(dev.Status.Binding)
+	assurance := ucorev1.ToSession(sess).GetDeviceAssurance(dev.Status.Binding)
+	isCapped := assurance != dev.Status.Binding.GetAssurance()
+	isPostureUsable := dev.Status.Posture == nil || ucorev1.ToDevice(dev).IsPostureUsable(now)
 
-	if dev.Status.Posture == nil && dev.Status.ProbeAttempt == nil && !isCapped {
+	if isPostureUsable && dev.Status.ProbeAttempt == nil && !isCapped {
 		return dev
 	}
 
 	ret := pbutils.Clone(dev).(*corev1.Device)
-	if !ucorev1.ToDevice(ret).IsPostureUsable(now) {
+	if !isPostureUsable {
 		ret.Status.Posture = nil
 	}
 	ret.Status.ProbeAttempt = nil
 
 	if isCapped {
-		ret.Status.Binding.Assurance = corev1.Device_Status_Binding_IDENTIFIER
+		ret.Status.Binding.Assurance = assurance
 	}
 
 	return ret

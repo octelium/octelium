@@ -1336,10 +1336,26 @@ func (s *Session) HasDeviceProof(binding *corev1.Device_Status_Binding) bool {
 	switch s.Status.DeviceProof.Type {
 	case corev1.Session_Status_DeviceProof_HARDWARE_KEY:
 		return true
-	case corev1.Session_Status_DeviceProof_PROBE:
+	case corev1.Session_Status_DeviceProof_PROBE,
+		corev1.Session_Status_DeviceProof_VENDOR_SIGNED:
 		return binding.GetUid() != "" && s.Status.DeviceProof.BindingUID == binding.GetUid()
 	default:
 		return false
+	}
+}
+
+func (s *Session) GetDeviceAssurance(binding *corev1.Device_Status_Binding) corev1.Device_Status_Binding_Assurance {
+	if !s.HasDeviceProof(binding) {
+		return min(binding.GetAssurance(), corev1.Device_Status_Binding_IDENTIFIER)
+	}
+
+	switch s.Status.DeviceProof.Type {
+	case corev1.Session_Status_DeviceProof_PROBE:
+		return min(binding.GetAssurance(), corev1.Device_Status_Binding_PROVIDER_ID)
+	case corev1.Session_Status_DeviceProof_VENDOR_SIGNED:
+		return min(binding.GetAssurance(), corev1.Device_Status_Binding_SIGNED)
+	default:
+		return binding.GetAssurance()
 	}
 }
 
