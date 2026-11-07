@@ -1,10 +1,7 @@
-import { Badge, DetailList, DetailRow, DetailValue } from "@/ui";
+import { DetailList, DetailRow, DetailValue } from "@/ui";
 import { getServicePrivateFQDN, getServicePublicURL } from "@/utils/octelium";
 import { Service } from "@octelium/apis/main/userv1";
 import { getServiceCommands } from "./commands";
-
-const getAddressFamily = (address: string) =>
-  address.includes(":") ? "IPv6" : "IPv4";
 
 const ServiceDetails = (props: { item: Service; domain: string }) => {
   const { item, domain } = props;
@@ -13,12 +10,25 @@ const ServiceDetails = (props: { item: Service; domain: string }) => {
     ? getServicePublicURL(item, domain)
     : undefined;
   const commands = getServiceCommands(item, domain);
+  const hasAddresses = addresses.length > 0;
 
   return (
     <div className="rounded-b-[11px] border-t border-slate-100 bg-canvas/60 p-3 sm:p-4">
       <DetailList>
+        <DetailRow label="Private hostname">
+          <DetailValue
+            value={getServicePrivateFQDN(item, domain)}
+            copyLabel="Copy private hostname"
+          />
+        </DetailRow>
+        <DetailRow label="Resource name">
+          <DetailValue
+            value={item.metadata?.name ?? ""}
+            copyLabel="Copy resource name"
+          />
+        </DetailRow>
         {publicURL && (
-          <DetailRow label="Public URL">
+          <DetailRow label="Public URL" full={!hasAddresses}>
             <DetailValue
               value={publicURL}
               href={publicURL}
@@ -26,32 +36,21 @@ const ServiceDetails = (props: { item: Service; domain: string }) => {
             />
           </DetailRow>
         )}
-        <DetailRow label="Private hostname">
-          <DetailValue
-            value={getServicePrivateFQDN(item, domain)}
-            copyLabel="Copy private hostname"
-          />
-        </DetailRow>
-        {addresses.length > 0 && (
-          <DetailRow label="Private addresses">
-            {addresses.map((address) => (
-              <DetailValue
-                key={address}
-                value={address}
-                copyLabel={`Copy ${address}`}
-                addon={<Badge>{getAddressFamily(address)}</Badge>}
-              />
-            ))}
+        {hasAddresses && (
+          <DetailRow label="Private addresses" full={!publicURL}>
+            <div className="flex min-w-0 flex-wrap gap-x-5">
+              {addresses.map((address) => (
+                <DetailValue
+                  key={address}
+                  value={address}
+                  copyLabel={`Copy ${address}`}
+                />
+              ))}
+            </div>
           </DetailRow>
         )}
-        <DetailRow label="Resource name">
-          <DetailValue
-            value={item.metadata?.name ?? ""}
-            copyLabel="Copy resource name"
-          />
-        </DetailRow>
         {commands.length > 0 && (
-          <DetailRow label="Command">
+          <DetailRow label="Command" full>
             {commands.map((command, index) => (
               <DetailValue
                 key={command}

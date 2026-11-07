@@ -367,21 +367,29 @@ export const DetailList = (props: {
   children: React.ReactNode;
   className?: string;
 }) => (
-  <dl
+  <div
     className={twMerge(
-      "@container m-0 min-w-0 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-card",
+      "@container min-w-0 overflow-hidden rounded-lg border border-slate-200 shadow-card",
       props.className,
     )}
   >
-    {props.children}
-  </dl>
+    <dl className="m-0 grid grid-cols-1 gap-px bg-slate-100 @4xl:grid-cols-2">
+      {props.children}
+    </dl>
+  </div>
 );
 
 export const DetailRow = (props: {
   label: string;
   children: React.ReactNode;
+  full?: boolean;
 }) => (
-  <div className="grid grid-cols-1 gap-x-4 py-2 pl-3.5 pr-2 transition-colors hover:bg-slate-50 @md:grid-cols-[8rem_minmax(0,1fr)]">
+  <div
+    className={twMerge(
+      "grid min-w-0 grid-cols-1 gap-x-4 bg-white py-2 pl-3.5 pr-2 transition-colors hover:bg-slate-50 @md:grid-cols-[8rem_minmax(0,1fr)]",
+      props.full && "@4xl:col-span-2",
+    )}
+  >
     <dt className="text-xs font-normal leading-5 text-slate-500 @md:leading-7">
       {props.label}
     </dt>
@@ -393,7 +401,6 @@ export const DetailValue = (props: {
   value: string;
   copyLabel: string;
   href?: string;
-  addon?: React.ReactNode;
 }) => (
   <div className="flex min-h-7 min-w-0 items-center gap-2">
     {props.href ? (
@@ -416,7 +423,6 @@ export const DetailValue = (props: {
         {props.value}
       </span>
     )}
-    {props.addon}
     <CopyButton
       value={props.value}
       label={props.copyLabel}

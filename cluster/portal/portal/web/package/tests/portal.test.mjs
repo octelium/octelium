@@ -419,18 +419,17 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       await details.waitFor();
       assert.deepEqual(await details.locator("dt").allInnerTexts(), [
         "Private hostname",
-        "Private addresses",
         "Resource name",
+        "Private addresses",
         "Command",
       ]);
 
-      const addresses = details.locator("dd").nth(1);
+      const addresses = details.locator("dd").nth(2);
       assert.deepEqual(await addresses.locator(".font-mono").allInnerTexts(), [
         "fd00:0:1::a",
         "100.64.0.10",
       ]);
-      await addresses.getByText("IPv6", { exact: true }).waitFor();
-      await addresses.getByText("IPv4", { exact: true }).waitFor();
+      assert.equal(await details.getByText(/^IPv[46]$/).count(), 0);
 
       for (const name of [
         "Copy private hostname",
@@ -478,7 +477,7 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       assert.equal(await link.getAttribute("href"), url);
       assert.equal(await link.getAttribute("target"), "_blank");
       assert.equal(await link.getAttribute("rel"), "noopener noreferrer");
-      assert.equal(await row.locator("dt").first().innerText(), "Public URL");
+      assert.equal(await row.locator("dt").nth(2).innerText(), "Public URL");
     });
 
     it("adapts the details of a Service to the available width", async () => {
@@ -517,6 +516,58 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
           elements,
         );
       }
+    });
+
+    it("uses two columns for the details of a Service on wide screens", async () => {
+      await load("/services?namespace=default&type=WEB");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of demo-nginx" })
+        .click();
+      const details = row.locator("dl");
+      await details.waitFor();
+      const boxes = await details
+        .locator(":scope > div")
+        .evaluateAll((cells) =>
+          cells.map((cell) => {
+            const box = cell.getBoundingClientRect();
+            return { x: box.x, y: box.y, width: box.width };
+          }),
+        );
+      const [hostname, resource, url, addresses, command] = boxes;
+      assert.equal(hostname.y, resource.y);
+      assert.equal(url.y, addresses.y);
+      assert.ok(hostname.x + hostname.width <= resource.x);
+      assert.ok(url.x + url.width <= addresses.x);
+      assert.ok(command.width > hostname.width * 1.9);
+
+      const values = await row
+        .locator("dd")
+        .nth(3)
+        .locator(".font-mono")
+        .evaluateAll((elements) =>
+          elements.map((element) => element.getBoundingClientRect().y),
+        );
+      assert.equal(values.length, 2);
+      assert.equal(values[0], values[1]);
+    });
+
+    it("gives the single remaining detail of a Service the whole row", async () => {
+      await load("/services?namespace=default&type=HTTP");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of api", exact: true })
+        .click();
+      const details = row.locator("dl");
+      await details.waitFor();
+      const widths = await details
+        .locator(":scope > div")
+        .evaluateAll((cells) =>
+          cells.map((cell) => cell.getBoundingClientRect().width),
+        );
+      assert.ok(widths[2] > widths[0] * 1.9);
     });
 
     it("explains that private access needs the Octelium client", async () => {

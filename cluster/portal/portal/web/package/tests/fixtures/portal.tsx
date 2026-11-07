@@ -67,6 +67,7 @@ const services = [
   service("demo-nginx", "default", T.WEB, 80, {
     displayName: "Demo website",
     isPublic: true,
+    addresses: ["fd00:0:1::b", "100.64.0.11"],
   }),
   service("billing", "production", T.HTTP, 443, {
     displayName: "Billing",
