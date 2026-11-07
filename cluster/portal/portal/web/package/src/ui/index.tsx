@@ -385,7 +385,7 @@ export const DetailRow = (props: {
     <dt className="text-xs font-normal leading-5 text-slate-500 @md:leading-7">
       {props.label}
     </dt>
-    <dd className="m-0 min-w-0">{props.children}</dd>
+    <dd className="m-0 flex min-w-0 flex-col gap-1">{props.children}</dd>
   </div>
 );
 

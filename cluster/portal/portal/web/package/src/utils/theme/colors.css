@@ -5,18 +5,6 @@
 
   --color-code: #282c34;
   --color-code-border: #3c424f;
-  --color-terminal: var(--color-white);
-  --color-terminal-panel: var(--color-slate-50);
-  --color-terminal-line: var(--color-slate-200);
-  --color-terminal-hover: var(--color-slate-100);
-  --color-terminal-dim: var(--color-slate-400);
-  --color-terminal-muted: var(--color-slate-500);
-  --color-terminal-text: var(--color-slate-700);
-  --color-terminal-bright: var(--color-slate-900);
-  --color-terminal-flag: var(--color-blue-700);
-  --color-terminal-target: var(--color-emerald-700);
-  --color-terminal-success: var(--color-emerald-600);
-  --color-terminal-error: var(--color-red-600);
 
   --shadow-surface: var(--app-shadow-surface);
   --shadow-card: var(--app-shadow-card);
@@ -41,9 +29,6 @@
   --color-canvas: oklch(13.5% 0.002 270);
   --color-white: oklch(17% 0.002 270);
   --color-black: oklch(98.5% 0.002 270);
-
-  --color-terminal: oklch(12% 0.002 270);
-  --color-terminal-panel: oklch(15% 0.002 270);
 
   --color-slate-50: oklch(20.0% 0.002 270);
   --color-slate-100: oklch(22.5% 0.002 270);

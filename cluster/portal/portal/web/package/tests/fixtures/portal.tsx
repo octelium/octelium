@@ -13,6 +13,7 @@ import {
 } from "@octelium/apis/main/userv1";
 
 type FixtureOptions = {
+  cordium?: boolean;
   empty?: boolean;
   failServices?: number;
   slowServices?: boolean;
@@ -108,6 +109,12 @@ const services = [
   a.status!.primaryHostname.localeCompare(b.status!.primaryHostname),
 );
 
+const cordium = Service.create({
+  metadata: { name: "default.cordium", uid: "default-cordium" },
+  spec: { type: T.WEB, port: 8080, isPublic: true },
+  status: { namespace: "cordium", primaryHostname: "cordium" },
+});
+
 const namespaces = [
   ["data", "Data platform", "Analytics, logs and streaming infrastructure."],
   ["default", "", ""],
@@ -201,6 +208,14 @@ user.listService = async (request: ListServiceOptions) => {
           (!request.type || item.spec?.type === request.type),
       );
   return { response: ServiceList.create(paginate(items, request.common)) };
+};
+
+user.getService = async (request: unknown) => {
+  calls.push({ method: "getService", request });
+  if (!options.cordium) {
+    throw Object.assign(new Error("not found"), { code: "NOT_FOUND" });
+  }
+  return { response: cordium };
 };
 
 user.listNamespace = async (request: ListNamespaceOptions) => {

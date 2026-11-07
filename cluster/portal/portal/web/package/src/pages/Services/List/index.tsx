@@ -29,9 +29,12 @@ import {
 import { getClientUser } from "@/utils/client";
 import { useAppSelector, useFilterParams } from "@/utils/hooks";
 import {
+  CORDIUM_SERVICE_NAME,
+  getCordiumConnectURL,
   getServiceHostname,
   getServicePrivateFQDN,
   getServicePublicFQDN,
+  hasCordiumConnect,
 } from "@/utils/octelium";
 import {
   getServiceTypeByKey,
@@ -42,6 +45,7 @@ import { ActionIcon, Button, Collapse, Select } from "@mantine/core";
 import {
   CommonListOptions_OrderBy_Mode,
   CommonListOptions_OrderBy_Type,
+  GetOptions,
 } from "@octelium/apis/main/metav1";
 import {
   ListNamespaceOptions,
@@ -86,12 +90,13 @@ const typeOptionIcons = new Map(
 const ServiceRow = (props: {
   item: Service;
   domain: string;
+  cordium?: Service;
   tokens: string[];
   namespaceFilter: string;
   typeFilter?: string;
   buildURL: (updates: Record<string, string | null>) => string;
 }) => {
-  const { item, domain, tokens } = props;
+  const { item, domain, cordium, tokens } = props;
   const metadata = item.metadata;
   const [expanded, setExpanded] = React.useState(false);
   const detailsId = React.useId();
@@ -108,6 +113,10 @@ const ServiceRow = (props: {
     item.spec?.isPublic &&
     (item.spec.type === Service_Spec_Type.WEB ||
       item.spec.type === Service_Spec_Type.RDP_WEB);
+  const connectURL =
+    cordium && hasCordiumConnect(item)
+      ? getCordiumConnectURL(cordium, item, domain)
+      : undefined;
 
   const toggleFromRow = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
@@ -130,7 +139,7 @@ const ServiceRow = (props: {
         )}
       >
         <div
-          className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 px-4 py-3.5"
+          className="grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 px-4 py-3.5 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"
           onClick={toggleFromRow}
         >
           <IconTile className="sm:row-span-2">
@@ -183,43 +192,63 @@ const ServiceRow = (props: {
             )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-1 sm:row-span-2">
-            {canVisit && (
-              <Button
-                component="a"
-                href={`https://${getServicePublicFQDN(item, domain)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="default"
-                size="xs"
-                rightSection={<ArrowUpRight size={13} strokeWidth={2.25} />}
-                aria-label={`Open ${hostname} in a new tab`}
-              >
-                Open
-              </Button>
-            )}
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size={30}
-              aria-controls={detailsId}
-              aria-expanded={expanded}
-              aria-label={`${expanded ? "Hide" : "Show"} details of ${hostname}`}
-              onClick={() => setExpanded((value) => !value)}
-            >
-              <ChevronDown
-                size={16}
-                strokeWidth={2.25}
-                className={twMerge(
-                  "text-slate-500 transition-transform duration-200",
-                  expanded && "rotate-180",
-                )}
-                aria-hidden
-              />
-            </ActionIcon>
-          </div>
+          {(connectURL || canVisit) && (
+            <div className="col-span-3 row-start-3 mt-2.5 flex gap-2 sm:col-span-1 sm:col-start-3 sm:row-span-2 sm:row-start-1 sm:mt-0">
+              {connectURL && (
+                <Button
+                  component="a"
+                  href={connectURL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="default"
+                  size="xs"
+                  className="flex-1 sm:flex-none"
+                  rightSection={<ArrowUpRight size={13} strokeWidth={2.25} />}
+                  aria-label={`Connect to ${hostname} in a new tab`}
+                >
+                  Connect
+                </Button>
+              )}
+              {canVisit && (
+                <Button
+                  component="a"
+                  href={`https://${getServicePublicFQDN(item, domain)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="default"
+                  size="xs"
+                  className="flex-1 sm:flex-none"
+                  rightSection={<ArrowUpRight size={13} strokeWidth={2.25} />}
+                  aria-label={`Open ${hostname} in a new tab`}
+                >
+                  Open
+                </Button>
+              )}
+            </div>
+          )}
 
-          <ResourceListLabelWrap className="col-span-3 mt-2 sm:col-span-1 sm:col-start-2">
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size={30}
+            className="col-start-3 row-start-1 sm:col-start-4 sm:row-span-2"
+            aria-controls={detailsId}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Hide" : "Show"} details of ${hostname}`}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <ChevronDown
+              size={16}
+              strokeWidth={2.25}
+              className={twMerge(
+                "text-slate-500 transition-transform duration-200",
+                expanded && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </ActionIcon>
+
+          <ResourceListLabelWrap className="col-span-3 row-start-2 mt-2 sm:col-span-1 sm:col-start-2">
             {typeInfo.key !== "UNSET" && (
               <ResourceListLabel
                 label="Type"
@@ -376,6 +405,18 @@ const Page = () => {
     ],
     queryFn: async () => getClientUser().listNamespace(namespaceOptions),
     staleTime: 5 * 60 * 1000,
+  });
+
+  const cordiumQuery = useQuery({
+    queryKey: ["user/main.getService", CORDIUM_SERVICE_NAME],
+    queryFn: async () =>
+      (
+        await getClientUser().getService(
+          GetOptions.create({ name: CORDIUM_SERVICE_NAME }),
+        )
+      ).response,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   const onSearchChange = React.useCallback(
@@ -621,6 +662,7 @@ const Page = () => {
                 <ServiceRow
                   item={item}
                   domain={domain}
+                  cordium={cordiumQuery.data}
                   tokens={tokens}
                   namespaceFilter={namespace}
                   typeFilter={typeInfo?.key}

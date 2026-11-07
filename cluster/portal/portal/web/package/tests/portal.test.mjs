@@ -390,10 +390,9 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
         .getByText("postgres.production", { exact: true })
         .last()
         .waitFor();
-      assert.match(
-        await row.locator("pre").innerText(),
-        /^\$ psql -h postgres\.production$/,
-      );
+      await row
+        .getByText("psql -h postgres.production", { exact: true })
+        .waitFor();
       assert.equal(
         await row
           .getByRole("button", {
@@ -405,7 +404,7 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       );
 
       await row.locator(".font-semibold").first().click();
-      await row.locator("pre").waitFor({ state: "detached" });
+      await row.locator("dl").waitFor({ state: "detached" });
     });
 
     it("lists the copyable details of a Service", async () => {
@@ -422,6 +421,7 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
         "Private hostname",
         "Private addresses",
         "Resource name",
+        "Command",
       ]);
 
       const addresses = details.locator("dd").nth(1);
@@ -437,6 +437,7 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
         "Copy fd00:0:1::a",
         "Copy 100.64.0.10",
         "Copy resource name",
+        "Copy command",
       ]) {
         await details.getByRole("button", { name, exact: true }).waitFor();
       }
@@ -487,41 +488,48 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       await row
         .getByRole("button", { name: "Show details of api", exact: true })
         .click();
-      const details = row.locator("dl");
-      const terminal = row.getByRole("group", { name: "Connect with curl" });
-      await terminal.waitFor();
+      const label = row.getByText("Resource name", { exact: true });
+      const value = row.getByText("api.default", { exact: true }).last();
+      await value.waitFor();
 
-      const wideDetails = await details.boundingBox();
-      const wideTerminal = await terminal.boundingBox();
-      assert.equal(wideDetails.y, wideTerminal.y);
-      assert.equal(wideDetails.height, wideTerminal.height);
-      assert.ok(wideDetails.x + wideDetails.width <= wideTerminal.x);
+      const wideLabel = await label.boundingBox();
+      const wideValue = await value.boundingBox();
+      assert.ok(wideLabel.x + wideLabel.width < wideValue.x);
+      assert.ok(wideValue.y < wideLabel.y + wideLabel.height);
 
-      for (const width of [820, 390, 320]) {
+      const elements = [
+        await label.elementHandle(),
+        await value.elementHandle(),
+      ];
+      for (const width of [390, 320]) {
         await page.setViewportSize({ width, height: 844 });
         await page.waitForFunction(
-          (value) => window.innerWidth === value,
-          width,
-        );
-        const stackedDetails = await details.boundingBox();
-        const stackedTerminal = await terminal.boundingBox();
-        assert.equal(stackedDetails.x, stackedTerminal.x);
-        assert.equal(stackedDetails.width, stackedTerminal.width);
-        assert.ok(
-          stackedDetails.y + stackedDetails.height <= stackedTerminal.y,
-        );
-        assert.equal(
-          await page.evaluate(
-            () =>
-              document.documentElement.scrollWidth <=
-              document.documentElement.clientWidth,
-          ),
-          true,
+          ([labelElement, valueElement]) => {
+            const labelBox = labelElement.getBoundingClientRect();
+            const valueBox = valueElement.getBoundingClientRect();
+            const root = document.documentElement;
+            return (
+              labelBox.left === valueBox.left &&
+              labelBox.bottom <= valueBox.top &&
+              root.scrollWidth <= root.clientWidth
+            );
+          },
+          elements,
         );
       }
     });
 
-    it("gives the whole width to the details of a Service without a command", async () => {
+    it("explains that private access needs the Octelium client", async () => {
+      await load("/services?type=SSH");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of ssh-bastion.staging" })
+        .click();
+      await row.getByText("octelium connect", { exact: true }).waitFor();
+    });
+
+    it("leaves out the command of Services without a known client", async () => {
       await load("/services?type=TCP");
       await waitForRows(1);
       const row = rows().first();
@@ -530,37 +538,52 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
         .click();
       const details = row.locator("dl");
       await details.waitFor();
-      assert.equal(await row.getByRole("group").count(), 0);
-      assert.ok(
-        (await details.boundingBox()).width >
-          (await row.boundingBox()).width * 0.9,
-      );
+      assert.deepEqual(await details.locator("dt").allInnerTexts(), [
+        "Private hostname",
+        "Resource name",
+      ]);
     });
 
-    it("themes the connection command with the portal", async () => {
-      await load("/services?type=SSH");
+    const commandsOf = async (path, name) => {
+      await load(path);
       await waitForRows(1);
       const row = rows().first();
       await row
-        .getByRole("button", { name: "Show details of ssh-bastion.staging" })
+        .getByRole("button", { name: `Show details of ${name}`, exact: true })
         .click();
-      const terminal = row.getByRole("group", { name: "Connect with ssh" });
-      await terminal.waitFor();
-      const colors = () =>
-        terminal.evaluate((element) => {
-          const style = getComputedStyle(element);
-          return [style.backgroundColor, style.borderTopColor];
-        });
+      const details = row.locator("dl");
+      await details.waitFor();
+      return details.locator("dd").last().locator(".font-mono").allInnerTexts();
+    };
 
-      const dark = await colors();
-      await page.emulateMedia({ colorScheme: "light" });
-      await page.waitForFunction(
-        () => document.documentElement.dataset.mantineColorScheme === "light",
+    it("builds the commands from the type, port and TLS of a Service", async () => {
+      const host = new URL(origin).host;
+      assert.deepEqual(
+        await commandsOf("/services?namespace=default&type=HTTP", "api"),
+        ["curl -i http://api:8080/"],
       );
-      const light = await colors();
-      assert.equal(light[0], "rgb(255, 255, 255)");
-      assert.notEqual(dark[0], light[0]);
-      assert.notEqual(dark[1], light[1]);
+      assert.deepEqual(
+        await commandsOf("/services?type=GRPC", "orders.production"),
+        ["grpcurl -plaintext orders.production:50051 list"],
+      );
+      assert.deepEqual(
+        await commandsOf(
+          "/services?namespace=production&type=HTTP",
+          "billing.production",
+        ),
+        [`curl -i https://billing.production.local.${host}/`],
+      );
+    });
+
+    it("configures kubectl before using a Kubernetes Service", async () => {
+      const host = new URL(origin).host;
+      assert.deepEqual(
+        await commandsOf("/services?type=KUBERNETES", "k8s.production"),
+        [
+          "octelium config k8s.production",
+          `KUBECONFIG=~/.kube/k8s.production.${host} kubectl get pods`,
+        ],
+      );
     });
 
     it("uses a neutral palette in the dark theme", async () => {
@@ -587,8 +610,6 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
             "--color-slate-200",
             "--color-slate-500",
             "--color-slate-900",
-            "--color-terminal",
-            "--color-terminal-panel",
             "--mantine-primary-color-filled",
           ].map((name) => [name, read(`var(${name})`)]),
         );
@@ -615,43 +636,21 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       assert.doesNotMatch(await boxShadow(), /inset/);
     });
 
-    it("types the connection command when motion is allowed", async () => {
-      await page.emulateMedia({ reducedMotion: "no-preference" });
-      await load("/services?type=SSH");
-      await waitForRows(1);
-      const row = rows().first();
-      await row
-        .getByRole("button", { name: "Show details of ssh-bastion.staging" })
-        .click();
-      const terminal = row.getByRole("group", { name: "Connect with ssh" });
-      await terminal.waitFor();
-      assert.equal(
-        await terminal.locator("pre").innerText(),
-        "$ ssh ssh-bastion.staging",
-      );
-      await terminal.locator(".animate-terminal-caret").waitFor();
-      assert.equal(await terminal.locator("pre .opacity-0").count(), 0);
-      assert.equal(
-        await terminal.locator("pre .font-semibold").innerText(),
-        "ssh",
-      );
-    });
-
     it(
-      "copies the connection command",
+      "copies the command of a Service",
       { skip: name !== "chromium" },
       async () => {
         await context.grantPermissions(["clipboard-read", "clipboard-write"]);
         await load("/services?type=SSH");
         await waitForRows(1);
-        await rows()
-          .first()
+        const row = rows().first();
+        await row
           .getByRole("button", { name: "Show details of ssh-bastion.staging" })
           .click();
-        await page
+        await row
           .getByRole("button", { name: "Copy command", exact: true })
           .click();
-        await page
+        await row
           .getByRole("button", { name: "Copied", exact: true })
           .waitFor();
         assert.equal(
@@ -660,6 +659,73 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
         );
       },
     );
+
+    const connectLinks = () =>
+      page.getByRole("link", { name: /^Connect to .* in a new tab$/ });
+
+    it("hides the Connect button without Cordium", async () => {
+      await load();
+      await waitForRows(10);
+      await page.waitForFunction(() =>
+        window.calls.some((call) => call.method === "getService"),
+      );
+      assert.equal(await connectLinks().count(), 0);
+      assert.equal((await lastRequest("getService")).name, "default.cordium");
+    });
+
+    it("connects to a Service through Cordium", async () => {
+      await load("/services?namespace=staging", { cordium: true });
+      await waitForRows(2);
+      await connectLinks().first().waitFor();
+      const host = new URL(origin).host;
+      const link = page.getByRole("link", {
+        name: "Connect to ssh-bastion.staging in a new tab",
+        exact: true,
+      });
+      assert.equal(
+        await link.getAttribute("href"),
+        `https://cordium.${host}/services/ssh-bastion.staging/connect`,
+      );
+      assert.equal(await link.getAttribute("target"), "_blank");
+      assert.equal(await link.getAttribute("rel"), "noopener noreferrer");
+      assert.equal(await connectLinks().count(), 2);
+    });
+
+    it("offers Connect only for Services with a terminal client", async () => {
+      await load("/services?type=RDP_WEB", { cordium: true });
+      await waitForRows(1);
+      await page.waitForFunction(() =>
+        window.calls.some((call) => call.method === "getService"),
+      );
+      await page
+        .getByRole("link", { name: "Open windows-desktop in a new tab" })
+        .waitFor();
+      assert.equal(await connectLinks().count(), 0);
+    });
+
+    it("keeps the Service actions usable on small screens", async () => {
+      await page.setViewportSize({ width: 320, height: 640 });
+      await load("/services?namespace=default&type=WEB", { cordium: true });
+      await waitForRows(1);
+      const row = rows().first();
+      const connect = row.getByRole("link", { name: /^Connect to / });
+      await connect.waitFor();
+      const open = await row.getByRole("link", { name: /^Open / }).boundingBox();
+      const button = await connect.boundingBox();
+      const card = await row.boundingBox();
+      assert.equal(button.y, open.y);
+      assert.ok(button.x + button.width <= open.x);
+      assert.ok(open.x + open.width <= card.x + card.width);
+      assert.ok(button.width > 100);
+      assert.equal(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            document.documentElement.clientWidth,
+        ),
+        true,
+      );
+    });
 
     it("offers to open only public web Services", async () => {
       await load();
