@@ -5,13 +5,12 @@ for (const width of [320, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     await page.route("**/begin", (route) => route.fulfill({ status: 500 }));
     await page.goto("/login");
-    await page.getByRole("button", { name: "GitHub", exact: true }).click();
+    await page.getByRole("button", { name: "Continue with GitHub", exact: true }).click();
 
     const notification = page.getByRole("alert");
-    await expect(notification).toHaveText("Could not login. Please try again.");
+    await expect(notification).toHaveText("Could not sign in. Please try again.");
 
     for (const label of ["Light", "Dark", "Light"]) {
-      await page.getByRole("button", { name: /^Appearance:/ }).click();
       await page.getByRole("radiogroup", { name: "Appearance" })
         .locator("label").filter({ hasText: label }).click();
       await expect(page.locator("html")).toHaveAttribute(
@@ -69,7 +68,7 @@ test("error notifications close automatically after four seconds", async ({ page
   await page.clock.install();
   await page.route("**/begin", (route) => route.fulfill({ status: 500 }));
   await page.goto("/login");
-  await page.getByRole("button", { name: "GitHub", exact: true }).click();
+  await page.getByRole("button", { name: "Continue with GitHub", exact: true }).click();
   const notification = page.getByRole("alert");
   await expect(notification).toBeVisible();
 

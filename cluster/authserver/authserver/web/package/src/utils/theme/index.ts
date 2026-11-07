@@ -46,7 +46,7 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
 });
 
 const theme = createTheme({
-  fontFamily: "Ubuntu, sans-serif",
+  fontFamily: '"Plus Jakarta Sans", sans-serif',
 
   colors: {
     accent: virtualColor({ name: "accent", light: "dark", dark: "gray" }),

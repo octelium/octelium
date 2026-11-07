@@ -1,4 +1,7 @@
-import "@fontsource/ubuntu/latin.css";
+import "@fontsource/plus-jakarta-sans/latin-400.css";
+import "@fontsource/plus-jakarta-sans/latin-500.css";
+import "@fontsource/plus-jakarta-sans/latin-600.css";
+import "@fontsource/plus-jakarta-sans/latin-700.css";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import React from "react";

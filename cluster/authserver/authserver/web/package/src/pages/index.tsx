@@ -14,10 +14,8 @@ const Root = () => {
         <div className="mb-2"></div>
 
         <div className="flex-1 w-full flex flex-col items-center">
-          <div className="md:container mx-auto mt-2 p-2 md:p-4 w-full !max-w-4xl">
-            <div>
-              <Outlet />
-            </div>
+          <div className="md:container mx-auto mt-2 flex flex-1 flex-col p-2 md:p-4 w-full !max-w-4xl">
+            <Outlet />
           </div>
         </div>
 

@@ -3,14 +3,15 @@ import * as React from "react";
 import { useSearchParams } from "react-router-dom";
 import { twMerge } from "tailwind-merge";
 
-import LogoMain from "@/components/LogoMain";
+import Logo from "@/assets/logo.svg?react";
 import { getSafeRedirectURL, isDev } from "@/utils";
 import { getClientAuth } from "@/utils/client";
-import { Divider, Loader } from "@mantine/core";
+import { Loader } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
 import { IoIosFingerPrint } from "react-icons/io";
+import { LuCircleAlert, LuLogIn } from "react-icons/lu";
 
 import type { IconType } from "react-icons";
 import {
@@ -89,44 +90,73 @@ const PROVIDER_ICONS: { keywords: string[]; Icon: IconType }[] = [
   { keywords: ["authentik"], Icon: SiAuthentik },
 ];
 
-function getProviderIcon(displayName: string): {
-  Icon: IconType | null;
-  found: boolean;
-} {
+function getProviderIcon(displayName: string): IconType {
   const name = displayName.toLowerCase().trim();
 
   const match = PROVIDER_ICONS.find((p) =>
     p.keywords.some((k) => name.includes(k)),
   );
 
-  return match
-    ? { Icon: match.Icon, found: true }
-    : { Icon: null, found: false };
+  return match?.Icon ?? LuLogIn;
 }
 
 function getState(): State {
+  const value = (window as Window & { __OCTELIUM_STATE__?: unknown })
+    .__OCTELIUM_STATE__;
+
   return normalizeState(
     isDev()
-      ? {
+      ? (value ?? {
           domain: "example.com",
           isPasskeyLoginEnabled: true,
           identityProviders: [
             { uid: "github", displayName: "GitHub" },
             { uid: "gitlab-1", displayName: "Gitlab" },
           ],
-        }
-      : (window as Window & { __OCTELIUM_STATE__?: unknown })
-          .__OCTELIUM_STATE__,
+        })
+      : value,
   );
 }
 
+const MethodButton = (props: {
+  label: string;
+  Icon: IconType;
+  primary?: boolean;
+  pending?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    disabled={props.disabled}
+    aria-busy={props.pending}
+    className={twMerge(
+      "grid w-full cursor-pointer grid-cols-[1.25rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-lg border border-accent bg-accent px-3 py-3.5 !font-bold text-accent-fg shadow-button transition-[background-color,border-color,box-shadow] duration-500 enabled:hover:border-accent-hover enabled:hover:bg-accent-hover enabled:hover:shadow-button-hover disabled:cursor-not-allowed disabled:shadow-none",
+      !props.primary &&
+        "dark:border-line dark:bg-surface dark:text-fg dark:enabled:hover:border-line-strong dark:enabled:hover:bg-surface-hover",
+      props.disabled && !props.pending && "opacity-50",
+    )}
+    onClick={props.onClick}
+  >
+    <span className="flex items-center justify-center">
+      {props.pending ? (
+        <Loader size={16} color="currentColor" aria-hidden />
+      ) : (
+        <props.Icon className="h-[18px] w-[18px]" aria-hidden />
+      )}
+    </span>
+    <span className="min-w-0 break-words text-center">{props.label}</span>
+  </button>
+);
+
 const Passkey = (props: {
   query?: string;
+  primary: boolean;
   pending: string | null;
   setPending: (v: string | null) => void;
 }) => {
   const c = getClientAuth();
-  const busy = props.pending !== null;
+  const isPending = props.pending === PASSKEY_ID;
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -176,32 +206,14 @@ const Passkey = (props: {
   });
 
   return (
-    <div className="w-full">
-      <button
-        disabled={busy}
-        aria-busy={props.pending === PASSKEY_ID}
-        className={twMerge(
-          "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
-          "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
-          "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
-          busy ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
-        )}
-        onClick={() => {
-          mutation.mutate();
-        }}
-      >
-        <span className="flex items-center justify-center gap-2 font-bold text-lg">
-          {busy ? (
-            <Loader size="sm" color="gray" aria-label="Signing in" />
-          ) : (
-            <IoIosFingerPrint className="h-8 w-8 shrink-0" aria-hidden />
-          )}
-          <span className="font-semibold">
-            {busy ? "Signing in…" : "Login with a Passkey"}
-          </span>
-        </span>
-      </button>
-    </div>
+    <MethodButton
+      label={isPending ? "Waiting for your passkey…" : "Continue with a passkey"}
+      Icon={IoIosFingerPrint}
+      primary={props.primary}
+      pending={isPending}
+      disabled={props.pending !== null}
+      onClick={() => mutation.mutate()}
+    />
   );
 };
 
@@ -228,6 +240,8 @@ const Page = () => {
   const busy = pending !== null;
   const providers = state.identityProviders ?? [];
   const hasProviders = providers.length > 0;
+  const hasPasskey = state.isPasskeyLoginEnabled === true;
+  const hasSingleMethod = providers.length + (hasPasskey ? 1 : 0) === 1;
 
   const beginLogin = (uid: string) => {
     setPending(uid);
@@ -259,101 +273,81 @@ const Page = () => {
         setPending(null);
         notifications.show({
           color: "red",
-          message: "Could not login. Please try again.",
+          message: "Could not sign in. Please try again.",
         });
       });
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-center mt-4 mb-3">
-        <LogoMain />
-      </div>
+    <main className="flex flex-1 items-center justify-center px-2 py-4">
+      <div className="w-full max-w-[22rem]">
+        <header className="mb-7 flex flex-col items-center text-center">
+          <Logo
+            aria-hidden="true"
+            focusable="false"
+            className="mb-5 h-20 w-20 rounded-full shadow-logo sm:h-24 sm:w-24"
+          />
+          <h1 className="text-xl font-bold tracking-[-0.01em] text-fg">
+            Sign in to Octelium
+          </h1>
+        </header>
 
-      {hasLoginError && (
-        <div
-          className="container mx-auto mt-2 max-w-lg px-2 md:px-4"
-          role="alert"
-        >
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950 px-4 py-3 text-center text-sm font-semibold text-red-700 dark:text-red-300">
+        {hasLoginError && (
+          <div
+            role="alert"
+            className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-300"
+          >
+            <LuCircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             We could not start sign-in. Please try again.
           </div>
-        </div>
-      )}
+        )}
 
-      {!hasProviders && (
-        <div className="container mx-auto mt-2 p-2 md:p-8 w-full max-w-lg">
-          {!state.isPasskeyLoginEnabled && (
-            <h2 className="font-bold text-2xl text-fg-muted flex items-center justify-center mb-4 text-center">
-              No Available Identity Providers
-            </h2>
-          )}
+        {!hasProviders && !hasPasskey && (
+          <p className="text-center text-sm leading-6 text-fg-muted">
+            No sign-in methods are available for this Cluster. Contact your
+            administrator.
+          </p>
+        )}
 
-          {state.isPasskeyLoginEnabled && (
-            <div>
-              <Passkey
-                query={reqCommon?.query}
-                pending={pending}
-                setPending={setPending}
-              />
+        <div className="flex flex-col gap-2.5">
+          {providers.map((c) => (
+            <MethodButton
+              key={c.uid}
+              label={
+                pending === c.uid
+                  ? `Redirecting to ${c.displayName}…`
+                  : `Continue with ${c.displayName}`
+              }
+              Icon={getProviderIcon(c.displayName)}
+              primary={hasSingleMethod}
+              pending={pending === c.uid}
+              disabled={busy}
+              onClick={() => beginLogin(c.uid)}
+            />
+          ))}
+
+          {hasProviders && hasPasskey && (
+            <div
+              role="separator"
+              className="my-1.5 flex items-center gap-3 text-xs text-fg-subtle"
+            >
+              <span aria-hidden className="h-px flex-1 bg-line" />
+              or
+              <span aria-hidden className="h-px flex-1 bg-line" />
             </div>
           )}
-        </div>
-      )}
-      {hasProviders && (
-        <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-          <h1 className="font-bold text-xl mb-4 text-fg-muted text-center">
-            <span>Login to</span>
-            <span> </span>
-            <span className="text-fg">Octelium</span>
-            <span> </span>
-            <span>with an Identity Provider</span>
-          </h1>
 
-          <div className="flex flex-col items-center justify-center">
-            {providers.map((c) => {
-              const { Icon, found } = getProviderIcon(c.displayName);
-              return (
-                <button
-                  className={twMerge(
-                    "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
-                    "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
-                    "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
-                    busy ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
-                  )}
-                  disabled={busy}
-                  aria-busy={pending === c.uid}
-                  key={c.uid}
-                  onClick={() => beginLogin(c.uid)}
-                >
-                  <div className="flex w-full min-w-0 flex-row flex-wrap items-center justify-center gap-2">
-                    {found && Icon && (
-                      <Icon className="h-6 w-6 shrink-0" aria-hidden />
-                    )}
-                    {pending === c.uid && (
-                      <Loader size="sm" color="gray" aria-label="Signing in" />
-                    )}
-                    <span className="min-w-0 break-words font-semibold">
-                      {pending === c.uid ? "Signing in…" : c.displayName}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          {state.isPasskeyLoginEnabled && (
-            <div>
-              <Divider my="lg" label="OR" labelPosition="center" />
-              <Passkey
-                query={reqCommon?.query}
-                pending={pending}
-                setPending={setPending}
-              />
-            </div>
+          {hasPasskey && (
+            <Passkey
+              query={reqCommon?.query}
+              primary={hasSingleMethod}
+              pending={pending}
+              setPending={setPending}
+            />
           )}
         </div>
-      )}
-    </div>
+      </div>
+    </main>
   );
 };
 
