@@ -42,6 +42,9 @@ func newTestGatewayCtl(gws []*userv1.Gateway) *Controller {
 			Connection: &userv1.ConnectionState{
 				Gateways: gws,
 			},
+			Info: &cliconfigv1.Connection_Info{
+				Cluster: &cliconfigv1.Connection_Info_Cluster{Domain: "example.com"},
+			},
 			Preferences: &cliconfigv1.Connection_Preferences{
 				KeepAliveSeconds: 25,
 			},
