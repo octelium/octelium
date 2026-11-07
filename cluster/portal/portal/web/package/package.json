@@ -13,8 +13,8 @@
     "build-staging": "tsc && vite build --mode staging"
   },
   "dependencies": {
-    "@fontsource/ubuntu": "^5.3.0",
-    "@fontsource/ubuntu-mono": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/plus-jakarta-sans": "^5.3.0",
     "@mantine/core": "^9.7.3",
     "@mantine/hooks": "^9.7.3",
     "@octelium/apis": "^1.0.13",

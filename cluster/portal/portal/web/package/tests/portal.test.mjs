@@ -502,12 +502,102 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       await page.waitForFunction(() =>
         [...document.fonts].some(
           (font) =>
-            font.family.includes("Ubuntu Mono") && font.status === "loaded",
+            font.family.includes("JetBrains Mono") && font.status === "loaded",
         ),
       );
       assert.match(
         await value.evaluate((element) => getComputedStyle(element).fontFamily),
-        /^"?Ubuntu Mono"?,/,
+        /^"?JetBrains Mono"?,/,
+      );
+      assert.equal(
+        await value.evaluate(
+          (element) => getComputedStyle(element).fontVariantLigatures,
+        ),
+        "none",
+      );
+    });
+
+    it("uses Plus Jakarta Sans with extra word spacing except on monospace text", async () => {
+      await load("/services?namespace=default&type=HTTP");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of api", exact: true })
+        .click();
+      const value = row.locator("dd .font-mono").first();
+      await value.waitFor();
+      await page.waitForFunction(() =>
+        [...document.fonts].some(
+          (font) =>
+            font.family.includes("Plus Jakarta Sans") &&
+            font.status === "loaded",
+        ),
+      );
+      const styles = await page.evaluate(() => {
+        const style = (selector) => {
+          const { fontFamily, wordSpacing } = getComputedStyle(
+            document.querySelector(selector),
+          );
+          return { fontFamily, wordSpacing };
+        };
+        return { body: style("body"), heading: style("h1"), button: style("main button") };
+      });
+      for (const { fontFamily } of Object.values(styles)) {
+        assert.match(fontFamily, /^"?Plus Jakarta Sans"?,/);
+      }
+      assert.notEqual(styles.body.wordSpacing, "0px");
+      assert.equal(
+        await value.evaluate((element) => getComputedStyle(element).wordSpacing),
+        "0px",
+      );
+      for (const element of await page.locator(".font-mono").all()) {
+        assert.equal(
+          await element.evaluate((e) => getComputedStyle(e).fontWeight),
+          "400",
+        );
+      }
+    });
+
+    it("loads Plus Jakarta Sans for accented names", async () => {
+      await load("/services?namespace=default&type=HTTP");
+      await waitForRows(1);
+      assert.ok(
+        await page.evaluate(async () => {
+          const fonts = await document.fonts.load(
+            '500 13px "Plus Jakarta Sans"',
+            "Łukasz Şule",
+          );
+          return fonts.length > 1;
+        }),
+      );
+    });
+
+    it("renders text with loaded weights of at least 500", async () => {
+      await load("/services?namespace=default&type=HTTP");
+      await waitForRows(1);
+      const weights = await page.evaluate(async () => {
+        await document.fonts.ready;
+        const elements = [...document.querySelectorAll("body *")].filter(
+          (element) =>
+            element.children.length === 0 &&
+            element.textContent.trim() &&
+            !element.closest(".font-mono"),
+        );
+        return [
+          ...new Set(
+            elements.map((element) => getComputedStyle(element).fontWeight),
+          ),
+        ];
+      });
+      for (const weight of weights) {
+        assert.ok(["500", "600", "700"].includes(weight), weight);
+      }
+      assert.ok(
+        await page.evaluate(() =>
+          [500, 600, 700].every((weight) =>
+            document.fonts.check(`${weight} 13px "Plus Jakarta Sans"`),
+          ),
+        ),
       );
     });
 

@@ -4,7 +4,7 @@
 @import "./utils/theme/colors.css";
 
 @theme {
-  --font-mono: "Ubuntu Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, monospace;
 
   --text-micro: 0.6875rem;
@@ -12,7 +12,9 @@
   --text-body: 0.8125rem;
   --text-body--line-height: 1.25rem;
 
-  --font-weight-normal: 500;
+  --font-weight-normal: 600;
+  --font-weight-medium: 600;
+  --font-weight-semibold: 700;
 
   --default-transition-duration: 150ms;
 
@@ -27,6 +29,24 @@ body,
 
 body {
   background-color: var(--color-canvas);
+  font-weight: 500;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  word-spacing: 0.06em;
+}
+
+code,
+kbd,
+pre,
+.font-mono {
+  font-variant-ligatures: none;
+  font-weight: 400;
+  word-spacing: normal;
 }
 
 button {
@@ -35,7 +55,7 @@ button {
 
 .mantine-Input-input::placeholder {
   color: var(--color-slate-400);
-  font-weight: 400;
+  font-weight: 500;
 }
 
 .mantine-Input-input:focus,

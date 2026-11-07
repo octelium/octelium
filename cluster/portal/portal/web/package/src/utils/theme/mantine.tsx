@@ -16,7 +16,7 @@ import {
 } from "@mantine/core";
 
 const FONT =
-  'Ubuntu, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
 const SIZE_MICRO = "0.6875rem";
 const SIZE_META = "0.75rem";
@@ -25,14 +25,14 @@ const SIZE_BODY = "0.8125rem";
 const labelStyles = {
   label: {
     fontSize: SIZE_META,
-    fontWeight: 600,
+    fontWeight: 700,
     fontFamily: FONT,
     color: "var(--color-slate-700)",
     marginBottom: "4px",
   },
   description: {
     fontSize: SIZE_META,
-    fontWeight: 400,
+    fontWeight: 500,
     fontFamily: FONT,
     lineHeight: 1.45,
     color: "var(--color-slate-500)",
@@ -40,7 +40,7 @@ const labelStyles = {
   },
   error: {
     fontSize: SIZE_META,
-    fontWeight: 500,
+    fontWeight: 600,
     fontFamily: FONT,
     color: "var(--color-red-600)",
   },
@@ -49,7 +49,7 @@ const labelStyles = {
 const inputStyles = {
   input: {
     fontSize: SIZE_BODY,
-    fontWeight: 400,
+    fontWeight: 500,
     fontFamily: FONT,
     backgroundColor: "var(--color-white)",
     border: "1px solid var(--color-slate-200)",
@@ -64,7 +64,7 @@ const inputStyles = {
 const optionStyles = {
   option: {
     fontSize: SIZE_BODY,
-    fontWeight: 400,
+    fontWeight: 500,
     fontFamily: FONT,
     borderRadius: "7px",
     minHeight: "34px",
@@ -112,7 +112,7 @@ export const OVERLAY_Z_INDEX = 220;
 const theme = createTheme({
   fontFamily: FONT,
   fontFamilyMonospace:
-    '"Ubuntu Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   primaryColor: "ink",
   autoContrast: true,
 
@@ -130,14 +130,14 @@ const theme = createTheme({
       styles: {
         root: {
           fontFamily: FONT,
-          fontWeight: 600,
+          fontWeight: 700,
           fontSize: SIZE_BODY,
           borderRadius: "8px",
           transition:
             "background-color 150ms, border-color 150ms, color 150ms, opacity 150ms",
           boxShadow: "none",
         },
-        label: { fontFamily: FONT, fontWeight: 600 },
+        label: { fontFamily: FONT, fontWeight: 700 },
       },
     }),
 
@@ -164,7 +164,7 @@ const theme = createTheme({
         },
         label: {
           fontSize: SIZE_BODY,
-          fontWeight: 600,
+          fontWeight: 700,
           color: "var(--color-slate-500)",
           transition: "color 150ms",
         },
@@ -181,7 +181,7 @@ const theme = createTheme({
       styles: {
         control: {
           fontFamily: FONT,
-          fontWeight: 600,
+          fontWeight: 700,
           fontSize: SIZE_BODY,
           border: "1px solid var(--color-slate-200)",
           backgroundColor: "var(--color-white)",
@@ -211,7 +211,7 @@ const theme = createTheme({
           borderRadius: "7px",
           fontFamily: FONT,
           fontSize: SIZE_BODY,
-          fontWeight: 500,
+          fontWeight: 600,
           minHeight: "34px",
           transition: "background-color 150ms, color 150ms",
         },
@@ -219,7 +219,7 @@ const theme = createTheme({
           color: "var(--color-slate-500)",
           fontFamily: FONT,
           fontSize: SIZE_MICRO,
-          fontWeight: 600,
+          fontWeight: 700,
           letterSpacing: "0.05em",
           textTransform: "uppercase",
         },
@@ -237,7 +237,7 @@ const theme = createTheme({
       styles: {
         tooltip: {
           fontFamily: FONT,
-          fontWeight: 400,
+          fontWeight: 500,
           fontSize: SIZE_META,
           backgroundColor: "var(--color-slate-900)",
           color: "var(--color-slate-50)",
