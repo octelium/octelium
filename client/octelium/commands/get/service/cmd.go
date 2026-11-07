@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/printer"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -31,11 +32,13 @@ var cmdArgs args
 type args struct {
 	Out       string
 	Namespace string
+	Type      string
 }
 
 func init() {
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Namespace, "namespace", "n", "", "Filter by Namespace")
 	Cmd.PersistentFlags().StringVarP(&cmdArgs.Out, "out", "o", "", "Output format")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.Type, "type", "", "Filter by Service type (e.g. tcp, postgres, ssh)")
 }
 
 var Cmd = &cobra.Command{
@@ -45,6 +48,7 @@ var Cmd = &cobra.Command{
 octelium get svc
 octelium get service --namespace ns1 -o json
 octelium get services -n ns2 -o yaml
+octelium get svc --type postgres
 	`,
 	Aliases: []string{"svc", "services"},
 	Args:    cobra.MaximumNArgs(1),
@@ -54,6 +58,11 @@ octelium get services -n ns2 -o yaml
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
+	svcType, err := parseServiceType(cmdArgs.Type)
+	if err != nil {
+		return err
+	}
+
 	i, err := cliutils.GetCLIInfo(cmd, args)
 	if err != nil {
 		return err
@@ -87,6 +96,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	svcList, err := c.ListService(ctx,
 		&userv1.ListServiceOptions{
 			Namespace: cmdArgs.Namespace,
+			Type:      svcType,
 			Common:    cliutils.GetCommonListOptions(cmd),
 		})
 	if err != nil {
@@ -104,6 +114,34 @@ func doCmd(cmd *cobra.Command, args []string) error {
 
 	PrintServiceList(svcList.Items)
 	return nil
+}
+
+func parseServiceType(arg string) (userv1.Service_Spec_Type, error) {
+	if arg == "" {
+		return userv1.Service_Spec_UNSET, nil
+	}
+
+	val, ok := userv1.Service_Spec_Type_value[strings.ToUpper(arg)]
+	if !ok || userv1.Service_Spec_Type(val) == userv1.Service_Spec_UNSET {
+		return userv1.Service_Spec_UNSET, errors.Errorf("Invalid Service type: %s. Valid types are: %s",
+			arg, strings.Join(getServiceTypes(), ", "))
+	}
+
+	return userv1.Service_Spec_Type(val), nil
+}
+
+func getServiceTypes() []string {
+	var ret []string
+
+	vals := userv1.Service_Spec_UNSET.Descriptor().Values()
+	for i := range vals.Len() {
+		if userv1.Service_Spec_Type(vals.Get(i).Number()) == userv1.Service_Spec_UNSET {
+			continue
+		}
+		ret = append(ret, strings.ToLower(string(vals.Get(i).Name())))
+	}
+
+	return ret
 }
 
 func PrintServiceList(svcList []*userv1.Service) {
