@@ -1,6 +1,7 @@
 import HighlightText from "@/components/HighlightText";
 import PageSizeSelect from "@/components/PageSizeSelect";
 import Paginator from "@/components/Paginator";
+import { FilterBar } from "@/components/FilterBar";
 import SearchField from "@/components/SearchField";
 import { twMerge } from "@/lib/utils";
 import {
@@ -239,14 +240,14 @@ const Page = () => {
         }
       />
 
-      <div className="z-20 -mx-1 mb-4 border-b border-slate-200 bg-canvas px-1 pb-3 sm:sticky sm:top-[60px] sm:pt-3 sm:supports-[backdrop-filter]:bg-canvas/85 sm:supports-[backdrop-filter]:backdrop-blur">
+      <FilterBar label="Namespaces">
         <SearchField
           label="Search Namespaces"
           placeholder="Search by name or description"
           value={search}
           onChange={onSearchChange}
         />
-      </div>
+      </FilterBar>
 
       {query.isPending ? (
         <NamespaceGridSkeleton />

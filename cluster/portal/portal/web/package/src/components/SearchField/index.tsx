@@ -1,3 +1,5 @@
+import { filterInputStyles } from "@/components/FilterBar/styles";
+import { twMerge } from "@/lib/utils";
 import { TextInput } from "@mantine/core";
 import { Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -73,7 +75,11 @@ const SearchField = (props: {
   return (
     <TextInput
       ref={inputRef}
-      className={props.className}
+      className={twMerge(
+        "min-w-0 flex-1 transition-colors focus-within:bg-slate-50",
+        props.className,
+      )}
+      styles={filterInputStyles}
       aria-label={props.label ?? "Search"}
       placeholder={props.placeholder ?? "Search…"}
       value={text}

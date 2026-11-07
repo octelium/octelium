@@ -1,3 +1,8 @@
+import {
+  FilterBar,
+  FilterClearButton,
+  FilterSelect,
+} from "@/components/FilterBar";
 import HighlightText from "@/components/HighlightText";
 import PageSizeSelect from "@/components/PageSizeSelect";
 import Paginator from "@/components/Paginator";
@@ -41,7 +46,7 @@ import {
   getServiceTypeInfo,
   SERVICE_TYPE_OPTIONS,
 } from "@/utils/octelium/serviceTypes";
-import { ActionIcon, Button, Collapse, Select } from "@mantine/core";
+import { ActionIcon, Button, Collapse } from "@mantine/core";
 import {
   CommonListOptions_OrderBy_Mode,
   CommonListOptions_OrderBy_Type,
@@ -58,13 +63,14 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowUpRight,
+  Boxes,
   ChevronDown,
   FilterX,
   Globe,
   Lock,
   PanelTop,
   SearchX,
-  X,
+  Shapes,
 } from "lucide-react";
 import * as React from "react";
 import ServiceDetails from "./ServiceDetails";
@@ -312,28 +318,6 @@ const ServiceRow = (props: {
   );
 };
 
-const FilterChip = (props: {
-  label: string;
-  value: string;
-  onClear: () => void;
-}) => (
-  <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-slate-200 bg-white py-0.5 pl-2 pr-0.5 text-micro font-medium leading-4 text-slate-600 shadow-card">
-    <span className="shrink-0 font-semibold text-slate-500">
-      {props.label}:
-    </span>
-    <span className="min-w-0 truncate">{props.value}</span>
-    <button
-      type="button"
-      aria-label={`Remove the ${props.label} filter`}
-      title={`Remove the ${props.label} filter`}
-      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-      onClick={props.onClear}
-    >
-      <X size={10} strokeWidth={2.5} aria-hidden />
-    </button>
-  </span>
-);
-
 const buildHaystack = (item: Service, domain: string): string =>
   [
     getServiceHostname(item),
@@ -487,92 +471,73 @@ const Page = () => {
         }
       />
 
-      <div className="z-20 -mx-1 mb-4 flex flex-col gap-2.5 border-b border-slate-200 bg-canvas px-1 pb-3 sm:sticky sm:top-[60px] sm:pt-3 sm:supports-[backdrop-filter]:bg-canvas/85 sm:supports-[backdrop-filter]:backdrop-blur">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <SearchField
-            className="min-w-0 flex-1"
-            label="Search Services"
-            placeholder="Search by name, Namespace, type, port or address"
-            value={search}
-            onChange={onSearchChange}
+      <FilterBar label="Services">
+        <SearchField
+          label="Search Services"
+          placeholder="Search by name, Namespace, type, port or address"
+          value={search}
+          onChange={onSearchChange}
+        />
+        <div className="grid shrink-0 grid-cols-2 divide-x divide-slate-100 lg:flex">
+          <FilterSelect
+            aria-label="Filter by Namespace"
+            clearLabel="Clear the Namespace filter"
+            onClear={() => setParams({ namespace: null })}
+            placeholder="All Namespaces"
+            searchable
+            nothingFoundMessage="No matching Namespaces"
+            leftSection={
+              <Boxes
+                size={15}
+                strokeWidth={2.2}
+                className={namespace ? "text-slate-900" : undefined}
+                aria-hidden
+              />
+            }
+            data={namespaceData}
+            value={namespace || null}
+            onChange={(value) => setParams({ namespace: value })}
           />
-          <div className="grid grid-cols-2 gap-2 lg:flex lg:shrink-0">
-            <Select
-              className="min-w-0 lg:w-52"
-              aria-label="Filter by Namespace"
-              placeholder="All Namespaces"
-              searchable
-              clearable
-              clearSectionMode="clear"
-              nothingFoundMessage="No matching Namespaces"
-              data={namespaceData}
-              value={namespace || null}
-              onChange={(value) => setParams({ namespace: value })}
-            />
-            <Select
-              className="min-w-0 lg:w-44"
-              aria-label="Filter by type"
-              placeholder="All types"
-              clearable
-              clearSectionMode="clear"
-              data={SERVICE_TYPE_OPTIONS}
-              value={typeInfo?.key ?? null}
-              onChange={(value) => setParams({ type: value })}
-              renderOption={({ option }) => {
-                const Icon = typeOptionIcons.get(option.value);
-                return (
-                  <span className="flex items-center gap-2">
-                    {Icon && (
-                      <Icon
-                        size={14}
-                        strokeWidth={2}
-                        className="shrink-0 opacity-70"
-                      />
-                    )}
-                    {option.label}
-                  </span>
-                );
-              }}
-            />
-          </div>
+          <FilterSelect
+            className="lg:w-44"
+            aria-label="Filter by type"
+            clearLabel="Clear the type filter"
+            onClear={() => setParams({ type: null })}
+            placeholder="All types"
+            leftSection={
+              typeInfo ? (
+                <typeInfo.icon
+                  size={15}
+                  strokeWidth={2.2}
+                  className="text-slate-900"
+                  aria-hidden
+                />
+              ) : (
+                <Shapes size={15} strokeWidth={2.2} aria-hidden />
+              )
+            }
+            data={SERVICE_TYPE_OPTIONS}
+            value={typeInfo?.key ?? null}
+            onChange={(value) => setParams({ type: value })}
+            renderOption={({ option }) => {
+              const Icon = typeOptionIcons.get(option.value);
+              return (
+                <span className="flex items-center gap-2">
+                  {Icon && (
+                    <Icon
+                      size={14}
+                      strokeWidth={2}
+                      className="shrink-0 opacity-70"
+                    />
+                  )}
+                  {option.label}
+                </span>
+              );
+            }}
+          />
         </div>
-
-        {hasFilters && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-0.5 text-micro font-semibold uppercase tracking-[0.06em] text-slate-500">
-              Filters
-            </span>
-            {isSearching && (
-              <FilterChip
-                label="Search"
-                value={search}
-                onClear={() => setParams({ q: null })}
-              />
-            )}
-            {namespace && (
-              <FilterChip
-                label="Namespace"
-                value={namespace}
-                onClear={() => setParams({ namespace: null })}
-              />
-            )}
-            {typeInfo && (
-              <FilterChip
-                label="Type"
-                value={typeInfo.label}
-                onClear={() => setParams({ type: null })}
-              />
-            )}
-            <button
-              type="button"
-              className="ml-1.5 rounded text-xs font-semibold text-slate-600 transition-colors hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-              onClick={clearFilters}
-            >
-              Clear filters
-            </button>
-          </div>
-        )}
-      </div>
+        {hasFilters && <FilterClearButton onClick={clearFilters} />}
+      </FilterBar>
 
       {query.isError && query.data && (
         <Note

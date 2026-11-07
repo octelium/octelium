@@ -327,7 +327,7 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
 
       await page
         .getByRole("button", {
-          name: "Remove the Namespace filter",
+          name: "Clear the Namespace filter",
           exact: true,
         })
         .click();
@@ -339,6 +339,54 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
         .click();
       await page.waitForURL((url) => !url.searchParams.has("type"));
       await waitForRows(10);
+    });
+
+    it("groups the search and the filters in a single bar", async () => {
+      await load("/services?namespace=production&type=HTTP");
+      await waitForRows(1);
+      const bar = page.getByRole("search", { name: "Services", exact: true });
+      await bar.getByRole("button", { name: "Clear filters" }).waitFor();
+      const search = await bar.getByRole("textbox").boundingBox();
+      const namespace = await bar
+        .getByRole("combobox", { name: "Filter by Namespace" })
+        .boundingBox();
+      assert.equal(search.y, namespace.y);
+      assert.ok(search.x + search.width <= namespace.x);
+      assert.equal(await page.getByText("Filters", { exact: true }).count(), 0);
+
+      await bar.getByRole("button", { name: "Clear filters" }).click();
+      await page.waitForURL((url) => !url.searchParams.has("type"));
+      await waitForRows(10);
+      assert.equal(
+        await bar.getByRole("button", { name: "Clear filters" }).count(),
+        0,
+      );
+    });
+
+    it("stacks the search and the filters on small screens", async () => {
+      await page.setViewportSize({ width: 320, height: 640 });
+      await load("/services?namespace=production");
+      await waitForRows(5);
+      const bar = page.getByRole("search", { name: "Services", exact: true });
+      await bar.getByRole("button", { name: "Clear filters" }).waitFor();
+      const search = await bar.getByRole("textbox").boundingBox();
+      const namespace = await bar
+        .getByRole("combobox", { name: "Filter by Namespace" })
+        .boundingBox();
+      const type = await bar
+        .getByRole("combobox", { name: "Filter by type" })
+        .boundingBox();
+      assert.ok(search.y + search.height <= namespace.y);
+      assert.equal(namespace.y, type.y);
+      assert.ok(namespace.x + namespace.width <= type.x);
+      assert.equal(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            document.documentElement.clientWidth,
+        ),
+        true,
+      );
     });
 
     it("filters from the labels of a Service", async () => {
