@@ -21,7 +21,7 @@ for (const width of [320, 768, 1280]) {
       signIn.boundingBox(),
     ]);
 
-    expect(lightLayout[0]?.width).toBe(width < 640 ? 80 : 96);
+    expect(lightLayout[0]?.width).toBe(166.5);
 
     await choose(page, "Dark");
     await expect(scheme(page)).toHaveAttribute("data-mantine-color-scheme", "dark");

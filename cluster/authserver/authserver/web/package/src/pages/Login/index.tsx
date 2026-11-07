@@ -281,13 +281,13 @@ const Page = () => {
   return (
     <main className="flex flex-1 items-center justify-center px-2 py-4">
       <div className="w-full max-w-[22rem]">
-        <header className="mb-7 flex flex-col items-center text-center">
+        <header className="mb-10 flex flex-col items-center text-center">
           <Logo
             aria-hidden="true"
             focusable="false"
-            className="mb-5 h-20 w-20 rounded-full shadow-logo sm:h-24 sm:w-24"
+            className="mb-7 size-[clamp(6.5rem,18.5svh,10.5rem)] rounded-full shadow-logo [&>path:first-child]:fill-(--portal-logo-disc)"
           />
-          <h1 className="text-xl font-bold tracking-[-0.01em] text-fg">
+          <h1 className="text-2xl font-bold tracking-[-0.01em] text-fg">
             Sign in to Octelium
           </h1>
         </header>

@@ -87,16 +87,34 @@ test("uses Plus Jakarta Sans with extra word spacing", async ({ page }) => {
   await expect(button(page, "Continue with GitHub")).toHaveCSS("word-spacing", "0.96px");
 });
 
-test("shows a dark logo circle with a shadow only in the light theme", async ({ page }) => {
+test("shows a solid logo circle with a shadow only in the light theme", async ({ page }) => {
   await load(page);
   const logo = page.locator('main svg[viewBox="0 0 7616 7616"]');
-  const boxShadow = () => logo.evaluate((element) => getComputedStyle(element).boxShadow);
-  await expect(logo).toHaveCSS("filter", "none");
-  expect(await boxShadow()).toContain("rgba(15, 23, 42");
+  const disc = logo.locator("path").first();
+  await expect(logo).toHaveCSS("background-image", "none");
+  await expect(disc).toHaveCSS("fill", "rgb(24, 24, 27)");
+  await expect(logo).toHaveCSS("box-shadow", /rgba\(15, 23, 42/);
+  await expect(logo).not.toHaveCSS("box-shadow", /inset/);
   await useDarkTheme(page);
-  await expect(logo).toHaveCSS("filter", "none");
-  expect(await boxShadow()).not.toContain("rgba(15, 23, 42");
+  await expect(disc).toHaveCSS("fill", "rgba(0, 0, 0, 0)");
+  await expect(logo).toHaveCSS("box-shadow", /^(rgba\(0, 0, 0, 0\) 0px 0px 0px 0px(, )?)+$/);
+  await expect(logo.locator("path").last()).toHaveCSS("fill", "rgb(255, 255, 255)");
 });
+
+for (const [viewport, size] of [
+  [{ width: 390, height: 500 }, 104],
+  [{ width: 390, height: 780 }, 144.296875],
+  [{ width: 1440, height: 900 }, 166.5],
+  [{ width: 1440, height: 1200 }, 168],
+] as const) {
+  test(`sizes the logo for a ${viewport.width}x${viewport.height} screen`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await load(page);
+    const box = await page.locator('main svg[viewBox="0 0 7616 7616"]').boundingBox();
+    expect(box?.width).toBe(size);
+    expect(box?.height).toBe(size);
+  });
+}
 
 test("treats the only sign-in method as the primary action", async ({ page }) => {
   await load(page, { domain: "example.com", identityProviders: providers("Okta") });
