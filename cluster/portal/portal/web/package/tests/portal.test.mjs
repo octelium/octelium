@@ -563,6 +563,43 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       assert.notEqual(dark[1], light[1]);
     });
 
+    it("uses a neutral palette in the dark theme", async () => {
+      await load();
+      await waitForRows(10);
+      const spreads = await page.evaluate(() => {
+        const context = document
+          .createElement("canvas")
+          .getContext("2d", { willReadFrequently: true });
+        const probe = document.createElement("div");
+        document.body.append(probe);
+        const read = (value) => {
+          probe.style.backgroundColor = value;
+          context.fillStyle = getComputedStyle(probe).backgroundColor;
+          context.fillRect(0, 0, 1, 1);
+          const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+          return Math.max(red, green, blue) - Math.min(red, green, blue);
+        };
+        const spreads = Object.fromEntries(
+          [
+            "--color-canvas",
+            "--color-white",
+            "--color-slate-50",
+            "--color-slate-200",
+            "--color-slate-500",
+            "--color-slate-900",
+            "--color-terminal",
+            "--color-terminal-panel",
+            "--mantine-primary-color-filled",
+          ].map((name) => [name, read(`var(${name})`)]),
+        );
+        probe.remove();
+        return spreads;
+      });
+      for (const [name, spread] of Object.entries(spreads)) {
+        assert.ok(spread <= 8, `${name} is tinted by ${spread}`);
+      }
+    });
+
     it("types the connection command when motion is allowed", async () => {
       await page.emulateMedia({ reducedMotion: "no-preference" });
       await load("/services?type=SSH");

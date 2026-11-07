@@ -95,16 +95,16 @@ const INK_LIGHT: MantineColorsTuple = [
 ];
 
 const INK_DARK: MantineColorsTuple = [
-  "#99a6b8",
-  "#a6b2c3",
-  "#b4bfce",
-  "#c2cbd9",
-  "#cdd5e0",
-  "#d8dfe8",
-  "#dfe5ed",
-  "#e5eaf1",
-  "#eaeff5",
-  "#d4dbe6",
+  "#a4a4a8",
+  "#b0b0b4",
+  "#bdbdc1",
+  "#cacacd",
+  "#d4d4d7",
+  "#dedee1",
+  "#e4e4e8",
+  "#e9e9ed",
+  "#eeeef2",
+  "#dadade",
 ];
 
 export const OVERLAY_Z_INDEX = 220;
