@@ -5,18 +5,18 @@
 
   --color-code: #282c34;
   --color-code-border: #3c424f;
-  --color-terminal: #0b0b0c;
-  --color-terminal-panel: #121214;
-  --color-terminal-line: #242427;
-  --color-terminal-hover: #1d1d20;
-  --color-terminal-dim: #5b5b63;
-  --color-terminal-muted: #8d8d96;
-  --color-terminal-text: #e4e4e7;
-  --color-terminal-bright: #fafafa;
-  --color-terminal-flag: #7cc4fa;
-  --color-terminal-target: #8ee6a8;
-  --color-terminal-success: #4ade80;
-  --color-terminal-error: #f87171;
+  --color-terminal: var(--color-white);
+  --color-terminal-panel: var(--color-slate-50);
+  --color-terminal-line: var(--color-slate-200);
+  --color-terminal-hover: var(--color-slate-100);
+  --color-terminal-dim: var(--color-slate-400);
+  --color-terminal-muted: var(--color-slate-500);
+  --color-terminal-text: var(--color-slate-700);
+  --color-terminal-bright: var(--color-slate-900);
+  --color-terminal-flag: var(--color-blue-700);
+  --color-terminal-target: var(--color-emerald-700);
+  --color-terminal-success: var(--color-emerald-600);
+  --color-terminal-error: var(--color-red-600);
 
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05);
   --shadow-raised: 0 4px 12px rgba(15, 23, 42, 0.08);
@@ -34,6 +34,9 @@
   --color-canvas: oklch(16.5% 0.015 258);
   --color-white: oklch(21% 0.016 258);
   --color-black: oklch(98% 0.005 258);
+
+  --color-terminal: oklch(14% 0.014 258);
+  --color-terminal-panel: oklch(17.5% 0.015 258);
 
   --color-slate-50: oklch(24.0% 0.017 258);
   --color-slate-100: oklch(27.0% 0.019 258);

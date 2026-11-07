@@ -4,6 +4,9 @@
 @import "./utils/theme/colors.css";
 
 @theme {
+  --font-mono: "Ubuntu Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
+
   --text-micro: 0.6875rem;
   --text-micro--line-height: 1rem;
   --text-body: 0.8125rem;

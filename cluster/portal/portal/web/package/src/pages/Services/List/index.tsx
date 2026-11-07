@@ -10,14 +10,11 @@ import { twMerge } from "@/lib/utils";
 import {
   Card,
   CopyButton,
-  CopyValue,
   CountPill,
   DocumentTitle,
   EmptyState,
   ErrorState,
   IconTile,
-  InfoGrid,
-  KeyValue,
   Note,
   PageHeader,
   RefreshButton,
@@ -35,7 +32,6 @@ import {
   getServiceHostname,
   getServicePrivateFQDN,
   getServicePublicFQDN,
-  getServicePublicURL,
 } from "@/utils/octelium";
 import {
   getServiceTypeByKey,
@@ -67,7 +63,7 @@ import {
   X,
 } from "lucide-react";
 import * as React from "react";
-import ConnectCommand from "./ConnectCommand";
+import ServiceDetails from "./ServiceDetails";
 
 const SEARCH_FETCH_LIMIT = 500;
 
@@ -86,60 +82,6 @@ const typeOptionIcons = new Map(
     getServiceTypeByKey(option.value)!.icon,
   ]),
 );
-
-const ServiceDetails = (props: { item: Service; domain: string }) => {
-  const { item, domain } = props;
-  const addresses = item.status?.addresses ?? [];
-  const publicURL = item.spec?.isPublic
-    ? getServicePublicURL(item, domain)
-    : undefined;
-
-  return (
-    <div className="@container border-t border-slate-100 px-4 pb-4 pt-3.5 sm:pl-16">
-      <InfoGrid>
-        <KeyValue label="Private hostname">
-          <CopyValue
-            value={getServicePrivateFQDN(item, domain)}
-            copyLabel="Copy private hostname"
-          />
-        </KeyValue>
-        {publicURL && (
-          <KeyValue label="Public URL">
-            <span className="inline-flex min-w-0 items-center gap-1">
-              <a
-                href={publicURL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded font-mono text-xs font-medium text-blue-700 underline-offset-2 outline-none [overflow-wrap:anywhere] hover:underline focus-visible:ring-2 focus-visible:ring-blue-500/40"
-              >
-                {publicURL}
-              </a>
-              <CopyButton value={publicURL} label="Copy public URL" />
-            </span>
-          </KeyValue>
-        )}
-        <KeyValue label="Resource name">
-          <CopyValue
-            value={item.metadata?.name ?? ""}
-            copyLabel="Copy resource name"
-          />
-        </KeyValue>
-        {addresses.length > 0 && (
-          <KeyValue label="Private addresses" full>
-            {addresses.map((address) => (
-              <CopyValue
-                key={address}
-                value={address}
-                copyLabel={`Copy ${address}`}
-              />
-            ))}
-          </KeyValue>
-        )}
-      </InfoGrid>
-      <ConnectCommand service={item} domain={domain} className="mt-4" />
-    </div>
-  );
-};
 
 const ServiceRow = (props: {
   item: Service;

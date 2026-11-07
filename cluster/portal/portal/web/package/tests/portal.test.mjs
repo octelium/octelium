@@ -408,6 +408,161 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       await row.locator("pre").waitFor({ state: "detached" });
     });
 
+    it("lists the copyable details of a Service", async () => {
+      await load("/services?namespace=default&type=HTTP");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of api", exact: true })
+        .click();
+
+      const details = row.locator("dl");
+      await details.waitFor();
+      assert.deepEqual(await details.locator("dt").allInnerTexts(), [
+        "Private hostname",
+        "Private addresses",
+        "Resource name",
+      ]);
+
+      const addresses = details.locator("dd").nth(1);
+      assert.deepEqual(await addresses.locator(".font-mono").allInnerTexts(), [
+        "fd00:0:1::a",
+        "100.64.0.10",
+      ]);
+      await addresses.getByText("IPv6", { exact: true }).waitFor();
+      await addresses.getByText("IPv4", { exact: true }).waitFor();
+
+      for (const name of [
+        "Copy private hostname",
+        "Copy fd00:0:1::a",
+        "Copy 100.64.0.10",
+        "Copy resource name",
+      ]) {
+        await details.getByRole("button", { name, exact: true }).waitFor();
+      }
+    });
+
+    it("renders the details of a Service with the bundled monospace font", async () => {
+      await load("/services?namespace=default&type=HTTP");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of api", exact: true })
+        .click();
+      const value = row.locator("dd .font-mono").first();
+      await value.waitFor();
+      await page.waitForFunction(() =>
+        [...document.fonts].some(
+          (font) =>
+            font.family.includes("Ubuntu Mono") && font.status === "loaded",
+        ),
+      );
+      assert.match(
+        await value.evaluate((element) => getComputedStyle(element).fontFamily),
+        /^"?Ubuntu Mono"?,/,
+      );
+    });
+
+    it("links to the public URL of a Service", async () => {
+      await load("/services?namespace=default&type=WEB");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of demo-nginx" })
+        .click();
+
+      const url = `https://demo-nginx.${new URL(origin).host}`;
+      const link = row.locator("dl").getByRole("link", { name: url });
+      await link.waitFor();
+      assert.equal(await link.getAttribute("href"), url);
+      assert.equal(await link.getAttribute("target"), "_blank");
+      assert.equal(await link.getAttribute("rel"), "noopener noreferrer");
+      assert.equal(await row.locator("dt").first().innerText(), "Public URL");
+    });
+
+    it("adapts the details of a Service to the available width", async () => {
+      await load("/services?namespace=default&type=HTTP");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of api", exact: true })
+        .click();
+      const details = row.locator("dl");
+      const terminal = row.getByRole("group", { name: "Connect with curl" });
+      await terminal.waitFor();
+
+      const wideDetails = await details.boundingBox();
+      const wideTerminal = await terminal.boundingBox();
+      assert.equal(wideDetails.y, wideTerminal.y);
+      assert.equal(wideDetails.height, wideTerminal.height);
+      assert.ok(wideDetails.x + wideDetails.width <= wideTerminal.x);
+
+      for (const width of [820, 390, 320]) {
+        await page.setViewportSize({ width, height: 844 });
+        await page.waitForFunction(
+          (value) => window.innerWidth === value,
+          width,
+        );
+        const stackedDetails = await details.boundingBox();
+        const stackedTerminal = await terminal.boundingBox();
+        assert.equal(stackedDetails.x, stackedTerminal.x);
+        assert.equal(stackedDetails.width, stackedTerminal.width);
+        assert.ok(
+          stackedDetails.y + stackedDetails.height <= stackedTerminal.y,
+        );
+        assert.equal(
+          await page.evaluate(
+            () =>
+              document.documentElement.scrollWidth <=
+              document.documentElement.clientWidth,
+          ),
+          true,
+        );
+      }
+    });
+
+    it("gives the whole width to the details of a Service without a command", async () => {
+      await load("/services?type=TCP");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of clickhouse.data" })
+        .click();
+      const details = row.locator("dl");
+      await details.waitFor();
+      assert.equal(await row.getByRole("group").count(), 0);
+      assert.ok(
+        (await details.boundingBox()).width >
+          (await row.boundingBox()).width * 0.9,
+      );
+    });
+
+    it("themes the connection command with the portal", async () => {
+      await load("/services?type=SSH");
+      await waitForRows(1);
+      const row = rows().first();
+      await row
+        .getByRole("button", { name: "Show details of ssh-bastion.staging" })
+        .click();
+      const terminal = row.getByRole("group", { name: "Connect with ssh" });
+      await terminal.waitFor();
+      const colors = () =>
+        terminal.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return [style.backgroundColor, style.borderTopColor];
+        });
+
+      const dark = await colors();
+      await page.emulateMedia({ colorScheme: "light" });
+      await page.waitForFunction(
+        () => document.documentElement.dataset.mantineColorScheme === "light",
+      );
+      const light = await colors();
+      assert.equal(light[0], "rgb(255, 255, 255)");
+      assert.notEqual(dark[0], light[0]);
+      assert.notEqual(dark[1], light[1]);
+    });
+
     it("types the connection command when motion is allowed", async () => {
       await page.emulateMedia({ reducedMotion: "no-preference" });
       await load("/services?type=SSH");

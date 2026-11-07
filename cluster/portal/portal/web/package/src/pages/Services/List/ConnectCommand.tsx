@@ -180,11 +180,11 @@ const ConnectCommand = (props: {
       role="group"
       aria-label={`Connect with ${info.tool}`}
       className={twMerge(
-        "overflow-hidden rounded-lg border border-terminal-line bg-terminal shadow-[0_1px_2px_rgb(0_0_0/0.06),0_12px_32px_-16px_rgb(0_0_0/0.5)] motion-safe:animate-terminal-enter",
+        "overflow-hidden rounded-lg border border-terminal-line bg-terminal shadow-card motion-safe:animate-terminal-enter",
         props.className,
       )}
     >
-      <div className="flex h-10 items-center gap-2 border-b border-terminal-line bg-terminal-panel pl-3.5 pr-1.5 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]">
+      <div className="flex h-10 items-center gap-2 border-b border-terminal-line bg-terminal-panel pl-3.5 pr-1.5">
         <SquareTerminal
           size={14}
           strokeWidth={2}
@@ -235,7 +235,7 @@ const ConnectCommand = (props: {
           </span>
         </button>
       </div>
-      <pre className="whitespace-pre-wrap px-4 py-3.5 font-mono text-body leading-6 text-terminal-text [overflow-wrap:anywhere]">
+      <pre className="whitespace-pre-wrap px-3.5 py-3 font-mono text-sm leading-6 text-terminal-text [overflow-wrap:anywhere]">
         {info.commands.map((command, index) => {
           const start = starts[index];
           const shown = Math.min(Math.max(typed - start, 0), command.length);

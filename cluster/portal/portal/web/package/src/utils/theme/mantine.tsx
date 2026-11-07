@@ -112,7 +112,7 @@ export const OVERLAY_Z_INDEX = 220;
 const theme = createTheme({
   fontFamily: FONT,
   fontFamilyMonospace:
-    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    '"Ubuntu Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   primaryColor: "ink",
   autoContrast: true,
 

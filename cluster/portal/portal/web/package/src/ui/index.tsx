@@ -1,6 +1,7 @@
 import { ActionIcon, Button, Tooltip } from "@mantine/core";
 import {
   AlertCircle,
+  ArrowUpRight,
   Check,
   Copy,
   Inbox,
@@ -353,13 +354,75 @@ export const CopyValue = (props: {
     <span
       className={twMerge(
         "min-w-0 [overflow-wrap:anywhere]",
-        props.mono !== false && "font-mono text-xs font-medium text-slate-800",
+        props.mono !== false && "font-mono text-body font-normal text-slate-800",
       )}
     >
       {props.value}
     </span>
     <CopyButton value={props.value} label={props.copyLabel} />
   </span>
+);
+
+export const DetailList = (props: {
+  children: React.ReactNode;
+  className?: string;
+}) => (
+  <dl
+    className={twMerge(
+      "@container m-0 min-w-0 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-card",
+      props.className,
+    )}
+  >
+    {props.children}
+  </dl>
+);
+
+export const DetailRow = (props: {
+  label: string;
+  children: React.ReactNode;
+}) => (
+  <div className="grid grid-cols-1 gap-x-4 py-2 pl-3.5 pr-2 transition-colors hover:bg-slate-50 @md:grid-cols-[8rem_minmax(0,1fr)]">
+    <dt className="text-xs font-normal leading-5 text-slate-500 @md:leading-7">
+      {props.label}
+    </dt>
+    <dd className="m-0 min-w-0">{props.children}</dd>
+  </div>
+);
+
+export const DetailValue = (props: {
+  value: string;
+  copyLabel: string;
+  href?: string;
+  addon?: React.ReactNode;
+}) => (
+  <div className="flex min-h-7 min-w-0 items-center gap-2">
+    {props.href ? (
+      <a
+        href={props.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="min-w-0 rounded font-mono text-body text-blue-700 underline-offset-2 outline-none [overflow-wrap:anywhere] hover:underline focus-visible:ring-2 focus-visible:ring-blue-500/40"
+      >
+        {props.value}
+        <ArrowUpRight
+          size={13}
+          strokeWidth={2.25}
+          aria-hidden
+          className="ml-0.5 inline-block align-[-0.125em]"
+        />
+      </a>
+    ) : (
+      <span className="min-w-0 font-mono text-body text-slate-800 [overflow-wrap:anywhere]">
+        {props.value}
+      </span>
+    )}
+    {props.addon}
+    <CopyButton
+      value={props.value}
+      label={props.copyLabel}
+      className="ml-auto size-8 shrink-0 sm:size-6"
+    />
+  </div>
 );
 
 export const Note = (props: {
