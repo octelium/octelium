@@ -116,22 +116,31 @@ for (const [viewport, size] of [
   });
 }
 
-test("treats the only sign-in method as the primary action", async ({ page }) => {
-  await load(page, { domain: "example.com", identityProviders: providers("Okta") });
-  await useDarkTheme(page);
-  const name = "Continue with Okta";
-  expect(await style(page, name, "backgroundColor")).not.toBe(
-    await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
-  );
-  await expect(button(page, name)).not.toHaveClass(/dark:bg-surface/);
-  await expect(page.getByRole("separator")).toHaveCount(0);
-  await expect(button(page, "Continue with a passkey")).toHaveCount(0);
+test("does not turn the only sign-in method white in the dark theme", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await load(page);
+  const background = await style(page, "Continue with a passkey", "backgroundColor");
+  expect(background).not.toBe("rgb(255, 255, 255)");
+
+  for (const [state, name] of [
+    [{ domain: "example.com", isPasskeyLoginEnabled: true }, "Continue with a passkey"],
+    [{ domain: "example.com", identityProviders: providers("Okta") }, "Continue with Okta"],
+  ] as const) {
+    await load(page, state);
+    await expect(button(page, name)).toHaveClass(/dark:bg-surface/);
+    await expect.poll(() => style(page, name, "backgroundColor")).toBe(background);
+    await expect(page.getByRole("separator")).toHaveCount(0);
+  }
 });
 
-test("treats a passkey-only Cluster the same way", async ({ page }) => {
+test("keeps the only sign-in method dark in the light theme", async ({ page }) => {
+  await load(page);
+  const background = await style(page, "Continue with a passkey", "backgroundColor");
+
   await load(page, { domain: "example.com", isPasskeyLoginEnabled: true });
-  await expect(button(page, "Continue with a passkey")).not.toHaveClass(/dark:bg-surface/);
-  await expect(page.getByRole("separator")).toHaveCount(0);
+  await expect
+    .poll(() => style(page, "Continue with a passkey", "backgroundColor"))
+    .toBe(background);
 });
 
 test("gives several sign-in methods equal weight in the dark theme", async ({ page }) => {

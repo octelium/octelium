@@ -119,7 +119,6 @@ function getState(): State {
 
 const Passkey = (props: {
   query?: string;
-  primary: boolean;
   pending: string | null;
   setPending: (v: string | null) => void;
 }) => {
@@ -177,7 +176,6 @@ const Passkey = (props: {
     <ActionButton
       label={isPending ? "Waiting for your passkey…" : "Continue with a passkey"}
       Icon={IoIosFingerPrint}
-      primary={props.primary}
       pending={isPending}
       disabled={props.pending !== null}
       onClick={() => mutation.mutate()}
@@ -209,7 +207,6 @@ const Page = () => {
   const providers = state.identityProviders ?? [];
   const hasProviders = providers.length > 0;
   const hasPasskey = state.isPasskeyLoginEnabled === true;
-  const hasSingleMethod = providers.length + (hasPasskey ? 1 : 0) === 1;
 
   const beginLogin = (uid: string) => {
     setPending(uid);
@@ -275,7 +272,6 @@ const Page = () => {
                 : `Continue with ${c.displayName}`
             }
             Icon={getProviderIcon(c.displayName)}
-            primary={hasSingleMethod}
             pending={pending === c.uid}
             disabled={busy}
             onClick={() => beginLogin(c.uid)}
@@ -296,7 +292,6 @@ const Page = () => {
         {hasPasskey && (
           <Passkey
             query={reqCommon?.query}
-            primary={hasSingleMethod}
             pending={pending}
             setPending={setPending}
           />
