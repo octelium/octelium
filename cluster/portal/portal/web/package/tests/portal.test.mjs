@@ -596,8 +596,23 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
         return spreads;
       });
       for (const [name, spread] of Object.entries(spreads)) {
-        assert.ok(spread <= 8, `${name} is tinted by ${spread}`);
+        assert.ok(spread <= 3, `${name} is tinted by ${spread}`);
       }
+    });
+
+    it("highlights the top edge of the cards only in the dark theme", async () => {
+      await load();
+      await waitForRows(10);
+      const card = rows().first().locator("> div");
+      const boxShadow = () =>
+        card.evaluate((element) => getComputedStyle(element).boxShadow);
+      assert.match(await boxShadow(), /inset/);
+
+      await page.emulateMedia({ colorScheme: "light" });
+      await page.waitForFunction(
+        () => document.documentElement.dataset.mantineColorScheme === "light",
+      );
+      assert.doesNotMatch(await boxShadow(), /inset/);
     });
 
     it("types the connection command when motion is allowed", async () => {

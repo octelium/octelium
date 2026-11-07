@@ -53,7 +53,7 @@ const NamespaceCard = (props: {
       <Link
         to={`/services?namespace=${encodeURIComponent(name)}`}
         aria-label={`${name}: show its Services`}
-        className="group/card flex w-full flex-col rounded-xl border border-slate-200 bg-white outline-none transition-[border-color,box-shadow] duration-150 hover:border-slate-300 hover:shadow-raised focus-visible:ring-2 focus-visible:ring-slate-400"
+        className="group/card flex w-full flex-col rounded-xl border border-slate-200 bg-white shadow-surface outline-none transition-[border-color,box-shadow] duration-150 hover:border-slate-300 hover:shadow-raised focus-visible:ring-2 focus-visible:ring-slate-400"
       >
         <div className="flex items-start gap-3 px-4 pt-3.5">
           <IconTile>
@@ -122,7 +122,7 @@ const NamespaceGridSkeleton = () => (
     {Array.from({ length: 6 }).map((_, index) => (
       <div
         key={index}
-        className="h-[132px] rounded-xl border border-slate-200 bg-white px-4 pt-3.5"
+        className="h-[132px] rounded-xl border border-slate-200 bg-white px-4 pt-3.5 shadow-surface"
       >
         <div className="flex items-start gap-3">
           <div className="h-9 w-9 rounded-lg bg-slate-100 motion-safe:animate-pulse" />

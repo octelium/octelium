@@ -92,7 +92,7 @@ export const Card = (props: {
 }) => (
   <div
     className={twMerge(
-      "rounded-xl border border-slate-200 bg-white",
+      "rounded-xl border border-slate-200 bg-white shadow-surface",
       props.interactive &&
         "transition-[border-color,box-shadow] duration-150 hover:border-slate-300 hover:shadow-raised",
       props.className,
@@ -136,7 +136,7 @@ export const SectionCard = (props: {
 }) => (
   <section
     className={twMerge(
-      "min-w-0 rounded-xl border border-slate-200 bg-white",
+      "min-w-0 rounded-xl border border-slate-200 bg-white shadow-surface",
       props.className,
     )}
   >
@@ -494,7 +494,7 @@ export const SkeletonRows = (props: { rows?: number; label?: string }) => (
     {Array.from({ length: props.rows ?? 5 }).map((_, index) => (
       <div
         key={index}
-        className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3.5"
+        className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-surface"
       >
         <div className="h-9 w-9 shrink-0 rounded-lg bg-slate-100 motion-safe:animate-pulse" />
         <div className="flex-1 space-y-2.5 pt-1">
