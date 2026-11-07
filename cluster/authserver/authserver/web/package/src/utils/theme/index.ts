@@ -2,6 +2,7 @@ import {
   Button,
   createTheme,
   localStorageColorSchemeManager,
+  Modal,
   MultiSelect,
   Notification,
   NumberInput,
@@ -21,7 +22,10 @@ export const colorSchemeManager = localStorageColorSchemeManager({
 
 export const cssVariablesResolver: CSSVariablesResolver = () => ({
   variables: {},
-  light: {},
+  light: {
+    "--mantine-color-accent-filled": "var(--portal-accent)",
+    "--mantine-color-accent-filled-hover": "var(--portal-accent-hover)",
+  },
   dark: {
     "--mantine-color-black": "var(--portal-surface)",
     "--mantine-color-dark-0": "var(--portal-fg)",
@@ -77,14 +81,24 @@ const theme = createTheme({
     Button: Button.extend({
       defaultProps: {
         variant: "filled",
-        className: "font-bold shadow-md transition-all duration-500 rounded-md",
+      },
+      classNames: {
+        root: "!font-bold transition-all duration-500 data-[variant=filled]:shadow-button",
+      },
+    }),
+    Modal: Modal.extend({
+      defaultProps: {
+        centered: true,
+        radius: "lg",
+      },
+      classNames: {
+        title: "!text-lg !font-bold text-fg",
       },
     }),
     TextInput: TextInput.extend({
       classNames: {
-        label: "font-bold",
-        input:
-          "font-bold focus:shadow-md transition-all duration-500 rounded-md focus:border-accent border-[2px]",
+        label: "mb-1 !text-sm !font-semibold text-fg-muted",
+        input: "!font-medium transition-all duration-500",
       },
     }),
     Textarea: Textarea.extend({
@@ -103,8 +117,7 @@ const theme = createTheme({
     }),
     PinInput: PinInput.extend({
       classNames: {
-        input:
-          "!font-bold !focus:shadow-md !transition-all !duration-500 rounded-md !focus:border-accent !border-[2px]",
+        input: "!font-bold transition-all duration-500",
       },
     }),
     Switch: Switch.extend({

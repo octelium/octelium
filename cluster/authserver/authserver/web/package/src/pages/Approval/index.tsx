@@ -1,11 +1,10 @@
 import * as React from "react";
 
-import { twMerge } from "tailwind-merge";
-
-import LogoMain from "@/components/LogoMain";
-import { getDomain, getSafeRedirectURL } from "@/utils";
-import { Loader } from "@mantine/core";
+import ActionButton from "@/components/ActionButton";
+import AuthPage from "@/components/AuthPage";
+import { getSafeRedirectURL } from "@/utils";
 import { notifications } from "@mantine/notifications";
+import { LuCheck, LuX } from "react-icons/lu";
 
 interface approvalResponse {
   redirectURL: string;
@@ -18,10 +17,12 @@ const isApprovalResponse = (value: unknown): value is approvalResponse =>
   typeof value.redirectURL === "string";
 
 const Page = () => {
-  const [pending, setPending] = React.useState(false);
+  const [pending, setPending] = React.useState<"approve" | "reject" | null>(
+    null,
+  );
 
   const decide = (isApproved: boolean) => {
-    setPending(true);
+    setPending(isApproved ? "approve" : "reject");
 
     fetch("/callback/success/approval", {
       method: "POST",
@@ -44,7 +45,7 @@ const Page = () => {
         window.location.assign(getSafeRedirectURL(data.redirectURL));
       })
       .catch(() => {
-        setPending(false);
+        setPending(null);
         notifications.show({
           color: "red",
           message: "Could not complete the request. Please try again.",
@@ -53,60 +54,36 @@ const Page = () => {
   };
 
   return (
-    <div>
+    <>
       <title>Approve Login - Octelium</title>
-      <div className="flex items-center justify-center mt-4 mb-3">
-        <LogoMain />
-      </div>
-
-      <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        <h1 className="font-bold text-xl mb-4 text-fg-muted text-center">
-          <span>Approve a Login to</span>
-          <span> </span>
-          <span className="text-fg">Octelium</span>
-        </h1>
-
-        <div className="mb-8 text-center text-fg-muted">
-          <span>A client running on this device is asking to log in to</span>
-          <span> </span>
-          <span className="font-semibold text-fg">{getDomain()}</span>
-          <span>
-            . Approve it only if you have just started a login yourself.
+      <AuthPage
+        title="Approve this sign-in"
+        description={
+          <span className="font-medium">
+            A client running on this device is asking to sign in.
           </span>
-        </div>
-
-        <div className="flex flex-col items-center justify-center">
-          <button
-            className={twMerge(
-              "w-full px-2 py-4 md:py-6 transition-all duration-500 mb-4",
-              "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed",
-              "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
-              pending ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
-            )}
-            disabled={pending}
-            aria-busy={pending}
+        }
+      >
+        <div className="flex flex-col gap-2.5">
+          <ActionButton
+            label={pending === "approve" ? "Approving…" : "Approve"}
+            Icon={LuCheck}
+            primary
+            pending={pending === "approve"}
+            disabled={pending !== null}
             onClick={() => decide(true)}
-          >
-            {pending ? <Loader size="sm" color="gray" aria-label="Approving" /> : null}
-            <span className="font-semibold">{pending ? "Approving…" : "Approve"}</span>
-          </button>
-
-          <button
-            className={twMerge(
-              "w-full px-2 py-3 transition-all duration-500",
-              "rounded-lg cursor-pointer disabled:cursor-not-allowed",
-              "text-fg-subtle hover:text-fg",
-              pending ? "!text-fg-subtle" : undefined,
-            )}
-            disabled={pending}
+          />
+          <ActionButton
+            label={pending === "reject" ? "Rejecting…" : "Reject"}
+            Icon={LuX}
+            quiet
+            pending={pending === "reject"}
+            disabled={pending !== null}
             onClick={() => decide(false)}
-          >
-            {pending ? <Loader size="sm" color="gray" aria-label="Rejecting" /> : null}
-            <span className="font-semibold">{pending ? "Rejecting…" : "Reject"}</span>
-          </button>
+          />
         </div>
-      </div>
-    </div>
+      </AuthPage>
+    </>
   );
 };
 

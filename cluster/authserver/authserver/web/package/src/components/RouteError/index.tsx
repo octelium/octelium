@@ -1,4 +1,6 @@
-import { Button } from "@mantine/core";
+import ActionButton from "@/components/ActionButton";
+import AuthPage from "@/components/AuthPage";
+import { LuLogIn, LuRotateCw } from "react-icons/lu";
 import { isRouteErrorResponse, useRouteError } from "react-router-dom";
 
 const RouteError = () => {
@@ -10,18 +12,24 @@ const RouteError = () => {
     : "Something went wrong while loading this page.";
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-canvas px-6 text-center">
-      <h1 className="text-2xl font-bold text-fg">We could not load this page</h1>
-      <p className="mt-2 max-w-md text-sm font-medium text-fg-muted">{message}</p>
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <Button variant="filled" onClick={() => window.location.reload()}>
-          Try again
-        </Button>
-        <Button variant="outline" component="a" href="/login">
-          Return to login
-        </Button>
-      </div>
-    </main>
+    <div className="flex min-h-screen flex-col bg-canvas">
+      <AuthPage title="We could not load this page" description={message}>
+        <div className="flex flex-col gap-2.5">
+          <ActionButton
+            label="Try again"
+            Icon={LuRotateCw}
+            primary
+            onClick={() => window.location.reload()}
+          />
+          <ActionButton
+            label="Return to login"
+            Icon={LuLogIn}
+            quiet
+            href="/login"
+          />
+        </div>
+      </AuthPage>
+    </div>
   );
 };
 

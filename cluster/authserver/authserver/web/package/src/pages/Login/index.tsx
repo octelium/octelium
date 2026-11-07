@@ -1,12 +1,11 @@
 import * as React from "react";
 
 import { useSearchParams } from "react-router-dom";
-import { twMerge } from "tailwind-merge";
 
-import Logo from "@/assets/logo.svg?react";
+import ActionButton from "@/components/ActionButton";
+import AuthPage from "@/components/AuthPage";
 import { getSafeRedirectURL, isDev } from "@/utils";
 import { getClientAuth } from "@/utils/client";
-import { Loader } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
@@ -118,37 +117,6 @@ function getState(): State {
   );
 }
 
-const MethodButton = (props: {
-  label: string;
-  Icon: IconType;
-  primary?: boolean;
-  pending?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) => (
-  <button
-    type="button"
-    disabled={props.disabled}
-    aria-busy={props.pending}
-    className={twMerge(
-      "grid w-full cursor-pointer grid-cols-[1.25rem_minmax(0,1fr)_1.25rem] items-center gap-2 rounded-lg border border-accent bg-accent px-3 py-3.5 !font-bold text-accent-fg shadow-button transition-[background-color,border-color,box-shadow] duration-500 enabled:hover:border-accent-hover enabled:hover:bg-accent-hover enabled:hover:shadow-button-hover disabled:cursor-not-allowed disabled:shadow-none",
-      !props.primary &&
-        "dark:border-line dark:bg-surface dark:text-fg dark:enabled:hover:border-line-strong dark:enabled:hover:bg-surface-hover",
-      props.disabled && !props.pending && "opacity-50",
-    )}
-    onClick={props.onClick}
-  >
-    <span className="flex items-center justify-center">
-      {props.pending ? (
-        <Loader size={16} color="currentColor" aria-hidden />
-      ) : (
-        <props.Icon className="h-[18px] w-[18px]" aria-hidden />
-      )}
-    </span>
-    <span className="min-w-0 break-words text-center">{props.label}</span>
-  </button>
-);
-
 const Passkey = (props: {
   query?: string;
   primary: boolean;
@@ -206,7 +174,7 @@ const Passkey = (props: {
   });
 
   return (
-    <MethodButton
+    <ActionButton
       label={isPending ? "Waiting for your passkey…" : "Continue with a passkey"}
       Icon={IoIosFingerPrint}
       primary={props.primary}
@@ -279,75 +247,62 @@ const Page = () => {
   };
 
   return (
-    <main className="flex flex-1 items-center justify-center px-2 py-4">
-      <div className="w-full max-w-[22rem]">
-        <header className="mb-10 flex flex-col items-center text-center">
-          <Logo
-            aria-hidden="true"
-            focusable="false"
-            className="mb-7 size-[clamp(6.5rem,18.5svh,10.5rem)] rounded-full shadow-logo [&>path:first-child]:fill-(--portal-logo-disc)"
-          />
-          <h1 className="text-2xl font-bold tracking-[-0.01em] text-fg">
-            Sign in to Octelium
-          </h1>
-        </header>
+    <AuthPage title="Sign in to Octelium">
+      {hasLoginError && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-300"
+        >
+          <LuCircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          We could not start sign-in. Please try again.
+        </div>
+      )}
 
-        {hasLoginError && (
+      {!hasProviders && !hasPasskey && (
+        <p className="text-center text-sm leading-6 text-fg-muted">
+          No sign-in methods are available for this Cluster. Contact your
+          administrator.
+        </p>
+      )}
+
+      <div className="flex flex-col gap-2.5">
+        {providers.map((c) => (
+          <ActionButton
+            key={c.uid}
+            label={
+              pending === c.uid
+                ? `Redirecting to ${c.displayName}…`
+                : `Continue with ${c.displayName}`
+            }
+            Icon={getProviderIcon(c.displayName)}
+            primary={hasSingleMethod}
+            pending={pending === c.uid}
+            disabled={busy}
+            onClick={() => beginLogin(c.uid)}
+          />
+        ))}
+
+        {hasProviders && hasPasskey && (
           <div
-            role="alert"
-            className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-300"
+            role="separator"
+            className="my-1.5 flex items-center gap-3 text-xs text-fg-subtle"
           >
-            <LuCircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-            We could not start sign-in. Please try again.
+            <span aria-hidden className="h-px flex-1 bg-line" />
+            or
+            <span aria-hidden className="h-px flex-1 bg-line" />
           </div>
         )}
 
-        {!hasProviders && !hasPasskey && (
-          <p className="text-center text-sm leading-6 text-fg-muted">
-            No sign-in methods are available for this Cluster. Contact your
-            administrator.
-          </p>
+        {hasPasskey && (
+          <Passkey
+            query={reqCommon?.query}
+            primary={hasSingleMethod}
+            pending={pending}
+            setPending={setPending}
+          />
         )}
-
-        <div className="flex flex-col gap-2.5">
-          {providers.map((c) => (
-            <MethodButton
-              key={c.uid}
-              label={
-                pending === c.uid
-                  ? `Redirecting to ${c.displayName}…`
-                  : `Continue with ${c.displayName}`
-              }
-              Icon={getProviderIcon(c.displayName)}
-              primary={hasSingleMethod}
-              pending={pending === c.uid}
-              disabled={busy}
-              onClick={() => beginLogin(c.uid)}
-            />
-          ))}
-
-          {hasProviders && hasPasskey && (
-            <div
-              role="separator"
-              className="my-1.5 flex items-center gap-3 text-xs text-fg-subtle"
-            >
-              <span aria-hidden className="h-px flex-1 bg-line" />
-              or
-              <span aria-hidden className="h-px flex-1 bg-line" />
-            </div>
-          )}
-
-          {hasPasskey && (
-            <Passkey
-              query={reqCommon?.query}
-              primary={hasSingleMethod}
-              pending={pending}
-              setPending={setPending}
-            />
-          )}
-        </div>
       </div>
-    </main>
+    </AuthPage>
   );
 };
 

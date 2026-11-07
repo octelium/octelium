@@ -2,15 +2,19 @@ import * as React from "react";
 
 import { getPortalURL, isDev } from "@/utils";
 
+import ActionButton from "@/components/ActionButton";
+import AuthPage from "@/components/AuthPage";
+import CodeInput from "@/components/CodeInput";
 import { getClientAuth } from "@/utils/client";
 import { getResourceRef } from "@/utils/pb";
-import { Button, Loader, PinInput, TextInput } from "@mantine/core";
+import { Loader, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { Timestamp } from "@octelium/apis/google/protobuf/timestamp";
 import * as Auth from "@octelium/apis/main/authv1";
 import { useMutation } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
-import { twMerge } from "tailwind-merge";
+import { IoIosFingerPrint } from "react-icons/io";
+import { LuArrowLeft, LuRotateCw, LuSmartphone } from "react-icons/lu";
 
 const isUserCancellation = (err: unknown) =>
   err instanceof DOMException &&
@@ -87,66 +91,72 @@ const TOTP = (props: { authn: Auth.Authenticator }) => {
     startTotp();
   }, [startTotp]);
 
-  return (
-    <div className="w-full flex items-center justify-center">
-      {url && (
-        <div className="w-full flex flex-col items-center justify-center">
-          <div className="mt-4 mb-4 rounded-lg bg-white p-4">
-            <QRCodeSVG size={256} value={url} />
+  if (url) {
+    return (
+      <AuthPage
+        compact
+        title="Scan the QR code"
+        description="Use a TOTP app such as Google Authenticator, then enter the 6-digit code it shows."
+      >
+        <div className="flex flex-col items-center">
+          <div className="rounded-xl bg-white p-3 shadow-button">
+            <QRCodeSVG size={176} value={url} />
           </div>
 
-          <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-2 text-center">
-            Scan the QR Code Above by Your TOTP Authenticator (e.g. Google
-            Authenticator) then Enter the OTP
-          </div>
-
-          <div className="font-bold text-sm text-fg-subtle flex items-center justify-center my-2 text-center">
-            <span>Or use the link </span>{" "}
-            <a className="ml-2 text-fg font-extrabold shadow-2xl" href={url}>
-              here
+          <p className="mt-4 mb-6 text-center text-xs font-medium text-fg-subtle">
+            Cannot scan it?{" "}
+            <a
+              className="font-semibold text-fg-muted transition-colors duration-500 hover:text-fg"
+              href={url}
+            >
+              Open the setup link
             </a>
-          </div>
+          </p>
 
-          <div className="mt-8">
-            <PinInput
-              type={"number"}
-              inputType="number"
-              inputMode="numeric"
-              length={6}
-              size="lg"
-              autoFocus
-              value={otp}
-              disabled={mutationFinish.isPending}
-              onChange={setOtp}
-              onComplete={(val) => {
-                mutationFinish.mutate(val);
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {!url && mutation.isPending && (
-        <div className="my-24 flex items-center justify-center">
-          <Loader />
-        </div>
-      )}
-
-      {!url && mutation.isError && (
-        <div className="w-full flex flex-col items-center justify-center my-4">
-          <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-2 text-center">
-            Could not start registration
-          </div>
-          <Button
-            onClick={() => {
-              mutation.mutate();
+          <CodeInput
+            value={otp}
+            disabled={mutationFinish.isPending}
+            onChange={setOtp}
+            onComplete={(val) => {
+              mutationFinish.mutate(val);
             }}
-          >
-            Try again
-          </Button>
+          />
+
+          {mutationFinish.isPending && (
+            <div
+              className="mt-3 flex items-center gap-2 text-sm font-semibold text-fg-subtle"
+              role="status"
+            >
+              <Loader size="xs" /> Verifying…
+            </div>
+          )}
         </div>
-      )}
-    </div>
+
+        <ReturnToPortal />
+      </AuthPage>
+    );
+  }
+
+  if (mutation.isError) {
+    return (
+      <AuthPage title="Could not start registration">
+        <ActionButton
+          label="Try again"
+          Icon={LuRotateCw}
+          primary
+          onClick={() => {
+            mutation.mutate();
+          }}
+        />
+        <ReturnToPortal />
+      </AuthPage>
+    );
+  }
+
+  return (
+    <main className="flex flex-1 items-center justify-center">
+      <Loader aria-label="Starting registration" />
+    </main>
   );
 };
 
@@ -222,28 +232,32 @@ const Fido = (props: { authn: Auth.Authenticator }) => {
     startFido();
   }, [startFido]);
 
+  if (mutation.isError) {
+    return (
+      <AuthPage title="Registration was not completed">
+        <ActionButton
+          label="Try again"
+          Icon={LuRotateCw}
+          primary
+          onClick={() => {
+            mutation.mutate();
+          }}
+        />
+        <ReturnToPortal />
+      </AuthPage>
+    );
+  }
+
   return (
-    <div className="w-full flex flex-col items-center justify-center my-4">
-      {mutation.isPending && (
-        <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-4 text-center">
-          Waiting for your security key
-        </div>
-      )}
-      {mutation.isError && (
-        <div className="w-full flex flex-col items-center justify-center">
-          <div className="font-bold text-xl text-fg-muted flex items-center justify-center my-4 text-center">
-            Registration was not completed
-          </div>
-          <Button
-            onClick={() => {
-              mutation.mutate();
-            }}
-          >
-            Try again
-          </Button>
-        </div>
-      )}
-    </div>
+    <AuthPage
+      title="Waiting for your security key"
+      description="Follow the prompt from your browser to continue."
+    >
+      <div className="flex justify-center" role="status">
+        <Loader size="sm" aria-label="Waiting for your security key" />
+      </div>
+      <ReturnToPortal />
+    </AuthPage>
   );
 };
 
@@ -293,112 +307,83 @@ const Page = () => {
   });
 
   return (
-    <div>
+    <>
       <title>Register an Authenticator - Octelium</title>
-      <div className="container mx-auto mt-2 p-2 md:p-4 w-full max-w-lg">
-        {!authn && (
-          <div className="w-full mt-16">
-            <div className="w-full">
-              <div
-                className="font-bold text-xl mb-4 text-fg-muted text-center"
-                style={{
-                  textShadow: "0 2px 8px rgba(0, 0, 0, 0.2)",
-                }}
-              >
-                <span>Register an MFA Authenticator</span>
-              </div>
-            </div>
+      {!authn && (
+        <AuthPage
+          title="Register an Authenticator"
+          description="Choose how you want to verify your identity."
+        >
+          <TextInput
+            className="mb-6"
+            label="Display name (optional)"
+            placeholder="My Authenticator"
+            size="md"
+            value={displayName}
+            onChange={(e) => {
+              setDisplayName(e.target.value);
+            }}
+          />
 
-            <div className="w-full my-8">
-              <TextInput
-                value={displayName}
-                className="!active:shadow-none"
-                placeholder="My Authenticator"
-                variant={"unstyled"}
-                description={
-                  <span className="text-xs font-bold text-fg">
-                    Display Name (Optional)
-                  </span>
+          <div className="flex flex-col gap-2.5">
+            {[
+              {
+                name: "TOTP",
+                Icon: LuSmartphone,
+                type: Auth.Authenticator_Status_Type.TOTP,
+                description:
+                  "Time-based One Time Password apps such as Google Authenticator",
+              },
+              {
+                name: "FIDO",
+                Icon: IoIosFingerPrint,
+                type: Auth.Authenticator_Status_Type.FIDO,
+                description:
+                  "WebAuthn/Passkey/FIDO 2 security keys, Windows Hello, Android and compliant password managers",
+              },
+            ].map((x) => (
+              <ActionButton
+                key={x.name}
+                label={x.name}
+                description={x.description}
+                Icon={x.Icon}
+                pending={
+                  mutation.isPending && mutation.variables?.type === x.type
                 }
-                size="xl"
-                onChange={(e) => {
-                  setDisplayName(e.target.value);
+                disabled={mutation.isPending}
+                onClick={() => {
+                  mutation.mutate({
+                    type: x.type,
+                  });
                 }}
               />
-            </div>
-            <div className="w-full">
-              {[
-                {
-                  name: "TOTP",
-                  type: Auth.Authenticator_Status_Type.TOTP,
-                  description:
-                    "Use Time-based One Time Password (TOTP) Authenticators such as Google Authenticator",
-                },
-                {
-                  name: "FIDO",
-                  type: Auth.Authenticator_Status_Type.FIDO,
-                  description:
-                    "Use WebAuthn/Passkey/FIDO 2 Security Keys, Windows Hello, Android and Compliant Password Managers",
-                },
-              ].map((x) => (
-                <button
-                  type="button"
-                  key={x.name}
-                  disabled={mutation.isPending}
-                  className={twMerge(
-                    "w-full px-3 py-4 md:py-6 font-bold transition-all duration-500 mb-4",
-                    "shadow-2xl rounded-lg cursor-pointer disabled:cursor-not-allowed font-bold",
-                    "bg-accent hover:bg-accent-hover text-accent-fg text-lg",
-                    mutation.isPending ? "!bg-surface-strong !text-fg-subtle shadow-none" : undefined,
-                  )}
-                  onClick={() => {
-                    mutation.mutate({
-                      type: x.type,
-                    });
-                  }}
-                >
-                  <div className="flex w-full flex-col items-start gap-2 text-left sm:flex-row sm:items-center">
-                    {mutation.isPending && (
-                      <Loader size="sm" color="gray" aria-label="Creating authenticator" />
-                    )}
-                    <span className="shrink-0 font-bold text-xl">{x.name}</span>
-                    <span className="min-w-0 text-left text-sm font-bold text-accent-fg sm:ml-2">
-                      {x.description}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
-        )}
-        {authn && (
-          <div>
-            {authn.status?.type === Auth.Authenticator_Status_Type.TOTP && (
-              <TOTP authn={authn} />
-            )}
 
-            {authn.status?.type === Auth.Authenticator_Status_Type.FIDO && (
-              <Fido authn={authn} />
-            )}
-          </div>
-        )}
-      </div>
+          <ReturnToPortal />
+        </AuthPage>
+      )}
 
-      <ReturnToPortal />
-    </div>
+      {authn?.status?.type === Auth.Authenticator_Status_Type.TOTP && (
+        <TOTP authn={authn} />
+      )}
+
+      {authn?.status?.type === Auth.Authenticator_Status_Type.FIDO && (
+        <Fido authn={authn} />
+      )}
+    </>
   );
 };
 
 export const ReturnToPortal = () => {
   return (
-    <div className="w-full flex items-center mt-8 text-center justify-center">
-      <a
-        className="text-center font-bold text-fg-muted hover:text-fg transition-all duration-500 text-shadow-2xs"
-        href={getPortalURL()}
-      >
-        Return to Portal
-      </a>
-    </div>
+    <a
+      className="mx-auto mt-6 flex w-fit items-center gap-1.5 text-sm font-semibold text-fg-subtle transition-colors duration-500 hover:text-fg"
+      href={getPortalURL()}
+    >
+      <LuArrowLeft className="h-4 w-4" aria-hidden />
+      Return to Portal
+    </a>
   );
 };
 
