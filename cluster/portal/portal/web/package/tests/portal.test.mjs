@@ -466,8 +466,8 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       const details = row.locator("dl");
       await details.waitFor();
       assert.deepEqual(await details.locator("dt").allInnerTexts(), [
-        "Private hostname",
-        "Resource name",
+        "Private FQDN",
+        "Full name",
         "Private addresses",
         "Command",
       ]);
@@ -480,10 +480,10 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       assert.equal(await details.getByText(/^IPv[46]$/).count(), 0);
 
       for (const name of [
-        "Copy private hostname",
+        "Copy private FQDN",
         "Copy fd00:0:1::a",
         "Copy 100.64.0.10",
-        "Copy resource name",
+        "Copy full name",
         "Copy command",
       ]) {
         await details.getByRole("button", { name, exact: true }).waitFor();
@@ -535,7 +535,7 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       await row
         .getByRole("button", { name: "Show details of api", exact: true })
         .click();
-      const label = row.getByText("Resource name", { exact: true });
+      const label = row.getByText("Full name", { exact: true });
       const value = row.getByText("api.default", { exact: true }).last();
       await value.waitFor();
 
@@ -638,8 +638,8 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
       const details = row.locator("dl");
       await details.waitFor();
       assert.deepEqual(await details.locator("dt").allInnerTexts(), [
-        "Private hostname",
-        "Resource name",
+        "Private FQDN",
+        "Full name",
       ]);
     });
 

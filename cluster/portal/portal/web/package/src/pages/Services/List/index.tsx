@@ -164,7 +164,7 @@ const ServiceRow = (props: {
               </span>
               <CopyButton
                 value={getServicePrivateFQDN(item, domain)}
-                label="Copy private hostname"
+                label="Copy private FQDN"
                 className="shrink-0"
               />
               {displayName && (

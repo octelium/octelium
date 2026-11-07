@@ -15,16 +15,16 @@ const ServiceDetails = (props: { item: Service; domain: string }) => {
   return (
     <div className="rounded-b-[11px] border-t border-slate-100 bg-canvas/60 p-3 sm:p-4">
       <DetailList>
-        <DetailRow label="Private hostname">
+        <DetailRow label="Private FQDN">
           <DetailValue
             value={getServicePrivateFQDN(item, domain)}
-            copyLabel="Copy private hostname"
+            copyLabel="Copy private FQDN"
           />
         </DetailRow>
-        <DetailRow label="Resource name">
+        <DetailRow label="Full name">
           <DetailValue
             value={item.metadata?.name ?? ""}
-            copyLabel="Copy resource name"
+            copyLabel="Copy full name"
           />
         </DetailRow>
         {publicURL && (
@@ -66,7 +66,7 @@ const ServiceDetails = (props: { item: Service; domain: string }) => {
         )}
       </DetailList>
       <p className="mt-2.5 px-1 text-xs font-normal leading-5 text-slate-500">
-        Private hostnames, addresses and commands work on a device running{" "}
+        Private FQDNs, addresses and commands work on a device running{" "}
         <code className="font-mono text-body text-slate-700">
           octelium connect
         </code>
