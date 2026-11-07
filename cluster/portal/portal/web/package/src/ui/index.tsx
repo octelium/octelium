@@ -22,22 +22,6 @@ export const DocumentTitle = (props: { title: string }) => (
   <title>{`${props.title} · Octelium Portal`}</title>
 );
 
-export const Eyebrow = (props: {
-  children: React.ReactNode;
-  className?: string;
-  id?: string;
-}) => (
-  <span
-    id={props.id}
-    className={twMerge(
-      "text-micro font-semibold uppercase tracking-[0.07em] text-slate-500",
-      props.className,
-    )}
-  >
-    {props.children}
-  </span>
-);
-
 export const PageHeader = (props: {
   title: React.ReactNode;
   description?: string;
@@ -243,67 +227,25 @@ export const Avatar = (props: {
   );
 };
 
-export const Field = (props: {
-  label: string;
+export const SettingRow = (props: {
+  title: string;
   description?: string;
   children: React.ReactNode;
-}) => {
-  const id = React.useId();
-
-  return (
-    <div
-      role="group"
-      aria-labelledby={`${id}-label`}
-      aria-describedby={props.description ? `${id}-description` : undefined}
-      className="flex flex-col gap-1"
-    >
-      <span id={`${id}-label`} className="text-xs font-semibold text-slate-700">
-        {props.label}
-      </span>
-      {props.description && (
-        <span
-          id={`${id}-description`}
-          className="mb-0.5 text-xs font-normal leading-[1.45] text-slate-500"
-        >
-          {props.description}
-        </span>
-      )}
-      {props.children}
-    </div>
-  );
-};
-
-export const InfoGrid = (props: {
-  children: React.ReactNode;
-  className?: string;
-}) => (
-  <dl
-    className={twMerge(
-      "grid grid-cols-1 gap-x-5 gap-y-4 @md:grid-cols-2",
-      props.className,
-    )}
-  >
-    {props.children}
-  </dl>
-);
-
-export const KeyValue = (props: {
-  label: string;
-  children: React.ReactNode;
-  full?: boolean;
 }) => (
   <div
-    className={twMerge(
-      "flex min-w-0 flex-col gap-1",
-      props.full && "@md:col-span-2",
-    )}
+    role="group"
+    aria-label={props.title}
+    className="flex flex-col gap-2.5 px-4 py-3 @md:flex-row @md:items-center @md:justify-between @md:gap-6"
   >
-    <dt>
-      <Eyebrow>{props.label}</Eyebrow>
-    </dt>
-    <dd className="m-0 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-body font-medium text-slate-800">
-      {props.children}
-    </dd>
+    <div className="min-w-0">
+      <p className="text-body font-medium text-slate-800">{props.title}</p>
+      {props.description && (
+        <p className="text-xs font-normal leading-5 text-slate-500">
+          {props.description}
+        </p>
+      )}
+    </div>
+    <div className="shrink-0">{props.children}</div>
   </div>
 );
 
@@ -345,24 +287,6 @@ export const CopyButton = (props: {
   );
 };
 
-export const CopyValue = (props: {
-  value: string;
-  copyLabel?: string;
-  mono?: boolean;
-}) => (
-  <span className="inline-flex min-w-0 max-w-full items-center gap-1">
-    <span
-      className={twMerge(
-        "min-w-0 [overflow-wrap:anywhere]",
-        props.mono !== false && "font-mono text-body font-normal text-slate-800",
-      )}
-    >
-      {props.value}
-    </span>
-    <CopyButton value={props.value} label={props.copyLabel} />
-  </span>
-);
-
 export const DetailList = (props: {
   children: React.ReactNode;
   className?: string;
@@ -386,7 +310,7 @@ export const DetailRow = (props: {
 }) => (
   <div
     className={twMerge(
-      "grid min-w-0 grid-cols-1 gap-x-4 bg-white py-2 pl-3.5 pr-2 transition-colors hover:bg-slate-50 @md:grid-cols-[8rem_minmax(0,1fr)]",
+      "grid min-w-0 grid-cols-1 gap-x-4 bg-white py-2 pl-4 pr-2 transition-colors hover:bg-slate-50 @md:grid-cols-[8rem_minmax(0,1fr)]",
       props.full && "@4xl:col-span-2",
     )}
   >

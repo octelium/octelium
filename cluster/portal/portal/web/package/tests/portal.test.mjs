@@ -961,9 +961,10 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
     it("shows the signed-in user and the release", async () => {
       await load("/settings");
       await page.getByText("Alice Morgan", { exact: true }).first().waitFor();
-      for (const text of ["alice@example.com", "example.com", "Human"]) {
+      for (const text of ["alice@example.com", "example.com"]) {
         await page.getByText(text, { exact: true }).first().waitFor();
       }
+      assert.equal(await page.getByText("Human", { exact: true }).count(), 0);
       assert.match(
         await page
           .getByRole("link", { name: "Manage authenticators" })
@@ -989,6 +990,47 @@ for (const [name, browserType] of Object.entries({ chromium, firefox })) {
           null,
         );
       }
+    });
+
+    it("arranges the settings for the available width", async () => {
+      await load("/settings");
+      const heading = (name) =>
+        page.getByRole("heading", { name, exact: true });
+      await heading("Account").waitFor();
+      await page.getByText("Alice Morgan", { exact: true }).first().waitFor();
+
+      const account = await heading("Account").boundingBox();
+      const preferences = await heading("Preferences").boundingBox();
+      const security = await heading("Security").boundingBox();
+      assert.equal(account.y, preferences.y);
+      assert.ok(account.x + account.width < preferences.x);
+      assert.equal(preferences.x, security.x);
+      assert.ok(preferences.y < security.y);
+
+      const scheme = await page
+        .getByRole("group", { name: "Color scheme", exact: true })
+        .boundingBox();
+      const items = await page
+        .getByRole("group", { name: "Items per page", exact: true })
+        .boundingBox();
+      assert.ok(scheme.height < 80);
+      assert.ok(items.height < 80);
+
+      await page.setViewportSize({ width: 320, height: 640 });
+      await page
+        .getByRole("button", { name: "Open navigation", exact: true })
+        .waitFor();
+      await page.waitForFunction(() => {
+        const [first, second] = [...document.querySelectorAll("h2")].map(
+          (element) => element.getBoundingClientRect(),
+        );
+        const root = document.documentElement;
+        return (
+          first.left === second.left &&
+          first.bottom <= second.top &&
+          root.scrollWidth <= root.clientWidth
+        );
+      });
     });
 
     it("uses the system theme until a choice is saved", async () => {
