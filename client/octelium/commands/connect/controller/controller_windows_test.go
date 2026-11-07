@@ -441,8 +441,9 @@ func TestWindowsWireGuardEndpointByHostIPFamily(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			for _, ipv6 := range []bool{false, true} {
 				c := newTestPlatformController(t, mode.mode)
-				c.gatewayIPv4Supported = !ipv6
-				c.gatewayIPv6Supported = ipv6
+				c.checkGatewayRoute = func(addr netip.Addr) bool {
+					return addr.Is6() == ipv6
+				}
 				c.c.Connection.Gateways = []*userv1.Gateway{{
 					Addresses: []string{"2001:db8::1", "192.0.2.1"},
 					Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820},
@@ -459,4 +460,17 @@ func TestWindowsWireGuardEndpointByHostIPFamily(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWindowsGatewayEndpointHostRoutes(t *testing.T) {
+	testGatewayEndpointHostRoutes(t, func(c *Controller, gw *userv1.Gateway) string {
+		config, err := c.getWgConf()
+		require.NoError(t, err)
+		require.Len(t, config.Peers, 1)
+		return config.Peers[0].Endpoint.Host
+	})
+}
+
+func TestWindowsGatewayAddrRoutableLoopback(t *testing.T) {
+	assert.True(t, isGatewayAddrRoutable(netip.MustParseAddr("127.0.0.1")))
 }

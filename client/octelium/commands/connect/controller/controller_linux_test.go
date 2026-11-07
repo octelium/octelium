@@ -17,6 +17,12 @@ package controller
 import (
 	"context"
 	"errors"
+	"net"
+	"os"
+	"os/exec"
+	"slices"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
@@ -186,4 +192,106 @@ func TestLinuxDeviceCloseContinuesAfterListenerFailure(t *testing.T) {
 	assert.Equal(t, 1, lis.calls)
 	assert.Equal(t, 1, dev.calls)
 	assert.Nil(t, c.tundev)
+}
+
+const testGatewayNetnsEnv = "OCTELIUM_TEST_GATEWAY_NETNS_SCENARIO"
+
+const (
+	testGatewayNetnsBase = "ip link set lo up; ip link add eth0 type dummy; ip link set eth0 up; "
+	testGatewayNetnsV4   = "ip addr add 203.0.113.5/24 dev eth0; ip route add default via 203.0.113.1; "
+	testGatewayNetnsV6   = "ip -6 addr add 2001:db8:1::5/64 dev eth0 nodad; ip -6 route add default via 2001:db8:1::1 dev eth0; "
+	testGatewayNetnsULA  = "ip -6 addr add fd00::5/64 dev eth0 nodad; "
+	testGatewayIPv4      = "198.51.100.10"
+	testGatewayIPv6      = "2001:db8:ffff::10"
+)
+
+type testGatewayNetnsScenario struct {
+	name      string
+	setup     string
+	ipv4First bool
+	want      string
+}
+
+var testGatewayNetnsScenarios = []testGatewayNetnsScenario{
+	{"ipv4-only", testGatewayNetnsV4, false, testGatewayIPv4},
+	{"ipv6-only", testGatewayNetnsV6, true, testGatewayIPv6},
+	{"dual-stack-ipv6-first", testGatewayNetnsV4 + testGatewayNetnsV6, false, testGatewayIPv6},
+	{"dual-stack-ipv4-first", testGatewayNetnsV4 + testGatewayNetnsV6, true, testGatewayIPv4},
+	{"no-routes-falls-back-to-first", "", false, testGatewayIPv6},
+	{"no-routes-ipv4-first-falls-back-to-first", "", true, testGatewayIPv4},
+	{"ipv4-only-with-ula", testGatewayNetnsV4 + testGatewayNetnsULA, false, testGatewayIPv4},
+	{"ipv4-only-with-ula-default-route", testGatewayNetnsV4 + testGatewayNetnsULA +
+		"ip -6 route add default via fd00::1 dev eth0; ", false, testGatewayIPv4},
+	{"ipv4-only-with-link-local-default-route", testGatewayNetnsV4 +
+		"ip -6 route add default via fe80::1 dev eth0; ", false, testGatewayIPv4},
+	{"ipv6-only-with-idle-bridge", testGatewayNetnsV6 +
+		"ip link add docker0 type bridge; ip addr add 172.17.0.1/16 dev docker0; ip link set docker0 up; ",
+		true, testGatewayIPv6},
+	{"ipv4-only-with-other-tunnel", testGatewayNetnsV4 +
+		"ip link add tun1 type dummy; ip link set tun1 up; ip -6 addr add fdee:1::2/64 dev tun1 nodad; ip -6 route add fdee::/16 dev tun1; ",
+		false, testGatewayIPv4},
+	{"ipv4-only-with-policy-table", "ip addr add 203.0.113.5/24 dev eth0; ip route add default via 203.0.113.1 table 100; ip rule add lookup 100; ",
+		false, testGatewayIPv4},
+	{"ipv6-only-with-policy-table", "ip -6 addr add 2001:db8:1::5/64 dev eth0 nodad; ip -6 route add default via 2001:db8:1::1 dev eth0 table 100; ip -6 rule add lookup 100; ",
+		true, testGatewayIPv6},
+	{"ipv4-only-ipv6-disabled", testGatewayNetnsV4 + "sysctl -q -w net.ipv6.conf.all.disable_ipv6=1; ", false, testGatewayIPv4},
+}
+
+func TestLinuxGatewayEndpointNetnsHelper(t *testing.T) {
+	name := os.Getenv(testGatewayNetnsEnv)
+	if name == "" {
+		t.Skip("Runs only inside TestLinuxGatewayEndpointNetns")
+	}
+
+	idx := slices.IndexFunc(testGatewayNetnsScenarios, func(s testGatewayNetnsScenario) bool {
+		return s.name == name
+	})
+	if !assert.GreaterOrEqual(t, idx, 0) {
+		t.FailNow()
+	}
+	tt := testGatewayNetnsScenarios[idx]
+
+	if out, err := exec.Command("sh", "-ec", testGatewayNetnsBase+tt.setup).CombinedOutput(); err != nil {
+		t.Skipf("Could not set up the network namespace: %v: %s", err, out)
+	}
+
+	addresses := []string{testGatewayIPv6, testGatewayIPv4}
+	if tt.ipv4First {
+		addresses = []string{testGatewayIPv4, testGatewayIPv6}
+	}
+
+	c := newTestGatewayCtl(nil)
+	c.checkGatewayRoute = isGatewayAddrRoutable
+	c.c.Connection.Gateways = []*userv1.Gateway{{
+		Addresses: addresses,
+		Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820},
+	}}
+
+	uapi, err := c.toUAPI()
+	assert.Nil(t, err)
+	assert.Contains(t, uapi, "endpoint="+net.JoinHostPort(tt.want, "51820")+"\n")
+}
+
+func TestLinuxGatewayEndpointNetns(t *testing.T) {
+	for _, tt := range testGatewayNetnsScenarios {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.v", "-test.run=^TestLinuxGatewayEndpointNetnsHelper$")
+			cmd.Env = append(os.Environ(), testGatewayNetnsEnv+"="+tt.name)
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET,
+				UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
+				GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
+			}
+
+			out, err := cmd.CombinedOutput()
+			var exitErr *exec.ExitError
+			if err != nil && !errors.As(err, &exitErr) {
+				t.Skipf("Could not create the network namespace: %v", err)
+			}
+			if strings.Contains(string(out), "--- SKIP") {
+				t.Skipf("Could not set up the network namespace: %s", out)
+			}
+			assert.Nil(t, err, string(out))
+		})
+	}
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,7 +32,6 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller/esshmain"
 	"github.com/octelium/octelium/client/octelium/commands/connect/dnssrv"
 	"github.com/octelium/octelium/client/octelium/commands/connect/esocks5"
-	"github.com/octelium/octelium/client/octelium/commands/connect/l3mode"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
@@ -89,8 +89,7 @@ type Controller struct {
 	localDNSRetryCancel context.CancelFunc
 	localDNSRetryDoneCh chan struct{}
 
-	gatewayIPv4Supported bool
-	gatewayIPv6Supported bool
+	checkGatewayRoute func(netip.Addr) bool
 }
 
 func NewController(c *cliconfigv1.Connection) (*Controller, error) {
@@ -110,6 +109,8 @@ func NewControllerWithDB(c *cliconfigv1.Connection, dbC *db.DB) (*Controller, er
 		ipv6Supported: ipv6Supported,
 		isQUIC:        c.Preferences.ConnectionType == cliconfigv1.Connection_Preferences_CONNECTION_TYPE_QUICV0,
 		dbC:           dbC,
+
+		checkGatewayRoute: isGatewayAddrRoutable,
 	}
 
 	switch {
@@ -135,15 +136,6 @@ func NewControllerWithDB(c *cliconfigv1.Connection, dbC *db.DB) (*Controller, er
 	}
 
 	ret.wgPrivateKey = privK
-	if !ret.isQUIC {
-		ipv4, ipv6, err := l3mode.GetSupportedIPFamilies(c.Preferences.DeviceName)
-		if err != nil {
-			zap.L().Debug("Could not detect Gateway address families. Using the advertised address order", zap.Error(err))
-		} else {
-			ret.gatewayIPv4Supported = ipv4
-			ret.gatewayIPv6Supported = ipv6
-		}
-	}
 
 	return ret, nil
 }

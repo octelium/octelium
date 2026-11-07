@@ -17,6 +17,7 @@ package controller
 import (
 	"errors"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -282,4 +283,19 @@ func TestDarwinKnownIssues(t *testing.T) {
 		}
 		assert.True(t, !removed || restored, "rolling back a failed state update must preserve the working routes")
 	})
+}
+
+func TestDarwinGatewayEndpointHostRoutes(t *testing.T) {
+	testGatewayEndpointHostRoutes(t, func(c *Controller, gw *userv1.Gateway) string {
+		uapi, err := c.toUAPI()
+		assert.Nil(t, err)
+		endpoint, err := c.getGatewayEndpoint(gw)
+		assert.Nil(t, err)
+		assert.Contains(t, uapi, "endpoint="+endpoint.String()+"\n")
+		return endpoint.IP.String()
+	})
+}
+
+func TestDarwinGatewayAddrRoutableLoopback(t *testing.T) {
+	assert.True(t, isGatewayAddrRoutable(netip.MustParseAddr("127.0.0.1")))
 }

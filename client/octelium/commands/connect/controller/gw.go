@@ -18,10 +18,16 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+)
+
+const (
+	gatewayRouteCheckTimeout = 250 * time.Millisecond
+	gatewayRouteCheckPort    = 51820
 )
 
 func (c *Controller) AddGateway(ctx context.Context, gw *userv1.Gateway) error {
@@ -175,23 +181,80 @@ func (c *Controller) removeGatewayFromState(gwID string) {
 }
 
 func (c *Controller) getGatewayEndpoint(gw *userv1.Gateway) (*net.UDPAddr, error) {
-	var selected netip.Addr
+	addrs := getGatewayAddrs(gw)
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("Gateway %s does not have a valid endpoint address", gw.Id)
+	}
+
+	selected := selectGatewayAddr(addrs, c.checkGatewayRoute)
+	return &net.UDPAddr{IP: selected.AsSlice(), Port: int(gw.Wireguard.Port), Zone: selected.Zone()}, nil
+}
+
+func getGatewayAddrs(gw *userv1.Gateway) []netip.Addr {
+	var ret []netip.Addr
 	for _, raw := range gw.Addresses {
 		addr, err := netip.ParseAddr(raw)
 		if err != nil || addr.IsUnspecified() || addr.IsMulticast() {
 			continue
 		}
-		addr = addr.Unmap()
-		if !selected.IsValid() {
-			selected = addr
-		}
-		if (addr.Is4() && c.gatewayIPv4Supported) || (addr.Is6() && c.gatewayIPv6Supported) {
-			selected = addr
-			break
-		}
+		ret = append(ret, addr.Unmap())
 	}
-	if !selected.IsValid() {
-		return nil, errors.Errorf("Gateway %s does not have a valid endpoint address", gw.Id)
+	return ret
+}
+
+func selectGatewayAddr(addrs []netip.Addr, isRoutable func(netip.Addr) bool) netip.Addr {
+	if len(addrs) < 2 || isRoutable == nil {
+		return addrs[0]
 	}
-	return &net.UDPAddr{IP: selected.AsSlice(), Port: int(gw.Wireguard.Port), Zone: selected.Zone()}, nil
+
+	resultCh := make(chan netip.Addr, 1)
+	go func() {
+		for _, addr := range addrs {
+			if isRoutable(addr) {
+				resultCh <- addr
+				return
+			}
+		}
+		resultCh <- addrs[0]
+	}()
+
+	timer := time.NewTimer(gatewayRouteCheckTimeout)
+	defer timer.Stop()
+
+	select {
+	case addr := <-resultCh:
+		return addr
+	case <-timer.C:
+		zap.L().Debug("Timed out checking the Gateway routes. Using the first advertised address")
+		return addrs[0]
+	}
+}
+
+func isGatewayAddrRoutable(dst netip.Addr) bool {
+	conn, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(netip.AddrPortFrom(dst, gatewayRouteCheckPort)))
+	if err != nil {
+		zap.L().Debug("No route to Gateway address", zap.String("addr", dst.String()), zap.Error(err))
+		return false
+	}
+	defer conn.Close()
+
+	local, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+
+	return isGatewaySrcAddrUsable(local.AddrPort().Addr().Unmap(), dst)
+}
+
+func isGatewaySrcAddrUsable(src, dst netip.Addr) bool {
+	if !src.IsValid() || src.IsUnspecified() || src.IsLinkLocalUnicast() {
+		return false
+	}
+	if src.IsLoopback() {
+		return dst.IsLoopback()
+	}
+	if src.Is6() && src.IsPrivate() {
+		return dst.IsPrivate()
+	}
+	return true
 }

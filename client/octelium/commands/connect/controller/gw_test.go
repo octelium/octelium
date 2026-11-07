@@ -16,9 +16,12 @@ package controller
 
 import (
 	"context"
+	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -168,8 +171,9 @@ func TestGatewayEndpointByHostIPFamily(t *testing.T) {
 					c := newTestGatewayCtl(nil)
 					c.ipv4Supported = mode.v4
 					c.ipv6Supported = mode.v6
-					c.gatewayIPv4Supported = tt.ipv4
-					c.gatewayIPv6Supported = tt.ipv6
+					c.checkGatewayRoute = func(addr netip.Addr) bool {
+						return (addr.Is4() && tt.ipv4) || (addr.Is6() && tt.ipv6)
+					}
 					gw := &userv1.Gateway{Addresses: tt.addresses, Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String(), Port: 51820}}
 					c.c.Connection.Gateways = []*userv1.Gateway{gw}
 					original := proto.Clone(gw)
@@ -192,4 +196,128 @@ func TestGatewayEndpointInvalidAddresses(t *testing.T) {
 		_, err := c.getGatewayEndpoint(&userv1.Gateway{Id: "gw", Addresses: addresses, Wireguard: &userv1.Gateway_WireGuard{}})
 		assert.ErrorContains(t, err, "does not have a valid endpoint address")
 	}
+}
+
+func TestSelectGatewayAddr(t *testing.T) {
+	first := netip.MustParseAddr("192.0.2.1")
+	second := netip.MustParseAddr("2001:db8::1")
+	addrs := []netip.Addr{first, second}
+
+	t.Run("nil-check", func(t *testing.T) {
+		assert.Equal(t, first, selectGatewayAddr(addrs, nil))
+	})
+
+	t.Run("single-address-skips-check", func(t *testing.T) {
+		assert.Equal(t, second, selectGatewayAddr([]netip.Addr{second}, func(netip.Addr) bool {
+			t.Fatal("checked the route of the only address")
+			return false
+		}))
+	})
+
+	t.Run("no-route-falls-back-to-first", func(t *testing.T) {
+		var checked []netip.Addr
+		assert.Equal(t, first, selectGatewayAddr(addrs, func(addr netip.Addr) bool {
+			checked = append(checked, addr)
+			return false
+		}))
+		assert.Equal(t, addrs, checked)
+	})
+
+	t.Run("stops-at-first-routable", func(t *testing.T) {
+		var checked []netip.Addr
+		assert.Equal(t, first, selectGatewayAddr(addrs, func(addr netip.Addr) bool {
+			checked = append(checked, addr)
+			return true
+		}))
+		assert.Equal(t, []netip.Addr{first}, checked)
+	})
+
+	t.Run("skips-unroutable-first", func(t *testing.T) {
+		assert.Equal(t, second, selectGatewayAddr(addrs, func(addr netip.Addr) bool {
+			return addr == second
+		}))
+	})
+
+	t.Run("stuck-check-falls-back-to-first", func(t *testing.T) {
+		startedAt := time.Now()
+		assert.Equal(t, first, selectGatewayAddr(addrs, func(netip.Addr) bool {
+			time.Sleep(20 * gatewayRouteCheckTimeout)
+			return false
+		}))
+		assert.GreaterOrEqual(t, time.Since(startedAt), gatewayRouteCheckTimeout)
+		assert.Less(t, time.Since(startedAt), 10*gatewayRouteCheckTimeout)
+	})
+}
+
+func TestGatewaySrcAddrUsable(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		src  netip.Addr
+		dst  string
+		want bool
+	}{
+		{"invalid", netip.Addr{}, "192.0.2.1", false},
+		{"unspecified-ipv4", netip.MustParseAddr("0.0.0.0"), "192.0.2.1", false},
+		{"unspecified-ipv6", netip.MustParseAddr("::"), "2001:db8::1", false},
+		{"ipv4-link-local", netip.MustParseAddr("169.254.1.1"), "192.0.2.1", false},
+		{"ipv6-link-local", netip.MustParseAddr("fe80::1"), "2001:db8::1", false},
+		{"ipv6-link-local-zone", netip.MustParseAddr("fe80::1%eth0"), "2001:db8::1", false},
+		{"loopback-to-global", netip.MustParseAddr("127.0.0.1"), "192.0.2.1", false},
+		{"loopback-to-loopback", netip.MustParseAddr("127.0.0.1"), "127.0.0.1", true},
+		{"ula-to-global", netip.MustParseAddr("fd00::5"), "2001:db8::1", false},
+		{"ula-to-ula", netip.MustParseAddr("fd00::5"), "fd00::1", true},
+		{"global-ipv6", netip.MustParseAddr("2001:db8:1::5"), "2001:db8::1", true},
+		{"global-ipv4", netip.MustParseAddr("203.0.113.5"), "192.0.2.1", true},
+		{"private-ipv4-behind-nat", netip.MustParseAddr("10.0.0.5"), "192.0.2.1", true},
+		{"cgnat-ipv4", netip.MustParseAddr("100.64.0.5"), "192.0.2.1", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isGatewaySrcAddrUsable(tt.src, netip.MustParseAddr(tt.dst)))
+		})
+	}
+}
+
+func TestGatewayAddrRoutableLoopback(t *testing.T) {
+	assert.True(t, isGatewayAddrRoutable(netip.MustParseAddr("127.0.0.1")))
+
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv6loopback})
+	if err != nil {
+		t.Skipf("IPv6 loopback is not available: %v", err)
+	}
+	defer conn.Close()
+	assert.True(t, isGatewayAddrRoutable(netip.MustParseAddr("::1")))
+}
+
+func testGatewayEndpointHostRoutes(t *testing.T, getEndpoint func(*Controller, *userv1.Gateway) string) {
+	t.Helper()
+	const ipv4 = "198.51.100.10"
+	const ipv6 = "2001:db8:ffff::10"
+
+	for _, addresses := range [][]string{{ipv4, ipv6}, {ipv6, ipv4}} {
+		for _, addr := range addresses {
+			t.Logf("Gateway address %s routable: %v", addr, isGatewayAddrRoutable(netip.MustParseAddr(addr)))
+		}
+
+		c := newTestGatewayCtl(nil)
+		c.checkGatewayRoute = isGatewayAddrRoutable
+		gw := &userv1.Gateway{
+			Addresses: addresses,
+			Wireguard: &userv1.Gateway_WireGuard{PublicKey: c.wgPrivateKey.PublicKey().String()},
+		}
+		c.c.Connection.Gateways = []*userv1.Gateway{gw}
+
+		startedAt := time.Now()
+		endpoint := getEndpoint(c, gw)
+		assert.Less(t, time.Since(startedAt), 10*gatewayRouteCheckTimeout)
+		assert.Contains(t, addresses, endpoint)
+		t.Logf("Selected %s from %v", endpoint, addresses)
+	}
+}
+
+func TestGatewayEndpointHostRoutes(t *testing.T) {
+	testGatewayEndpointHostRoutes(t, func(c *Controller, gw *userv1.Gateway) string {
+		endpoint, err := c.getGatewayEndpoint(gw)
+		require.NoError(t, err)
+		return endpoint.IP.String()
+	})
 }
