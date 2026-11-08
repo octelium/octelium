@@ -479,7 +479,7 @@ func prependAuthenticationToLastArray(sess *corev1.Session) {
 		return
 	}
 
-	const maxLen = 100
+	const maxLen = 10
 
 	items := append([]*corev1.Session_Status_Authentication{
 		pbutils.Clone(sess.Status.Authentication).(*corev1.Session_Status_Authentication),

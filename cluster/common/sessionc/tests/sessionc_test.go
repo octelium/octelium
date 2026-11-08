@@ -148,9 +148,23 @@ func TestSessionAuthenticationHistory(t *testing.T) {
 		assert.Equal(t, "2606:4700::1111", sess.Status.Authentication.Info.Downstream.IpAddress)
 		assert.Equal(t, fmt.Sprintf("2.%d.0", i), sess.Status.Authentication.Info.Downstream.ClientVersion)
 		assert.True(t, pbutils.IsEqual(initial, sess.Status.InitialAuthentication))
+		assert.Len(t, sess.Status.LastAuthentications, min(i+1, 10))
 	}
-	assert.Len(t, sess.Status.LastAuthentications, 100)
+	assert.Len(t, sess.Status.LastAuthentications, 10)
 	assert.EqualValues(t, 106, sess.Status.TotalAuthentications)
+	legacyAuthentications := make([]*corev1.Session_Status_Authentication, 0, 100)
+	for range 100 {
+		legacyAuthentications = append(legacyAuthentications, &corev1.Session_Status_Authentication{TokenID: vutils.UUIDv4()})
+	}
+	sess.Status.LastAuthentications = legacyAuthentications
+	previous := sess.Status.Authentication.TokenID
+	sessionc.SetCurrAuthentication(&sessionc.SetCurrAuthenticationOpts{Session: sess, ClusterConfig: cc})
+	assert.Len(t, sess.Status.LastAuthentications, 10)
+	assert.Equal(t, previous, sess.Status.LastAuthentications[0].TokenID)
+	for i, auth := range sess.Status.LastAuthentications[1:] {
+		assert.Equal(t, legacyAuthentications[i].TokenID, auth.TokenID)
+	}
+	assert.EqualValues(t, 107, sess.Status.TotalAuthentications)
 	for _, tc := range []struct {
 		userAgent string
 		version   string

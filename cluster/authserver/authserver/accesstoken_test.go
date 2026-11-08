@@ -26,6 +26,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/sessionc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
@@ -478,6 +479,24 @@ func TestCheckReauth(t *testing.T) {
 			},
 		})
 		assert.NotNil(t, err)
+	}
+
+	{
+		sess := &corev1.Session{
+			Status: &corev1.Session_Status{
+				Authentication:        newAuthentication(time.Now(), 2),
+				InitialAuthentication: newAuthentication(time.Now(), 2),
+			},
+		}
+		for i := range maxAuthenticationsPerHour * 4 {
+			assert.Equal(t, i >= maxAuthenticationsPerHour, srv.checkReauth(sess) != nil, "%d", i)
+			sessionc.SetCurrAuthentication(&sessionc.SetCurrAuthenticationOpts{
+				Session:       sess,
+				ClusterConfig: clusterCfg,
+			})
+		}
+		assert.Len(t, sess.Status.LastAuthentications, 10)
+		assert.NotNil(t, srv.checkReauth(sess))
 	}
 }
 
