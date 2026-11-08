@@ -117,6 +117,11 @@ type dctx struct {
 
 	unauthorizedQuery string
 
+	stmts        *statements
+	rfqExpected  uint64
+	lastQueryRFQ uint64
+	rfqReceived  atomic.Uint64
+
 	downstreamConn *countingConn
 	commonMetrics  *metricutils.CommonMetrics
 	dbMetrics      *metricutils.DBMetrics
@@ -156,6 +161,7 @@ func newDctx(ctx context.Context, conn net.Conn,
 
 		unauthorizedQuery: fmt.Sprintf("octelium_unauthorized_%s",
 			utilrand.GetRandomStringLowercase(16)),
+		stmts: newStatements(),
 
 		downstreamConn: downstreamConn,
 		commonMetrics:  commonMetrics,
@@ -451,6 +457,13 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				}
 			}
 
+			if c.isAuthorizingCommands() {
+				if err := c.updateStatements(message); err != nil {
+					c.downstreamCh <- err
+					return
+				}
+			}
+
 			c.pgFrontend.Send(message)
 			if err := c.pgFrontend.Flush(); err != nil {
 				c.downstreamCh <- err
@@ -491,6 +504,19 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 			Parse: &corev1.RequestContext_Request_Postgres_Parse{
 				Query: msg.Query,
 				Name:  msg.Name,
+			},
+		}
+	case *pgproto3.Bind:
+		query, ok := c.stmts.get(msg.PreparedStatement)
+		if !ok {
+			return false, &corev1.AccessLog_Entry_Common_Reason{
+				Type: corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH,
+			}, nil
+		}
+		request.GetPostgres().Type = &corev1.RequestContext_Request_Postgres_Parse_{
+			Parse: &corev1.RequestContext_Request_Postgres_Parse{
+				Query: query,
+				Name:  msg.PreparedStatement,
 			},
 		}
 	case *pgproto3.FunctionCall:
@@ -546,6 +572,10 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 			zap.L().Debug("upstream msg received",
 				zap.String("type", fmt.Sprintf("%T", message)))
 
+			if _, ok := message.(*pgproto3.ReadyForQuery); ok {
+				c.rfqReceived.Add(1)
+			}
+
 			if c.isUnauthorizedError(message) {
 				message = &pgproto3.ErrorResponse{
 					Severity: "ERROR",
@@ -571,11 +601,56 @@ func (c *dctx) getUnauthorizedMessage(msg pgproto3.FrontendMessage) pgproto3.Fro
 			Name:  msg.Name,
 			Query: c.unauthorizedQuery,
 		}
+	case *pgproto3.Bind:
+		return &pgproto3.Parse{
+			Name:  c.unauthorizedQuery,
+			Query: c.unauthorizedQuery,
+		}
 	default:
 		return &pgproto3.Query{
 			String: c.unauthorizedQuery,
 		}
 	}
+}
+
+func (c *dctx) updateStatements(msg pgproto3.FrontendMessage) error {
+	if _, ok := msg.(*pgproto3.Sync); ok {
+		c.stmts.sync()
+		c.rfqExpected++
+		return nil
+	}
+
+	rfqReceived := c.rfqReceived.Load()
+	c.stmts.start(rfqReceived == c.rfqExpected, rfqReceived >= c.lastQueryRFQ)
+
+	switch msg := msg.(type) {
+	case *pgproto3.Query:
+		c.stmts.close("")
+		c.stmts.sync()
+		c.rfqExpected++
+		c.lastQueryRFQ = c.rfqExpected
+	case *pgproto3.Parse:
+		switch {
+		case msg.Query != c.unauthorizedQuery:
+			return c.stmts.parse(msg.Name, msg.Query)
+		case msg.Name == "":
+			c.stmts.close("")
+		}
+		c.stmts.fail()
+	case *pgproto3.Close:
+		switch msg.ObjectType {
+		case 'S':
+			c.stmts.close(msg.Name)
+		case 'P':
+		default:
+			c.stmts.fail()
+		}
+	case *pgproto3.Flush:
+	default:
+		c.stmts.fail()
+	}
+
+	return nil
 }
 
 func (c *dctx) isUnauthorizedError(msg pgproto3.BackendMessage) bool {

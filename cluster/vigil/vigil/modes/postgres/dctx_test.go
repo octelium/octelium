@@ -243,6 +243,16 @@ func TestGetUnauthorizedMessage(t *testing.T) {
 		assert.Equal(t, c.unauthorizedQuery, msg.Query)
 		assert.Empty(t, msg.ParameterOIDs)
 	}
+
+	{
+		msg, ok := c.getUnauthorizedMessage(&pgproto3.Bind{
+			PreparedStatement: "stmt",
+			Parameters:        [][]byte{[]byte("inactive")},
+		}).(*pgproto3.Parse)
+		assert.True(t, ok)
+		assert.Equal(t, c.unauthorizedQuery, msg.Name)
+		assert.Equal(t, c.unauthorizedQuery, msg.Query)
+	}
 }
 
 func TestIsUnauthorizedError(t *testing.T) {

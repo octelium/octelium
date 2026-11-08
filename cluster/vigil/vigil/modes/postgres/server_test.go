@@ -43,6 +43,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1522,6 +1523,185 @@ func TestAuthorizationDenyTransaction(t *testing.T) {
 		assert.Equal(t, "0",
 			receiveQueryValue(t, c, fe, fmt.Sprintf("SELECT count(*) FROM %s;", table)))
 	}
+}
+
+func TestAuthorizationPreparedStatement(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	allowAll := &corev1.Policy_Spec_Rule{
+		Effect: corev1.Policy_Spec_Rule_ALLOW,
+		Condition: &corev1.Condition{
+			Type: &corev1.Condition_MatchAny{
+				MatchAny: true,
+			},
+		},
+	}
+
+	denyInsert := &corev1.Policy_Spec_Rule{
+		Condition: &corev1.Condition{
+			Type: &corev1.Condition_Match{
+				Match: `ctx.request.postgres.parse.query.startsWith("INSERT")`,
+			},
+		},
+		Effect: corev1.Policy_Spec_Rule_DENY,
+	}
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{allowAll},
+		&corev1.Service_Spec_Config_Postgres_Authorization{
+			Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+		})
+
+	setRules := func(rules ...*corev1.Policy_Spec_Rule) {
+		svc := pbutils.Clone(ts.vCache.GetService()).(*corev1.Service)
+		svc.Spec.Authorization.InlinePolicies[0].Spec.Rules = rules
+		ts.vCache.SetService(svc)
+	}
+
+	fe, c, _ := newTestFrontend(t, ts.port)
+	defer c.Close()
+
+	sendMessages := func(msgs ...pgproto3.FrontendMessage) {
+		for _, msg := range msgs {
+			fe.Send(msg)
+		}
+		assert.Nil(t, fe.Flush())
+	}
+
+	execute := func(name string) ([]pgproto3.BackendMessage, string) {
+		sendMessages(&pgproto3.Bind{PreparedStatement: name}, &pgproto3.Execute{}, &pgproto3.Sync{})
+		return receiveUntilReadyForQueryValue(t, c, fe)
+	}
+
+	table := fmt.Sprintf("users%s", utilrand.GetRandomStringCanonical(6))
+
+	{
+		sendMessages(&pgproto3.Query{String: fmt.Sprintf("CREATE TABLE %s (id INT);", table)})
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCodes(msgs...))
+	}
+
+	t.Cleanup(func() {
+		fe, c, _ := newTestFrontend(t, ts.port)
+		defer c.Close()
+
+		fe.Send(&pgproto3.Query{String: fmt.Sprintf("DROP TABLE %s;", table)})
+		assert.Nil(t, fe.Flush())
+		receiveUntilReadyForQuery(t, c, fe)
+	})
+
+	db, err := sql.Open("postgres", fmt.Sprintf("postgres://postgres:postgres@localhost:%d/postgres?sslmode=disable", ts.port))
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		db.Close()
+	})
+
+	stmt, err := db.PrepareContext(ctx, fmt.Sprintf("INSERT INTO %s VALUES ($1)", table))
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		stmt.Close()
+	})
+
+	{
+		_, err := stmt.ExecContext(ctx, 1)
+		assert.Nil(t, err, "%+v", err)
+	}
+
+	longName := strings.Repeat("a", maxStatementNameLen)
+
+	for i, name := range []string{"s1", "s2", "s3", "", longName + "1"} {
+		sendMessages(&pgproto3.Parse{
+			Name:  name,
+			Query: fmt.Sprintf("INSERT INTO %s VALUES (%d)", table, i+2),
+		}, &pgproto3.Sync{})
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCodes(msgs...))
+	}
+
+	{
+		sendMessages(&pgproto3.Parse{Name: "select", Query: "SELECT 1"}, &pgproto3.Sync{})
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCodes(msgs...))
+	}
+
+	setRules(denyInsert, allowAll)
+
+	{
+		_, err := stmt.ExecContext(ctx, 10)
+		assert.NotNil(t, err)
+		assert.Contains(t, err.Error(), "Octelium: Unauthorized")
+	}
+
+	for _, name := range []string{"s1", "", longName + "2", "nonexistent"} {
+		msgs, _ := execute(name)
+		assert.Len(t, msgs, 2, name)
+		assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...), name)
+		assert.Equal(t, byte('I'), readyForQueryTxStatus(msgs...))
+	}
+
+	{
+		msgs, value := execute("select")
+		assert.Empty(t, errorResponseCodes(msgs...))
+		assert.Equal(t, "1", value)
+	}
+
+	{
+		sendMessages(&pgproto3.Parse{Name: "s2", Query: "SELECT 2"}, &pgproto3.Sync{})
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, []string{"42P05"}, errorResponseCodes(msgs...))
+
+		msgs, _ = execute("s2")
+		assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+	}
+
+	{
+		sendMessages(&pgproto3.Parse{Query: "SELEC"},
+			&pgproto3.Close{ObjectType: 'S', Name: "s3"}, &pgproto3.Sync{})
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, []string{"42601"}, errorResponseCodes(msgs...))
+
+		sendMessages(&pgproto3.Parse{Name: "s3", Query: "SELECT 3"}, &pgproto3.Sync{})
+		msgs = receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, []string{"42P05"}, errorResponseCodes(msgs...))
+
+		msgs, _ = execute("s3")
+		assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+	}
+
+	{
+		sendMessages(&pgproto3.Close{ObjectType: 'S', Name: "s1"}, &pgproto3.Sync{})
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCodes(msgs...))
+
+		sendMessages(&pgproto3.Parse{Name: "s1", Query: "SELECT 5"}, &pgproto3.Sync{})
+		msgs = receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCodes(msgs...))
+
+		msgs, value := execute("s1")
+		assert.Empty(t, errorResponseCodes(msgs...))
+		assert.Equal(t, "5", value)
+	}
+
+	setRules(allowAll)
+
+	{
+		_, err := stmt.ExecContext(ctx, 10)
+		assert.Nil(t, err, "%+v", err)
+
+		msgs, _ := execute(longName + "2")
+		assert.Empty(t, errorResponseCodes(msgs...))
+
+		msgs, _ = execute("s2")
+		assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+	}
+
+	assert.Equal(t, "1,6,10", receiveQueryValue(t, c, fe,
+		fmt.Sprintf("SELECT string_agg(id::text, ',' ORDER BY id) FROM %s;", table)))
 }
 
 func TestFunctionCall(t *testing.T) {
