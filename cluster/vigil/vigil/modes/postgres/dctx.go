@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -114,7 +115,7 @@ type dctx struct {
 	reasonInit *corev1.AccessLog_Entry_Common_Reason
 	authResp   *coctovigilv1.AuthenticateAndAuthorizeResponse
 
-	lastTxStatus byte
+	unauthorizedQuery string
 
 	downstreamConn *countingConn
 	commonMetrics  *metricutils.CommonMetrics
@@ -152,7 +153,9 @@ func newDctx(ctx context.Context, conn net.Conn,
 		svcConfig:      vigilutils.GetServiceConfig(ctx, authResp),
 		authResp:       authResp,
 		reasonInit:     reasonInit,
-		lastTxStatus:   'I',
+
+		unauthorizedQuery: fmt.Sprintf("octelium_unauthorized_%s",
+			utilrand.GetRandomStringLowercase(16)),
 
 		downstreamConn: downstreamConn,
 		commonMetrics:  commonMetrics,
@@ -416,14 +419,7 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				c.downstreamCh <- nil
 				return
 			case *pgproto3.Sync:
-				if pendingSync {
-					pendingSync = false
-					if err := c.sendReadyForQuery(); err != nil {
-						c.downstreamCh <- err
-						return
-					}
-					continue
-				}
+				pendingSync = false
 			default:
 				if pendingSync {
 					continue
@@ -451,13 +447,7 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				c.setMessageLog(message, reason)
 				if !proceed {
 					pendingSync = isExtendedProtocolMessage(message)
-					if !pendingSync {
-						if err := c.sendReadyForQuery(); err != nil {
-							c.downstreamCh <- err
-							return
-						}
-					}
-					continue
+					message = c.getUnauthorizedMessage(message)
 				}
 			}
 
@@ -506,14 +496,9 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 	case *pgproto3.FunctionCall:
 		zap.L().Debug("Received a fast-path function call",
 			zap.Uint32("oid", msg.Function))
-		reason := &corev1.AccessLog_Entry_Common_Reason{
+		return false, &corev1.AccessLog_Entry_Common_Reason{
 			Type: corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH,
-		}
-		if err := c.sendUnauthorized(); err != nil {
-			return false, reason, err
-		}
-
-		return false, reason, nil
+		}, nil
 	default:
 		return true, c.reasonInit, nil
 	}
@@ -526,15 +511,7 @@ func (c *dctx) authorizeCommand(ctx context.Context, message pgproto3.FrontendMe
 		return false, nil, err
 	}
 
-	if !resp.IsAuthorized {
-		if err := c.sendUnauthorized(); err != nil {
-			return false, resp.Reason, err
-		}
-
-		return false, resp.Reason, nil
-	}
-
-	return true, resp.Reason, nil
+	return resp.IsAuthorized, resp.Reason, nil
 }
 
 func (c *dctx) startUpstreamLoop(ctx context.Context) {
@@ -569,9 +546,12 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 			zap.L().Debug("upstream msg received",
 				zap.String("type", fmt.Sprintf("%T", message)))
 
-			switch msg := message.(type) {
-			case *pgproto3.ReadyForQuery:
-				c.lastTxStatus = msg.TxStatus
+			if c.isUnauthorizedError(message) {
+				message = &pgproto3.ErrorResponse{
+					Severity: "ERROR",
+					Code:     "42501",
+					Message:  "Octelium: Unauthorized",
+				}
 			}
 
 			c.pgBackend.Send(message)
@@ -584,18 +564,24 @@ func (c *dctx) startUpstreamLoop(ctx context.Context) {
 	}
 }
 
-func (c *dctx) sendUnauthorized() error {
-	c.pgBackend.Send(&pgproto3.ErrorResponse{
-		Severity: "ERROR",
-		Code:     "42501",
-		Message:  "Octelium: Unauthorized",
-	})
-	return c.pgBackend.Flush()
+func (c *dctx) getUnauthorizedMessage(msg pgproto3.FrontendMessage) pgproto3.FrontendMessage {
+	switch msg := msg.(type) {
+	case *pgproto3.Parse:
+		return &pgproto3.Parse{
+			Name:  msg.Name,
+			Query: c.unauthorizedQuery,
+		}
+	default:
+		return &pgproto3.Query{
+			String: c.unauthorizedQuery,
+		}
+	}
 }
 
-func (c *dctx) sendReadyForQuery() error {
-	c.pgBackend.Send(&pgproto3.ReadyForQuery{TxStatus: c.lastTxStatus})
-	return c.pgBackend.Flush()
+func (c *dctx) isUnauthorizedError(msg pgproto3.BackendMessage) bool {
+	errResp, ok := msg.(*pgproto3.ErrorResponse)
+	return ok && errResp.Code == "42601" &&
+		strings.Contains(errResp.Message, c.unauthorizedQuery)
 }
 
 func isExtendedProtocolMessage(msg pgproto3.FrontendMessage) bool {

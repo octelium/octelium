@@ -219,6 +219,71 @@ func TestIsExtendedProtocolMessage(t *testing.T) {
 	}
 }
 
+func TestGetUnauthorizedMessage(t *testing.T) {
+	c := newTestDctx(&corev1.Service_Spec_Config_Postgres{}, nil)
+	c.unauthorizedQuery = "octelium_unauthorized_abcd"
+
+	for _, arg := range []pgproto3.FrontendMessage{
+		&pgproto3.Query{String: "UPDATE users SET status = 'inactive'"},
+		&pgproto3.FunctionCall{Function: 1234},
+	} {
+		msg, ok := c.getUnauthorizedMessage(arg).(*pgproto3.Query)
+		assert.True(t, ok, fmt.Sprintf("%T", arg))
+		assert.Equal(t, c.unauthorizedQuery, msg.String, fmt.Sprintf("%T", arg))
+	}
+
+	for _, name := range []string{"", "stmt"} {
+		msg, ok := c.getUnauthorizedMessage(&pgproto3.Parse{
+			Name:          name,
+			Query:         "UPDATE users SET status = $1",
+			ParameterOIDs: []uint32{25},
+		}).(*pgproto3.Parse)
+		assert.True(t, ok, name)
+		assert.Equal(t, name, msg.Name)
+		assert.Equal(t, c.unauthorizedQuery, msg.Query)
+		assert.Empty(t, msg.ParameterOIDs)
+	}
+}
+
+func TestIsUnauthorizedError(t *testing.T) {
+	c := newTestDctx(&corev1.Service_Spec_Config_Postgres{}, nil)
+	c.unauthorizedQuery = "octelium_unauthorized_abcd"
+
+	for _, arg := range []struct {
+		msg            pgproto3.BackendMessage
+		isUnauthorized bool
+	}{
+		{&pgproto3.ErrorResponse{
+			Code:    "42601",
+			Message: `syntax error at or near "octelium_unauthorized_abcd"`,
+		}, true},
+		{&pgproto3.ErrorResponse{
+			Code:    "42601",
+			Message: `erreur de syntaxe sur ou près de « octelium_unauthorized_abcd »`,
+		}, true},
+		{&pgproto3.ErrorResponse{
+			Code:    "42601",
+			Message: `syntax error at or near "octelium_unauthorized_efgh"`,
+		}, false},
+		{&pgproto3.ErrorResponse{
+			Code:    "42601",
+			Message: `syntax error at or near "UPDATE"`,
+		}, false},
+		{&pgproto3.ErrorResponse{
+			Code:    "42703",
+			Message: `column "octelium_unauthorized_abcd" does not exist`,
+		}, false},
+		{&pgproto3.NoticeResponse{
+			Code:    "42601",
+			Message: `syntax error at or near "octelium_unauthorized_abcd"`,
+		}, false},
+		{&pgproto3.ReadyForQuery{TxStatus: 'I'}, false},
+	} {
+		assert.Equal(t, arg.isUnauthorized, c.isUnauthorizedError(arg.msg),
+			fmt.Sprintf("%+v", arg.msg))
+	}
+}
+
 func TestGetMessageLogInfo(t *testing.T) {
 	{
 		c := newTestDctx(&corev1.Service_Spec_Config_Postgres{}, nil)

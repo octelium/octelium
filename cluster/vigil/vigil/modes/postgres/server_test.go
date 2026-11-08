@@ -1142,6 +1142,42 @@ func errorResponseCode(msgs ...pgproto3.BackendMessage) string {
 	return ""
 }
 
+func errorResponseCodes(msgs ...pgproto3.BackendMessage) []string {
+	var ret []string
+	for _, msg := range msgs {
+		if errResp, ok := msg.(*pgproto3.ErrorResponse); ok {
+			ret = append(ret, errResp.Code)
+		}
+	}
+	return ret
+}
+
+func receiveUntilReadyForQueryValue(t *testing.T, c net.Conn, fe *pgproto3.Frontend) ([]pgproto3.BackendMessage, string) {
+	t.Helper()
+
+	var ret []pgproto3.BackendMessage
+	var value string
+	for {
+		msg := receiveMessage(t, c, fe)
+		ret = append(ret, msg)
+		if dataRow, ok := msg.(*pgproto3.DataRow); ok && len(dataRow.Values) == 1 {
+			value = string(dataRow.Values[0])
+		}
+		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
+			return ret, value
+		}
+	}
+}
+
+func readyForQueryTxStatus(msgs ...pgproto3.BackendMessage) byte {
+	for _, msg := range msgs {
+		if readyForQuery, ok := msg.(*pgproto3.ReadyForQuery); ok {
+			return readyForQuery.TxStatus
+		}
+	}
+	return 0
+}
+
 func TestAuthorizationDeny(t *testing.T) {
 	ctx := context.Background()
 
@@ -1239,6 +1275,252 @@ func TestAuthorizationDeny(t *testing.T) {
 		msgs := receiveUntilReadyForQuery(t, c, fe)
 		assert.Empty(t, errorResponseCode(msgs...))
 		assert.Len(t, msgs, 4)
+	}
+}
+
+func TestAuthorizationDenyPipeline(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.query.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{
+					MatchAny: true,
+				},
+			},
+		},
+	}, &corev1.Service_Spec_Config_Postgres_Authorization{
+		Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+	})
+
+	fe, c, _ := newTestFrontend(t, ts.port)
+	defer c.Close()
+
+	{
+		fe.Send(&pgproto3.Query{String: "SELECT 0 FROM pg_sleep(0.3);"})
+		for i := 1; i <= 16; i++ {
+			fe.Send(&pgproto3.Query{String: "UPDATE octelium_nonexistent SET status = 'inactive';"})
+			fe.Send(&pgproto3.FunctionCall{Function: 1})
+			fe.Send(&pgproto3.Query{String: fmt.Sprintf("SELECT %d;", i)})
+		}
+		assert.Nil(t, fe.Flush())
+
+		msgs, value := receiveUntilReadyForQueryValue(t, c, fe)
+		assert.Empty(t, errorResponseCodes(msgs...))
+		assert.Equal(t, "0", value)
+
+		for i := 1; i <= 16; i++ {
+			for range 2 {
+				msgs = receiveUntilReadyForQuery(t, c, fe)
+				assert.Len(t, msgs, 2)
+				assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+				assert.Equal(t, byte('I'), readyForQueryTxStatus(msgs...))
+			}
+
+			msgs, value = receiveUntilReadyForQueryValue(t, c, fe)
+			assert.Empty(t, errorResponseCodes(msgs...))
+			assert.Equal(t, fmt.Sprintf("%d", i), value)
+		}
+	}
+
+	{
+		for i := 1; i <= 16; i++ {
+			fe.Send(&pgproto3.Parse{Query: fmt.Sprintf("SELECT %d", i)})
+			fe.Send(&pgproto3.Bind{})
+			fe.Send(&pgproto3.Execute{})
+			fe.Send(&pgproto3.Parse{Query: "UPDATE octelium_nonexistent SET status = $1"})
+			fe.Send(&pgproto3.Bind{Parameters: [][]byte{[]byte("inactive")}})
+			fe.Send(&pgproto3.Execute{})
+			fe.Send(&pgproto3.Sync{})
+		}
+		fe.Send(&pgproto3.Parse{Query: "SELECT 0"})
+		fe.Send(&pgproto3.Bind{})
+		fe.Send(&pgproto3.Execute{})
+		fe.Send(&pgproto3.Sync{})
+		assert.Nil(t, fe.Flush())
+
+		for i := 1; i <= 16; i++ {
+			msgs, value := receiveUntilReadyForQueryValue(t, c, fe)
+			require.Len(t, msgs, 6)
+			assert.Equal(t, fmt.Sprintf("%d", i), value)
+			assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+			assert.IsType(t, &pgproto3.ErrorResponse{}, msgs[4])
+			assert.Equal(t, byte('I'), readyForQueryTxStatus(msgs...))
+		}
+
+		msgs, value := receiveUntilReadyForQueryValue(t, c, fe)
+		assert.Len(t, msgs, 5)
+		assert.Empty(t, errorResponseCodes(msgs...))
+		assert.Equal(t, "0", value)
+		assert.Equal(t, byte('I'), readyForQueryTxStatus(msgs...))
+	}
+
+	{
+		fe.Send(&pgproto3.Parse{Query: "SELECT 1/0"})
+		fe.Send(&pgproto3.Bind{})
+		fe.Send(&pgproto3.Execute{})
+		fe.Send(&pgproto3.Parse{Query: "UPDATE octelium_nonexistent SET status = $1"})
+		fe.Send(&pgproto3.Bind{Parameters: [][]byte{[]byte("inactive")}})
+		fe.Send(&pgproto3.Execute{})
+		fe.Send(&pgproto3.Sync{})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, []string{"22012"}, errorResponseCodes(msgs...))
+		assert.Equal(t, byte('I'), readyForQueryTxStatus(msgs...))
+	}
+
+	{
+		fe.Send(&pgproto3.Query{String: "SELECT 1;"})
+		assert.Nil(t, fe.Flush())
+
+		msgs, value := receiveUntilReadyForQueryValue(t, c, fe)
+		assert.Len(t, msgs, 4)
+		assert.Empty(t, errorResponseCodes(msgs...))
+		assert.Equal(t, "1", value)
+	}
+}
+
+func TestAuthorizationDenyTransaction(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.query.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{
+					MatchAny: true,
+				},
+			},
+		},
+	}, &corev1.Service_Spec_Config_Postgres_Authorization{
+		Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+	})
+
+	fe, c, _ := newTestFrontend(t, ts.port)
+	defer c.Close()
+
+	table := fmt.Sprintf("users%s", utilrand.GetRandomStringCanonical(6))
+
+	sendQuery := func(query string) []pgproto3.BackendMessage {
+		fe.Send(&pgproto3.Query{String: query})
+		assert.Nil(t, fe.Flush())
+		return receiveUntilReadyForQuery(t, c, fe)
+	}
+
+	{
+		msgs := sendQuery(fmt.Sprintf("CREATE TABLE %s (id INT);", table))
+		assert.Empty(t, errorResponseCodes(msgs...))
+	}
+
+	t.Cleanup(func() {
+		fe, c, _ := newTestFrontend(t, ts.port)
+		defer c.Close()
+
+		fe.Send(&pgproto3.Query{String: fmt.Sprintf("DROP TABLE %s;", table)})
+		assert.Nil(t, fe.Flush())
+		receiveUntilReadyForQuery(t, c, fe)
+	})
+
+	for _, deniedMsgs := range [][]pgproto3.FrontendMessage{
+		{
+			&pgproto3.Query{String: fmt.Sprintf("UPDATE %s SET id = 2;", table)},
+		},
+		{
+			&pgproto3.FunctionCall{Function: 1},
+		},
+		{
+			&pgproto3.Parse{Query: fmt.Sprintf("UPDATE %s SET id = 2", table)},
+			&pgproto3.Bind{},
+			&pgproto3.Execute{},
+			&pgproto3.Sync{},
+		},
+	} {
+		{
+			msgs := sendQuery("BEGIN;")
+			assert.Empty(t, errorResponseCodes(msgs...))
+			assert.Equal(t, byte('T'), readyForQueryTxStatus(msgs...))
+		}
+
+		{
+			msgs := sendQuery(fmt.Sprintf("INSERT INTO %s VALUES (1);", table))
+			assert.Empty(t, errorResponseCodes(msgs...))
+			assert.Equal(t, byte('T'), readyForQueryTxStatus(msgs...))
+		}
+
+		{
+			for _, msg := range deniedMsgs {
+				fe.Send(msg)
+			}
+			assert.Nil(t, fe.Flush())
+
+			msgs := receiveUntilReadyForQuery(t, c, fe)
+			assert.Len(t, msgs, 2)
+			assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+			assert.Equal(t, byte('E'), readyForQueryTxStatus(msgs...))
+		}
+
+		{
+			fe.Send(&pgproto3.Query{String: "COMMIT;"})
+			assert.Nil(t, fe.Flush())
+
+			msg := receiveMessage(t, c, fe)
+			cmd, ok := msg.(*pgproto3.CommandComplete)
+			require.True(t, ok, "%T", msg)
+			assert.Equal(t, "ROLLBACK", string(cmd.CommandTag))
+
+			msgs := receiveUntilReadyForQuery(t, c, fe)
+			assert.Len(t, msgs, 1)
+			assert.Equal(t, byte('I'), readyForQueryTxStatus(msgs...))
+		}
+
+		assert.Equal(t, "0",
+			receiveQueryValue(t, c, fe, fmt.Sprintf("SELECT count(*) FROM %s;", table)))
 	}
 }
 
