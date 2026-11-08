@@ -54,7 +54,7 @@ require (
 	github.com/octelium/octelium/cluster/apiserver v0.0.0-00010101000000-000000000000 // indirect
 	github.com/octelium/octelium/cluster/rscserver v0.0.0-00010101000000-000000000000 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
-	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
+	github.com/spiffe/go-spiffe/v2 v2.9.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect

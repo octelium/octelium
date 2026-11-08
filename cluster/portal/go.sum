@@ -17,8 +17,8 @@ github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4 h1:9ZJYjPEJpcleIKcqysXOo1
 github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.4/go.mod h1:0xydIeg2omQ9DH6zYMP24Kk57793rnLUvP8fwdbFvz8=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
-github.com/spiffe/go-spiffe/v2 v2.8.1 h1:eXZMLsu+3MLEPJyGJkolqtVrteZfQdUpOWj6LTiDl/E=
-github.com/spiffe/go-spiffe/v2 v2.8.1/go.mod h1:47Q0Q9/AqGha8QLHp+kxpH4Wca7X7EnOtlIJy3mxZ3U=
+github.com/spiffe/go-spiffe/v2 v2.9.0 h1:g5qTg3qIP1HXV+GzuyEfSJFVxUCpEP5Ui1OINVJHPB4=
+github.com/spiffe/go-spiffe/v2 v2.9.0/go.mod h1:w2CLWKLMTX/PPYUEUPv3ltH0RXsw5S8suwNF46w9/Aw=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
