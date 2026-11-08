@@ -15,6 +15,8 @@
 package cliutils
 
 import (
+	"fmt"
+	"regexp"
 	"runtime"
 
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -38,4 +40,22 @@ func GetOcteliumCommonVersion() *OcteliumCommonVersion {
 	}
 
 	return ret
+}
+
+var rgxGitCommit = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+
+func GetUserAgent() string {
+	return fmt.Sprintf("octelium-cli/%s", getUserAgentVersion())
+}
+
+func getUserAgentVersion() string {
+	if ldflags.SemVer != "" {
+		return ldflags.SemVer
+	}
+
+	if rgxGitCommit.MatchString(ldflags.GitCommit) {
+		return fmt.Sprintf("v0.0.0-dev+%s", ldflags.GitCommit[:min(len(ldflags.GitCommit), 12)])
+	}
+
+	return "v0.0.0-dev"
 }

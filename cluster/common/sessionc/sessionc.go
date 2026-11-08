@@ -19,7 +19,6 @@ package sessionc
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/asaskevich/govalidator"
@@ -330,12 +329,7 @@ func NewSession(ctx context.Context,
 		}
 
 		sess.Status.Authentication.Info.Downstream.UserAgent = o.UserAgent
-		uaParts := strings.Split(o.UserAgent, " ")
-		if len(uaParts) > 0 && strings.HasPrefix(uaParts[0], "octelium-cli/") {
-			if args := strings.Split(uaParts[0], "/"); len(args) == 2 {
-				sess.Status.Authentication.Info.Downstream.ClientVersion = args[1]
-			}
-		}
+		sess.Status.Authentication.Info.Downstream.ClientVersion = vutils.GetClientVersionFromUserAgent(o.UserAgent)
 	}
 
 	sess.Status.InitialAuthentication = sess.Status.Authentication
@@ -475,13 +469,7 @@ func SetCurrAuthentication(o *SetCurrAuthenticationOpts) {
 		}
 
 		sess.Status.Authentication.Info.Downstream.UserAgent = userAgent
-
-		uaParts := strings.Split(o.UserAgent, " ")
-		if len(uaParts) > 0 && strings.HasPrefix(uaParts[0], "octelium-cli/") {
-			if args := strings.Split(uaParts[0], "/"); len(args) == 2 {
-				sess.Status.Authentication.Info.Downstream.ClientVersion = args[1]
-			}
-		}
+		sess.Status.Authentication.Info.Downstream.ClientVersion = vutils.GetClientVersionFromUserAgent(userAgent)
 	}
 
 }

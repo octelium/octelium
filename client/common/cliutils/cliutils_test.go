@@ -242,6 +242,31 @@ func TestVersionAndGenesisImage(t *testing.T) {
 	assert.Equal(t, ldflags.GetImage("custom-genesis", "1.2.3"), GetGenesisImageWithPackage("custom", "1.2.3"))
 }
 
+func TestGetUserAgent(t *testing.T) {
+	oldSemVer, oldGitCommit := ldflags.SemVer, ldflags.GitCommit
+	t.Cleanup(func() {
+		ldflags.SemVer, ldflags.GitCommit = oldSemVer, oldGitCommit
+	})
+
+	for _, tc := range []struct {
+		semVer    string
+		gitCommit string
+		userAgent string
+	}{
+		{semVer: "v0.47.0", gitCommit: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567", userAgent: "octelium-cli/v0.47.0"},
+		{semVer: "v1.2.3-rc.1", userAgent: "octelium-cli/v1.2.3-rc.1"},
+		{gitCommit: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567", userAgent: "octelium-cli/v0.0.0-dev+0a1b2c3d4e5f"},
+		{gitCommit: "0a1b2c3", userAgent: "octelium-cli/v0.0.0-dev+0a1b2c3"},
+		{gitCommit: "0a1b2c", userAgent: "octelium-cli/v0.0.0-dev"},
+		{gitCommit: "0A1B2C3D4E5F", userAgent: "octelium-cli/v0.0.0-dev"},
+		{gitCommit: "not a commit", userAgent: "octelium-cli/v0.0.0-dev"},
+		{userAgent: "octelium-cli/v0.0.0-dev"},
+	} {
+		ldflags.SemVer, ldflags.GitCommit = tc.semVer, tc.gitCommit
+		assert.Equal(t, tc.userAgent, GetUserAgent(), "%+v", tc)
+	}
+}
+
 func TestOpenFileByDefaultAppCmd(t *testing.T) {
 	arg := "https://example.com/login?token=value"
 	cmd, err := OpenFileByDefaultAppCmd(arg)

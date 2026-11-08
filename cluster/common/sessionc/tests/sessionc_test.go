@@ -151,6 +151,21 @@ func TestSessionAuthenticationHistory(t *testing.T) {
 	}
 	assert.Len(t, sess.Status.LastAuthentications, 100)
 	assert.EqualValues(t, 106, sess.Status.TotalAuthentications)
+	for _, tc := range []struct {
+		userAgent string
+		version   string
+	}{
+		{userAgent: "octelium-cli/v0.47.0 grpc-go/1.85.0", version: "v0.47.0"},
+		{userAgent: "octelium-cli/v0.0.0-dev+0a1b2c3d4e5f grpc-go/1.85.0", version: "v0.0.0-dev+0a1b2c3d4e5f"},
+		{userAgent: "octelium-cli/ grpc-go/1.85.0"},
+		{userAgent: "cordium/v0.12.0 grpc-go/1.85.0"},
+		{userAgent: "grpc-go/1.84.0"},
+		{userAgent: "octelium-cli/<script>"},
+	} {
+		sessionc.SetCurrAuthentication(&sessionc.SetCurrAuthenticationOpts{Session: sess, ClusterConfig: cc, UserAgent: tc.userAgent})
+		assert.Equal(t, tc.userAgent, sess.Status.Authentication.Info.Downstream.UserAgent)
+		assert.Equal(t, tc.version, sess.Status.Authentication.Info.Downstream.ClientVersion, "%q", tc.userAgent)
+	}
 	cc.Spec.Ingress.UseForwardedForHeader = false
 	sessionc.SetCurrAuthentication(&sessionc.SetCurrAuthenticationOpts{Session: sess, ClusterConfig: cc, ClientAddr: "8.8.8.8", UserAgent: strings.Repeat("a", 220)})
 	assert.Nil(t, sess.Status.Authentication.Info)

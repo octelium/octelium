@@ -263,3 +263,51 @@ func TestPortWaitContext(t *testing.T) {
 		})
 	}
 }
+
+func TestGetClientVersionFromUserAgent(t *testing.T) {
+	for _, tc := range []struct {
+		userAgent string
+		version   string
+	}{
+		{userAgent: "octelium-cli/v0.47.0 grpc-go/1.85.0", version: "v0.47.0"},
+		{userAgent: "octelium-cli/0.47.0 grpc-go/1.85.0", version: "0.47.0"},
+		{userAgent: "octelium-cli/1.2.3 linux", version: "1.2.3"},
+		{userAgent: "octelium-cli/v1.2.3-rc.1 grpc-go/1.85.0", version: "v1.2.3-rc.1"},
+		{userAgent: "octelium-cli/v0.0.0-dev+0a1b2c3d4e5f grpc-go/1.85.0", version: "v0.0.0-dev+0a1b2c3d4e5f"},
+		{userAgent: "octelium-cli/v0.0.0-dev grpc-go/1.85.0", version: "v0.0.0-dev"},
+		{userAgent: "octelium-cli/v1.2.3", version: "v1.2.3"},
+		{userAgent: "octelium-cli/v1.2.3(linux; amd64) grpc-go/1.85.0", version: "v1.2.3"},
+		{userAgent: "octelium-cli/v1.2.3 (linux; amd64) grpc-go/1.85.0", version: "v1.2.3"},
+		{userAgent: "tool/1.0 (octelium-cli/9.9.9) octelium-cli/v1.2.3", version: "v1.2.3"},
+		{userAgent: "tool/1.0 octelium-cli/v1.2.3 grpc-go/1.85.0", version: "v1.2.3"},
+		{userAgent: "octelium-cli/v1.2.3 octelium-cli/v4.5.6", version: "v1.2.3"},
+		{userAgent: "  octelium-cli/v1.2.3\tgrpc-go/1.85.0  ", version: "v1.2.3"},
+		{userAgent: "octelium-cli/ grpc-go/1.85.0"},
+		{userAgent: "octelium-cli grpc-go/1.85.0"},
+		{userAgent: "grpc-go/1.84.0"},
+		{userAgent: "cordium/v0.12.0 grpc-go/1.85.0"},
+		{userAgent: "cordium-go grpc-go/1.85.0"},
+		{userAgent: "octelium-go grpc-go/1.85.0"},
+		{userAgent: "octelium-clix/v1.2.3"},
+		{userAgent: "Octelium-Cli/v1.2.3"},
+		{userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"},
+		{userAgent: "(octelium-cli/v1.2.3) grpc-go/1.85.0"},
+		{userAgent: "(unclosed octelium-cli/v1.2.3"},
+		{userAgent: "octelium-cli/v1.2.3)"},
+		{userAgent: "octelium-cli/v1.2"},
+		{userAgent: "octelium-cli/1.2.3.4"},
+		{userAgent: "octelium-cli/latest"},
+		{userAgent: "octelium-cli/v1.2.3/extra"},
+		{userAgent: "octelium-cli/v1.2.3-"},
+		{userAgent: "octelium-cli/v1.2.3+"},
+		{userAgent: "octelium-cli/v1.2.3-rc..1"},
+		{userAgent: "octelium-cli/v1.2.3-<script>"},
+		{userAgent: "octelium-cli/v1.2.3 octelium-cli/v4.5.6" + strings.Repeat("a", 200), version: "v1.2.3"},
+		{userAgent: "octelium-cli/invalid octelium-cli/v4.5.6"},
+		{userAgent: fmt.Sprintf("octelium-cli/v1.2.3-%s", strings.Repeat("a", 57)), version: "v1.2.3-" + strings.Repeat("a", 57)},
+		{userAgent: fmt.Sprintf("octelium-cli/v1.2.3-%s", strings.Repeat("a", 58))},
+		{userAgent: ""},
+	} {
+		assert.Equal(t, tc.version, vutils.GetClientVersionFromUserAgent(tc.userAgent), "%q", tc.userAgent)
+	}
+}

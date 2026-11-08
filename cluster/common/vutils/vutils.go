@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -370,6 +371,40 @@ func Sha256Sum(arg []byte) []byte {
 
 func GetDownstreamIPHeaderCanonical() string {
 	return "X-Octelium-Client-Address"
+}
+
+var rgxClientVersion = regexp.MustCompile(
+	`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+
+func GetClientVersionFromUserAgent(userAgent string) string {
+	products := make([]byte, 0, len(userAgent))
+	depth := 0
+	for i := 0; i < len(userAgent); i++ {
+		switch c := userAgent[i]; {
+		case c == '(':
+			depth++
+			products = append(products, ' ')
+		case c == ')' && depth > 0:
+			depth--
+		case depth == 0:
+			products = append(products, c)
+		}
+	}
+
+	for _, product := range strings.Fields(string(products)) {
+		name, version, _ := strings.Cut(product, "/")
+		if name != "octelium-cli" {
+			continue
+		}
+
+		if len(version) > 64 || !rgxClientVersion.MatchString(version) {
+			return ""
+		}
+
+		return version
+	}
+
+	return ""
 }
 
 const UpgradeIDKey = "upgrade-id"

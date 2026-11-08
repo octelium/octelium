@@ -195,7 +195,7 @@ func TestClientGRPCE2E(t *testing.T) {
 					want = ""
 				}
 				assert.Equal(t, []string{want}, md.Get("x-octelium-auth"))
-				assert.Contains(t, md.Get("user-agent")[0], "octelium-cli/")
+				assert.Equal(t, []string{cliutils.GetUserAgent() + " grpc-go/" + grpc.Version}, md.Get("user-agent"))
 			}
 		})
 	}

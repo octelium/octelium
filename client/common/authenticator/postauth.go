@@ -104,7 +104,7 @@ func (a *authenticator) doPostAuth(ctx context.Context) error {
 
 		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
 		grpc.WithChainStreamInterceptor(streamMiddlewares...),
-		grpc.WithUserAgent(fmt.Sprintf("octelium-cli/%s", ldflags.SemVer)),
+		grpc.WithUserAgent(cliutils.GetUserAgent()),
 	}
 
 	opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))

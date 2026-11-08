@@ -17,7 +17,6 @@ package grpcconn
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net"
 	"os"
 	"time"
@@ -25,6 +24,7 @@ import (
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	"github.com/octelium/octelium/client/common/authc"
 	"github.com/octelium/octelium/client/common/client/middleware/auth"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/pkg/utils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
@@ -89,7 +89,7 @@ func DoGetGRPCClientConn(domain string) (*grpc.ClientConn, error) {
 
 		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
 		grpc.WithChainStreamInterceptor(streamMiddlewares...),
-		grpc.WithUserAgent(fmt.Sprintf("octelium-cli/%s", ldflags.SemVer)),
+		grpc.WithUserAgent(cliutils.GetUserAgent()),
 	}
 
 	isAuthProxy := os.Getenv("OCTELIUM_AUTH_PROXY_SOCKET") != ""

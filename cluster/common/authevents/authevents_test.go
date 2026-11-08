@@ -18,6 +18,7 @@ package authevents
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -325,6 +326,7 @@ func TestAttempt(t *testing.T) {
 		failure, _ := attempt.getFailure(grpcutils.PermissionDenied(""))
 		assert.Equal(t, "", failure.Info.Downstream.IpAddress)
 		assert.Equal(t, "Mozilla/5.0", failure.Info.Downstream.UserAgent)
+		assert.Equal(t, "", failure.Info.Downstream.ClientVersion)
 		assert.Equal(t, sess.Metadata.Uid, failure.SessionRef.Uid)
 		assert.True(t, pbutils.IsEqual(sess.Status.UserRef, failure.UserRef))
 		assert.True(t, pbutils.IsEqual(sess.Status.DeviceRef, failure.DeviceRef))
@@ -339,6 +341,39 @@ func TestAttempt(t *testing.T) {
 		failure, _ := attempt.getFailure(grpcutils.PermissionDenied(""))
 		assert.Nil(t, failure.Info.Downstream)
 	}
+}
+
+func TestGetDownstream(t *testing.T) {
+	cc := &corev1.ClusterConfig{
+		Spec: &corev1.ClusterConfig_Spec{
+			Ingress: &corev1.ClusterConfig_Spec_Ingress{UseForwardedForHeader: true},
+		},
+	}
+
+	for _, tc := range []struct {
+		userAgent string
+		version   string
+	}{
+		{userAgent: "octelium-cli/v0.47.0 grpc-go/1.85.0", version: "v0.47.0"},
+		{userAgent: "octelium-cli/v0.0.0-dev+0a1b2c3d4e5f grpc-go/1.85.0", version: "v0.0.0-dev+0a1b2c3d4e5f"},
+		{userAgent: "octelium-cli/ grpc-go/1.85.0"},
+		{userAgent: "cordium/v0.12.0 grpc-go/1.85.0"},
+		{userAgent: "grpc-go/1.84.0"},
+		{userAgent: "octelium-cli/<script>"},
+	} {
+		ret := getDownstream(&AttemptOpts{
+			UserAgent:     tc.userAgent,
+			ClientAddr:    "203.0.113.7",
+			ClusterConfig: cc,
+		})
+		assert.Equal(t, "203.0.113.7", ret.IpAddress)
+		assert.Equal(t, tc.userAgent, ret.UserAgent)
+		assert.Equal(t, tc.version, ret.ClientVersion, "%q", tc.userAgent)
+	}
+
+	assert.Nil(t, getDownstream(&AttemptOpts{
+		UserAgent: "octelium-cli/v0.47.0 " + strings.Repeat("a", maxUserAgentLen),
+	}))
 }
 
 func TestPublisher(t *testing.T) {

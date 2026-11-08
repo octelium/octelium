@@ -18,13 +18,13 @@ package authevents
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
@@ -84,12 +84,7 @@ func getDownstream(o *AttemptOpts) *corev1.Session_Status_Authentication_Info_Do
 
 	if o.UserAgent != "" && len(o.UserAgent) < maxUserAgentLen {
 		ret.UserAgent = o.UserAgent
-		uaParts := strings.Split(o.UserAgent, " ")
-		if len(uaParts) > 0 && strings.HasPrefix(uaParts[0], "octelium-cli/") {
-			if args := strings.Split(uaParts[0], "/"); len(args) == 2 {
-				ret.ClientVersion = args[1]
-			}
-		}
+		ret.ClientVersion = vutils.GetClientVersionFromUserAgent(o.UserAgent)
 	}
 
 	if ret.IpAddress == "" && ret.UserAgent == "" {

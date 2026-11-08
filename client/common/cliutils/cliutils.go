@@ -244,7 +244,7 @@ type NewAuthClientOpts struct {
 func NewAuthClient(ctx context.Context, domain string, o *NewAuthClientOpts) (*authc.Client, error) {
 	return authc.NewClient(ctx, domain, &authc.Opts{
 		GetRefreshToken: GetRefreshToken,
-		UserAgent:       fmt.Sprintf("octelium-cli/%s", ldflags.SemVer),
+		UserAgent:       GetUserAgent(),
 	})
 }
 
