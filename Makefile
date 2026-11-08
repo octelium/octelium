@@ -3,7 +3,7 @@ export GO111MODULE=on
 export PATH := $(PATH):$(shell go env GOPATH)/bin
 
 .PHONY: gen-api build-cli build-octelium clean fmt lint test unit vendor \
-	e2e e2e-list e2e-test e2e-teardown
+	e2e e2e-list e2e-test e2e-teardown publish-octelium-go
 
 REPOSITORY := github.com/octelium/octelium
 REGISTRY ?= ghcr.io
@@ -213,3 +213,40 @@ tidy:
 	cd cluster/e2e; $(CMD_TIDY)
 set-license:
 	go run unsorted/licenser/main.go
+
+GIT_REMOTE ?= origin
+PUBLISH_BRANCH ?= main
+PUBLISH_VERSION ?=
+
+publish-octelium-go:
+	@set -e; \
+	test "$$(git rev-parse --abbrev-ref HEAD)" = "$(PUBLISH_BRANCH)" || \
+		{ echo "must be on $(PUBLISH_BRANCH)"; exit 1; }; \
+	test -z "$$(git status --porcelain)" || { echo "working tree is not clean"; exit 1; }; \
+	git fetch --tags $(GIT_REMOTE) $(PUBLISH_BRANCH); \
+	test "$$(git rev-parse HEAD)" = "$$(git rev-parse FETCH_HEAD)" || \
+		{ echo "$(PUBLISH_BRANCH) is not in sync with $(GIT_REMOTE)/$(PUBLISH_BRANCH)"; exit 1; }; \
+	version="$(PUBLISH_VERSION)"; \
+	if [ -z "$$version" ]; then \
+		version=$$(git tag --list 'v*.*.*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | head -n1); \
+	fi; \
+	test -n "$$version" || { echo "could not find the latest release tag"; exit 1; }; \
+	git rev-parse -q --verify "refs/tags/$$version" >/dev/null || { echo "tag $$version does not exist"; exit 1; }; \
+	if git rev-parse -q --verify "refs/tags/octelium-go/$$version" >/dev/null; then \
+		echo "octelium-go/$$version already exists"; exit 1; \
+	fi; \
+	echo "publishing apis/$$version and octelium-go/$$version"; \
+	if ! git rev-parse -q --verify "refs/tags/apis/$$version" >/dev/null; then \
+		git tag "apis/$$version" "$$version^{commit}"; \
+	fi; \
+	git push $(GIT_REMOTE) "refs/tags/apis/$$version"; \
+	cd octelium-go; \
+	GOWORK=off go get "github.com/octelium/octelium/apis@$$version"; \
+	GOWORK=off go mod tidy; \
+	GOWORK=off go build ./...; \
+	cd ..; \
+	if [ -n "$$(git status --porcelain -- octelium-go/go.mod octelium-go/go.sum)" ]; then \
+		git commit -m "octelium-go - update apis to $$version" -- octelium-go/go.mod octelium-go/go.sum; \
+	fi; \
+	git tag "octelium-go/$$version"; \
+	git push --atomic $(GIT_REMOTE) "HEAD:refs/heads/$(PUBLISH_BRANCH)" "refs/tags/octelium-go/$$version"
