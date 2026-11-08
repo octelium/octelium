@@ -20,6 +20,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -503,4 +504,39 @@ func TestPublisher(t *testing.T) {
 		}
 		assert.Equal(t, publisherQueueSize, admitted)
 	}
+}
+
+func TestPublisherKeyWindow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+
+		p := NewPublisher(&PublisherOpts{
+			OcteliumC: &fakeOcteliumC{
+				pubSubC: &fakePubSub{},
+			},
+		})
+
+		_, attempt := newVerifiedAttempt(ctx)
+		attempt.SetReason(ReasonRevokedCredential)
+		for range keyLimit {
+			assert.True(t, p.Finish(attempt, grpcutils.Unauthenticated("")))
+		}
+		assert.False(t, p.Finish(attempt, grpcutils.Unauthenticated("")))
+
+		_, otherAttempt := newVerifiedAttempt(ctx)
+		assert.True(t, p.Finish(otherAttempt, grpcutils.Unauthenticated("")))
+
+		time.Sleep(keyWindow / 2)
+		assert.False(t, p.Finish(attempt, grpcutils.Unauthenticated("")))
+
+		time.Sleep(keyWindow / 2)
+		for range keyLimit {
+			assert.True(t, p.Finish(attempt, grpcutils.Unauthenticated("")))
+		}
+		assert.False(t, p.Finish(attempt, grpcutils.Unauthenticated("")))
+
+		time.Sleep(keyCleanupWindow)
+		synctest.Wait()
+		assert.Equal(t, 0, p.keys.Len())
+	})
 }

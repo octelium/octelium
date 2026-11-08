@@ -27,6 +27,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/browserorigin"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"go.uber.org/zap"
@@ -97,8 +98,8 @@ func (s *server) checkGRPCCookieOrigin(ctx context.Context) error {
 }
 
 func (s *server) getSystemServiceBrowserHosts(ctx context.Context) ([]browserorigin.Host, error) {
-	if val, found := s.genCache.Get(systemServiceHostsCacheKey); found {
-		return val.([]browserorigin.Host), nil
+	if val, found := cache.GetAs[[]browserorigin.Host](s.genCache, systemServiceHostsCacheKey); found {
+		return val, nil
 	}
 
 	services, err := s.octeliumC.CoreC().ListService(ctx, &rmetav1.ListOptions{
@@ -112,7 +113,7 @@ func (s *server) getSystemServiceBrowserHosts(ctx context.Context) ([]browserori
 	}
 
 	hosts := browserorigin.SystemServiceHosts(s.domain, services.Items)
-	s.genCache.Set(systemServiceHostsCacheKey, hosts, 5*time.Second)
+	s.genCache.SetWithTTL(systemServiceHostsCacheKey, hosts, 5*time.Second)
 
 	return hosts, nil
 }

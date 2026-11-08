@@ -31,11 +31,11 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/healthcheck"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -46,7 +46,7 @@ var fsWeb embed.FS
 type server struct {
 	domain    string
 	octeliumC octeliumc.ClientInterface
-	genCache  *cache.Cache
+	genCache  *cache.Cache[string, any]
 }
 
 type templateGlobals struct {
@@ -68,7 +68,7 @@ func initServer(ctx context.Context,
 	ret := &server{
 		domain:    clusterCfg.Status.Domain,
 		octeliumC: octeliumC,
-		genCache:  cache.New(cache.NoExpiration, 1*time.Minute),
+		genCache:  cache.New[string, any](nil),
 	}
 
 	ret.setTemplateGlobals(clusterCfg)
@@ -82,15 +82,15 @@ func (s *server) setTemplateGlobals(clusterCfg *corev1.ClusterConfig) {
 			Domain: clusterCfg.Status.Domain,
 		},
 	}
-	s.genCache.Set("template-globals", t, cache.NoExpiration)
+	s.genCache.Set("template-globals", t)
 }
 
 func (s *server) getTemplateGlobals() *templateGlobals {
-	val, found := s.genCache.Get("template-globals")
+	val, found := cache.GetAs[*templateGlobals](s.genCache, "template-globals")
 	if !found {
 		return nil
 	}
-	return val.(*templateGlobals)
+	return val
 }
 
 func (s *server) setSecurityHeaders(w http.ResponseWriter, nonce string) {

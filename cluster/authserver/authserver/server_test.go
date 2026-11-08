@@ -34,13 +34,13 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/browserorigin"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
@@ -131,7 +131,7 @@ func TestUnaryServerInterceptorCookieOrigin(t *testing.T) {
 	assert.Nil(t, err)
 	srv, err := initServer(ctx, tst.C.OcteliumC, clusterCfg)
 	assert.Nil(t, err)
-	srv.genCache.SetDefault(systemServiceHostsCacheKey, []browserorigin.Host{
+	srv.genCache.Set(systemServiceHostsCacheKey, []browserorigin.Host{
 		{Name: "example.com"},
 		{Name: "portal.example.com"},
 		{Name: "cordium.example.com", AllowSubdomains: true},
@@ -878,9 +878,9 @@ func TestGRPCEndpointsUnauthenticated(t *testing.T) {
 func TestGRPCCookieOriginMaliciousInputs(t *testing.T) {
 	srv := &server{
 		domain:   "example.com",
-		genCache: cache.New(cache.NoExpiration, 0),
+		genCache: cache.New[string, any](nil),
 	}
-	srv.genCache.SetDefault(systemServiceHostsCacheKey, []browserorigin.Host{
+	srv.genCache.Set(systemServiceHostsCacheKey, []browserorigin.Host{
 		{Name: "example.com"},
 	})
 

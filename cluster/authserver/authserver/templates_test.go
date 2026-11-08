@@ -34,7 +34,6 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
-	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -53,7 +52,7 @@ func TestRenderIndex(t *testing.T) {
 	srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
 	assert.Nil(t, err)
 
-	srv.genCache.Set("authserver-app-js-hash", "xxx", cache.NoExpiration)
+	srv.genCache.Set("authserver-app-js-hash", "xxx")
 
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
 	w := httptest.NewRecorder()

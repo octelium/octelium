@@ -110,7 +110,7 @@ func TestOAuth2CacheKeyIsolation(t *testing.T) {
 		sm.c.Set("secret", &corev1.Secret{
 			Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 			Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-		}, 0)
+		})
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !assert.Nil(t, r.ParseForm()) {
 				return
@@ -143,7 +143,7 @@ func TestOAuth2TokenRequestCancellation(t *testing.T) {
 	sm.c.Set("secret", &corev1.Secret{
 		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-	}, 0)
+	})
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 	defer close(release)
@@ -539,7 +539,7 @@ func TestUnreferencedSecretIsNotCached(t *testing.T) {
 		},
 	})
 
-	assert.Equal(t, 0, secretMan.c.ItemCount())
+	assert.Equal(t, 0, secretMan.c.Len())
 }
 
 func TestOAuth2TokenSourceIsRebuiltOnRotation(t *testing.T) {
@@ -708,7 +708,7 @@ func TestApplyServiceSurvivesMissingSecret(t *testing.T) {
 
 	err = secretMan.ApplyService(ctx)
 	assert.Nil(t, err)
-	assert.Equal(t, 2, secretMan.c.ItemCount())
+	assert.Equal(t, 2, secretMan.c.Len())
 
 	_, err = fakeC.OcteliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{
 		Uid: sec1.Metadata.Uid,
@@ -719,7 +719,7 @@ func TestApplyServiceSurvivesMissingSecret(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(secretMan.secretNames))
 
-	assert.Equal(t, 1, secretMan.c.ItemCount())
+	assert.Equal(t, 1, secretMan.c.Len())
 	sec2V, err := secretMan.GetByName(ctx, sec2.Metadata.Name)
 	assert.Nil(t, err)
 	assert.True(t, pbutils.IsEqual(sec2, sec2V))
@@ -794,7 +794,7 @@ func TestOAuth2TokenCacheScopeIsolationAndReuse(t *testing.T) {
 	sm.c.Set("secret", &corev1.Secret{
 		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-	}, 0)
+	})
 	scopes := [][]string{{"read-write", "admin"}, {"read", "write-admin"}, {"read-write-admin"}}
 	tokens := make(map[string]string)
 	for i, scope := range scopes {
@@ -847,7 +847,7 @@ func TestOAuth2TokenCancellationAndRetry(t *testing.T) {
 				sm.c.Set("secret", &corev1.Secret{
 					Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 					Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-				}, 0)
+				})
 				started := make(chan struct{})
 				canceled := make(chan struct{})
 				release := make(chan struct{})
@@ -938,7 +938,7 @@ func TestOAuth2TokenCacheCallerLifetime(t *testing.T) {
 			sm.c.Set("secret", &corev1.Secret{
 				Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 				Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-			}, 0)
+			})
 			var calls atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				call := calls.Add(1)
@@ -979,7 +979,7 @@ func TestOAuth2TokenConcurrentWaiters(t *testing.T) {
 	sm.c.Set("secret", &corev1.Secret{
 		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-	}, 0)
+	})
 	started := make(chan struct{})
 	canceled := make(chan struct{})
 	release := make(chan struct{})
@@ -1070,7 +1070,7 @@ func TestOAuth2TokenCanceledOwnerDoesNotPoisonWaiter(t *testing.T) {
 	sm.c.Set("secret", &corev1.Secret{
 		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-	}, 0)
+	})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	defer close(release)
@@ -1144,7 +1144,7 @@ func TestOAuth2TokenRequestContext(t *testing.T) {
 			sm.c.Set("secret", &corev1.Secret{
 				Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 				Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "password"}},
-			}, 0)
+			})
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if callerDeadline {
@@ -1196,7 +1196,7 @@ func TestOAuth2TokenRotationDuringRetrieval(t *testing.T) {
 	sm.c.Set("secret", &corev1.Secret{
 		Metadata: &metav1.Metadata{Name: "secret", ResourceVersion: "1"},
 		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "old-password"}},
-	}, 0)
+	})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	releaseRequest := sync.OnceFunc(func() { close(release) })

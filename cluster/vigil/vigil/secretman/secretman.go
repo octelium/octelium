@@ -28,10 +28,10 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -43,7 +43,7 @@ const oauth2TokenTimeout = 30 * time.Second
 type SecretManager struct {
 	mu          sync.Mutex
 	octeliumC   octeliumc.ClientInterface
-	c           *cache.Cache
+	c           *cache.Cache[string, *corev1.Secret]
 	vCache      *vcache.Cache
 	secretNames []string
 	oauth2ccMap struct {
@@ -64,7 +64,7 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface, vCache *vcach
 
 	ret := &SecretManager{
 		octeliumC: octeliumC,
-		c:         cache.New(cache.NoExpiration, 10*time.Minute),
+		c:         cache.New[string, *corev1.Secret](nil),
 		vCache:    vCache,
 	}
 
@@ -74,8 +74,8 @@ func New(ctx context.Context, octeliumC octeliumc.ClientInterface, vCache *vcach
 }
 
 func (s *SecretManager) GetByName(ctx context.Context, name string) (*corev1.Secret, error) {
-	if sI, ok := s.c.Get(name); ok {
-		return sI.(*corev1.Secret), nil
+	if secret, ok := s.c.Get(name); ok {
+		return secret, nil
 	}
 
 	ret, err := s.octeliumC.CoreC().GetSecret(ctx, &rmetav1.GetOptions{Name: name})
@@ -83,7 +83,7 @@ func (s *SecretManager) GetByName(ctx context.Context, name string) (*corev1.Sec
 		return nil, err
 	}
 
-	s.c.Set(ret.Metadata.Name, ret, 0)
+	s.c.Set(ret.Metadata.Name, ret)
 
 	return ret, nil
 }
@@ -98,7 +98,7 @@ func (s *SecretManager) Set(secret *corev1.Secret) {
 		}
 	}
 
-	s.c.Set(secret.Metadata.Name, secret, 0)
+	s.c.Set(secret.Metadata.Name, secret)
 	s.generation.Add(1)
 
 	/*
@@ -169,7 +169,7 @@ func (s *SecretManager) applyService(ctx context.Context) ([]*GetOAuth2CCTokenRe
 
 	var oauth2Reqs []*GetOAuth2CCTokenReq
 
-	s.c.Flush()
+	s.c.Clear()
 
 	svc := s.vCache.GetService()
 	if svc == nil {
@@ -338,7 +338,7 @@ func (s *SecretManager) setSecretNames(ctx context.Context) {
 				zap.String("name", name), zap.Error(err))
 			continue
 		}
-		s.c.Set(secret.Metadata.Name, secret, 0)
+		s.c.Set(secret.Metadata.Name, secret)
 	}
 }
 

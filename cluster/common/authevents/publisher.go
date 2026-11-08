@@ -25,10 +25,10 @@ import (
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/retry"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rpubsubv1"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/geoipctl"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/pkg/grpcerr"
-	"github.com/patrickmn/go-cache"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
@@ -65,7 +65,7 @@ type Publisher struct {
 
 	verifiedLimiter   *rate.Limiter
 	unverifiedLimiter *rate.Limiter
-	keys              *cache.Cache
+	keys              *cache.Cache[string, int]
 
 	pausedUntil atomic.Int64
 }
@@ -77,7 +77,10 @@ func NewPublisher(o *PublisherOpts) *Publisher {
 		ch:                make(chan *Failure, publisherQueueSize),
 		verifiedLimiter:   rate.NewLimiter(verifiedRate, verifiedBurst),
 		unverifiedLimiter: rate.NewLimiter(unverifiedRate, unverifiedBurst),
-		keys:              cache.New(keyWindow, keyCleanupWindow),
+		keys: cache.New(&cache.Opts[string, int]{
+			DefaultTTL:      keyWindow,
+			CleanupInterval: keyCleanupWindow,
+		}),
 	}
 }
 
@@ -104,7 +107,7 @@ func (p *Publisher) emit(failure *Failure, isVerified bool) bool {
 	}
 
 	key := getFailureKey(failure, isVerified)
-	if count, found := p.keys.Get(key); found && count.(int) >= keyLimit {
+	if count, found := p.keys.Get(key); found && count >= keyLimit {
 		return false
 	}
 
@@ -117,9 +120,9 @@ func (p *Publisher) emit(failure *Failure, isVerified bool) bool {
 		return false
 	}
 
-	if _, err := p.keys.IncrementInt(key, 1); err != nil {
-		p.keys.Set(key, 1, keyWindow)
-	}
+	p.keys.Upsert(key, func(count int, _ bool) int {
+		return count + 1
+	})
 
 	select {
 	case p.ch <- failure:

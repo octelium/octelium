@@ -31,13 +31,13 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/checker/decls"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/celengine/cellib"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 )
 
 type CELEngine struct {
-	c         *cache.Cache
+	c         *cache.Cache[string, cel.Program]
 	env       *cel.Env
 	opaEngine *opaEngine
 }
@@ -65,7 +65,10 @@ func New(ctx context.Context, opts *Opts) (*CELEngine, error) {
 	}
 
 	return &CELEngine{
-		c:         cache.New(24*time.Hour, 10*time.Minute),
+		c: cache.New(&cache.Opts[string, cel.Program]{
+			DefaultTTL:      24 * time.Hour,
+			CleanupInterval: 10 * time.Minute,
+		}),
 		env:       env,
 		opaEngine: opaEngine,
 	}, nil
@@ -242,9 +245,8 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 	}
 
 	key := getProgKey(exp, typ)
-	cacheI, ok := e.c.Get(key)
-	if ok {
-		return cacheI.(cel.Program), nil
+	if prg, ok := e.c.Get(key); ok {
+		return prg, nil
 	}
 
 	// startedAt := time.Now()
@@ -273,7 +275,7 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 		return nil, err
 	}
 
-	e.c.Set(key, prg, cache.DefaultExpiration)
+	e.c.Set(key, prg)
 	/*
 		zap.L().Debug("CEL expression compilation done",
 			zap.Float32("time microsec", float32(time.Since(startedAt).Nanoseconds())/1000),

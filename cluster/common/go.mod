@@ -19,7 +19,6 @@ require (
 	github.com/octelium/octelium/pkg v0.0.0-00010101000000-000000000000
 	github.com/open-policy-agent/opa v1.20.1
 	github.com/oschwald/geoip2-golang/v2 v2.3.0
-	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/spiffe/go-spiffe/v2 v2.8.1

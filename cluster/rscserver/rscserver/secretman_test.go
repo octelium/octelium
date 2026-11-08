@@ -28,13 +28,13 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/rscserver/rscserver/rerr"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
-	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -46,7 +46,7 @@ import (
 
 type tstSecretMan struct {
 	csecretmanv1.MainServiceServer
-	c   *cache.Cache
+	c   *cache.Cache[string, []byte]
 	lis net.Listener
 }
 
@@ -57,12 +57,12 @@ func (s *tstSecretMan) GetSecret(ctx context.Context, req *csecretmanv1.GetSecre
 	}
 
 	return &csecretmanv1.GetSecretResponse{
-		Data: data.([]byte),
+		Data: data,
 	}, nil
 }
 
 func (s *tstSecretMan) SetSecret(ctx context.Context, req *csecretmanv1.SetSecretRequest) (*csecretmanv1.SetSecretResponse, error) {
-	s.c.Set(req.SecretRef.Uid, req.Data, cache.NoExpiration)
+	s.c.Set(req.SecretRef.Uid, req.Data)
 	return &csecretmanv1.SetSecretResponse{}, nil
 }
 
@@ -92,7 +92,7 @@ func (s *tstSecretMan) ListSecret(ctx context.Context, req *csecretmanv1.ListSec
 
 func newTstSecretMan(t *testing.T) *tstSecretMan {
 	return &tstSecretMan{
-		c: cache.New(cache.NoExpiration, 3*time.Minute),
+		c: cache.New[string, []byte](nil),
 	}
 }
 
@@ -494,7 +494,7 @@ func TestSecretManagerConcurrentCreate(t *testing.T) {
 	close(release)
 	wg.Wait()
 	require.Len(t, winners, 1)
-	assert.Equal(t, 1, backend.c.ItemCount())
+	assert.Equal(t, 1, backend.c.Len())
 	items, _, err := srv.doList(ctx, &rmetav1.ListOptions{}, "core", "v1", ucorev1.KindSecret)
 	require.Nil(t, err)
 	require.Len(t, items, 1)

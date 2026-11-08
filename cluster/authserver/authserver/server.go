@@ -40,6 +40,7 @@ import (
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/saml"
 	"github.com/octelium/octelium/cluster/authserver/authserver/providers/utils"
 	"github.com/octelium/octelium/cluster/common/authevents"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/cluster/common/ccctl"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -52,7 +53,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/watchers"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -66,7 +66,7 @@ type server struct {
 
 	octeliumC octeliumc.ClientInterface
 
-	genCache *cache.Cache
+	genCache *cache.Cache[string, any]
 
 	indexPageC    atomic.Pointer[indexPage]
 	loggedInPageC atomic.Pointer[indexPage]
@@ -134,7 +134,7 @@ func initServer(ctx context.Context,
 
 		octeliumC: octeliumC,
 
-		genCache: cache.New(cache.NoExpiration, 1*time.Minute),
+		genCache: cache.New[string, any](nil),
 	}
 
 	ret.ccCtl, err = ccctl.New(ctx, octeliumC, &ccctl.Opts{
@@ -258,16 +258,16 @@ func (s *server) setTemplateGlobals(clusterCfg *corev1.ClusterConfig) {
 		},
 	}
 
-	s.genCache.Set("template-globals", t, cache.NoExpiration)
+	s.genCache.Set("template-globals", t)
 }
 
 func (s *server) getTemplateGlobals() *templateGlobals {
-	val, found := s.genCache.Get("template-globals")
+	val, found := cache.GetAs[*templateGlobals](s.genCache, "template-globals")
 	if !found {
 		return nil
 	}
 
-	return val.(*templateGlobals)
+	return val
 }
 
 func (s *server) setIdentityProviders(ctx context.Context) error {
