@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
@@ -713,6 +714,177 @@ func TestGetAuthenticatorAction(t *testing.T) {
 					},
 					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
 				},
+			},
+		}
+
+		ret, err := srv.getAuthenticatorAction(ctx, cc, idp, usrT.Usr, usrT.Session)
+		assert.NotNil(t, err)
+		assert.Equal(t, corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, ret)
+	}
+
+	newAuthenticator := func(usrT *tstuser.User, typ corev1.Authenticator_Status_Type) {
+		_, err := srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Authenticator_Spec{
+				State: corev1.Authenticator_Spec_ACTIVE,
+			},
+			Status: &corev1.Authenticator_Status{
+				UserRef:      umetav1.GetObjectReference(usrT.Usr),
+				Type:         typ,
+				IsRegistered: true,
+			},
+		})
+		assert.Nil(t, err)
+	}
+
+	enforcementTests := []struct {
+		name                 string
+		authenticator        corev1.Authenticator_Status_Type
+		authenticationEffect corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_Effect
+		registrationEffect   corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_Effect
+		expected             corev1.Session_Status_AuthenticatorAction
+	}{
+		{
+			name:                 "EnforceWithAuthenticator",
+			authenticator:        corev1.Authenticator_Status_TOTP,
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			expected:             corev1.Session_Status_AUTHENTICATION_REQUIRED,
+		},
+		{
+			name:                 "EnforceWithAuthenticatorAndRegistrationIgnore",
+			authenticator:        corev1.Authenticator_Status_TOTP,
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			registrationEffect:   corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE,
+			expected:             corev1.Session_Status_AUTHENTICATION_REQUIRED,
+		},
+		{
+			name:                 "RecommendWithAuthenticator",
+			authenticator:        corev1.Authenticator_Status_TOTP,
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND,
+			expected:             corev1.Session_Status_AUTHENTICATION_RECOMMENDED,
+		},
+		{
+			name:                 "IgnoreWithAuthenticator",
+			authenticator:        corev1.Authenticator_Status_TOTP,
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE,
+			registrationEffect:   corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			expected:             corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET,
+		},
+		{
+			name:                 "EnforceWithoutAuthenticator",
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			expected:             corev1.Session_Status_REGISTRATION_REQUIRED,
+		},
+		{
+			name:                 "EnforceWithoutAuthenticatorAndRegistrationIgnore",
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			registrationEffect:   corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE,
+			expected:             corev1.Session_Status_REGISTRATION_REQUIRED,
+		},
+		{
+			name:                 "EnforceWithoutAuthenticatorAndRegistrationRecommend",
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			registrationEffect:   corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND,
+			expected:             corev1.Session_Status_REGISTRATION_REQUIRED,
+		},
+		{
+			name:                 "EnforceWithUnavailableAuthenticator",
+			authenticator:        corev1.Authenticator_Status_TPM,
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			expected:             corev1.Session_Status_REGISTRATION_REQUIRED,
+		},
+		{
+			name:                 "RecommendWithoutAuthenticator",
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND,
+			expected:             corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET,
+		},
+		{
+			name:                 "RecommendWithoutAuthenticatorAndRegistrationRecommend",
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND,
+			registrationEffect:   corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND,
+			expected:             corev1.Session_Status_REGISTRATION_RECOMMENDED,
+		},
+		{
+			name:                 "IgnoreWithoutAuthenticatorAndRegistrationEnforce",
+			authenticationEffect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE,
+			registrationEffect:   corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+			expected:             corev1.Session_Status_REGISTRATION_REQUIRED,
+		},
+	}
+
+	for _, tt := range enforcementTests {
+		t.Run(tt.name, func(t *testing.T) {
+			usrT := newUser()
+			usrT.Session.Status.IsBrowser = true
+
+			if tt.authenticator != corev1.Authenticator_Status_TYPE_UNKNOWN {
+				newAuthenticator(usrT, tt.authenticator)
+			}
+
+			cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+			assert.Nil(t, err)
+			cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+				AuthenticationEnforcementRules: []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+					matchAnyRule(tt.authenticationEffect),
+				},
+			}
+			if tt.registrationEffect != corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN {
+				cc.Spec.Authenticator.RegistrationEnforcementRules = []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+					matchAnyRule(tt.registrationEffect),
+				}
+			}
+
+			ret, err := srv.getAuthenticatorAction(ctx, cc, idp, usrT.Usr, usrT.Session)
+			assert.Nil(t, err)
+			assert.Equal(t, tt.expected, ret)
+		})
+	}
+
+	{
+		usrT := newUser()
+		usrT.Session.Status.IsBrowser = true
+
+		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			AuthenticationEnforcementRules: []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `ctx.user.metadata.name == "does-not-exist"`,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+				},
+			},
+		}
+
+		ret, err := srv.getAuthenticatorAction(ctx, cc, idp, usrT.Usr, usrT.Session)
+		assert.Nil(t, err)
+		assert.Equal(t, corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, ret)
+	}
+
+	{
+		usrT := newUser()
+		usrT.Session.Status.IsBrowser = true
+
+		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			AuthenticationEnforcementRules: []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_Match{
+							Match: `int(ctx.user.metadata.name) > 0`,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+				},
+			},
+			RegistrationEnforcementRules: []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				matchAnyRule(corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE),
 			},
 		}
 

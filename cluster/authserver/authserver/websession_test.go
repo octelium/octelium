@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 )
@@ -161,5 +162,52 @@ func TestGetOrCreateWebDevSess(t *testing.T) {
 		assert.Nil(t, err)
 		_, err = srv.createOrUpdateSessWeb(req, usrT.Usr, nil, cc, idp)
 		assert.Nil(t, err)
+	}
+
+	{
+		cc, err := srv.octeliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+		cc.Spec.Authenticator = &corev1.ClusterConfig_Spec_Authenticator{
+			AuthenticationEnforcementRules: []*corev1.ClusterConfig_Spec_Authenticator_EnforcementRule{
+				{
+					Condition: &corev1.Condition{
+						Type: &corev1.Condition_MatchAny{
+							MatchAny: true,
+						},
+					},
+					Effect: corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE,
+				},
+			},
+		}
+
+		usrT, err := tstuser.NewUser(srv.octeliumC, adminSrv, nil, nil)
+		assert.Nil(t, err)
+
+		sess, err := srv.createOrUpdateSessWeb(httptest.NewRequest("POST", "/", nil), usrT.Usr, nil, cc, idp)
+		assert.Nil(t, err)
+		assert.Equal(t, corev1.Session_Status_REGISTRATION_REQUIRED, sess.Status.AuthenticatorAction)
+
+		sess, err = srv.octeliumC.CoreC().GetSession(ctx, &rmetav1.GetOptions{Uid: sess.Metadata.Uid})
+		assert.Nil(t, err)
+		assert.Equal(t, corev1.Session_Status_REGISTRATION_REQUIRED, sess.Status.AuthenticatorAction)
+
+		_, err = srv.octeliumC.CoreC().CreateAuthenticator(ctx, &corev1.Authenticator{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec: &corev1.Authenticator_Spec{
+				State: corev1.Authenticator_Spec_ACTIVE,
+			},
+			Status: &corev1.Authenticator_Status{
+				UserRef:      umetav1.GetObjectReference(usrT.Usr),
+				Type:         corev1.Authenticator_Status_TOTP,
+				IsRegistered: true,
+			},
+		})
+		assert.Nil(t, err)
+
+		sess, err = srv.createOrUpdateSessWeb(httptest.NewRequest("POST", "/", nil), usrT.Usr, nil, cc, idp)
+		assert.Nil(t, err)
+		assert.Equal(t, corev1.Session_Status_AUTHENTICATION_REQUIRED, sess.Status.AuthenticatorAction)
 	}
 }

@@ -181,26 +181,30 @@ func (s *server) getAuthenticatorAction(ctx context.Context,
 		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, s.errInternalErr(err)
 	}
 
-	if len(r.AvailableAuthenticators) > 0 {
-		if len(cc.Spec.Authenticator.AuthenticationEnforcementRules) > 0 {
-			effect, err := s.doAuthenticatorEnforcementRule(ctx,
-				cc.Spec.Authenticator.AuthenticationEnforcementRules, idp, usr, sess, authnList)
-			if err != nil {
-				return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, err
-			}
-
-			switch effect {
-			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
-				return corev1.Session_Status_AUTHENTICATION_REQUIRED, nil
-			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
-				return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
-			case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND:
-				return corev1.Session_Status_AUTHENTICATION_RECOMMENDED, nil
-			default:
-				return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
-			}
+	authenticationEffect := corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_EFFECT_UNKNOWN
+	if len(cc.Spec.Authenticator.AuthenticationEnforcementRules) > 0 {
+		authenticationEffect, err = s.doAuthenticatorEnforcementRule(ctx,
+			cc.Spec.Authenticator.AuthenticationEnforcementRules, idp, usr, sess, authnList)
+		if err != nil {
+			return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, err
 		}
-		return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+	}
+
+	if len(r.AvailableAuthenticators) > 0 {
+		switch authenticationEffect {
+		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE:
+			return corev1.Session_Status_AUTHENTICATION_REQUIRED, nil
+		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_IGNORE:
+			return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+		case corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_RECOMMEND:
+			return corev1.Session_Status_AUTHENTICATION_RECOMMENDED, nil
+		default:
+			return corev1.Session_Status_AUTHENTICATOR_ACTION_UNSET, nil
+		}
+	}
+
+	if authenticationEffect == corev1.ClusterConfig_Spec_Authenticator_EnforcementRule_ENFORCE {
+		return corev1.Session_Status_REGISTRATION_REQUIRED, nil
 	}
 
 	if len(cc.Spec.Authenticator.RegistrationEnforcementRules) > 0 {
