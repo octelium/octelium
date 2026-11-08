@@ -91,6 +91,13 @@ func GetClusters(domain string, svcList []*corev1.Service) ([]types.Resource, er
 		if isAPIServer(svc) {
 			clstr.CircuitBreakers.Thresholds = append(clstr.CircuitBreakers.Thresholds,
 				getCircuitBreakerThresholds(core.RoutingPriority_HIGH, maxRequestsAPIServerConnect))
+
+			if isHTTP2 {
+				clstr.TypedExtensionProtocolOptions, err = getHTTP2ProtocolOptions(getAPIServerConnectionKeepalive())
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 
 		// zap.L().Debug("Adding Envoy cluster for Service", zap.String("name", svc.Metadata.Name))
@@ -140,25 +147,10 @@ func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sn
 	}
 
 	if isHTTP2 {
-		httpOpts := &upstream_http_v3.HttpProtocolOptions{
-			UpstreamProtocolOptions: &upstream_http_v3.HttpProtocolOptions_ExplicitHttpConfig_{
-				ExplicitHttpConfig: &upstream_http_v3.HttpProtocolOptions_ExplicitHttpConfig{
-					ProtocolConfig: &upstream_http_v3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
-						Http2ProtocolOptions: &core.Http2ProtocolOptions{},
-					},
-				},
-			},
-		}
-
-		toPB, err := anypb.New(httpOpts)
+		cluster.TypedExtensionProtocolOptions, err = getHTTP2ProtocolOptions(nil)
 		if err != nil {
 			return nil, err
 		}
-
-		cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{
-			"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": toPB,
-		}
-
 	}
 
 	if isTLS {
@@ -170,6 +162,40 @@ func getCluster(name string, isHTTP2 bool, host string, port int, isTLS bool, sn
 	}
 
 	return cluster, nil
+}
+
+func getHTTP2ProtocolOptions(keepalive *core.KeepaliveSettings) (map[string]*anypb.Any, error) {
+	httpOpts := &upstream_http_v3.HttpProtocolOptions{
+		UpstreamProtocolOptions: &upstream_http_v3.HttpProtocolOptions_ExplicitHttpConfig_{
+			ExplicitHttpConfig: &upstream_http_v3.HttpProtocolOptions_ExplicitHttpConfig{
+				ProtocolConfig: &upstream_http_v3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{
+					Http2ProtocolOptions: &core.Http2ProtocolOptions{
+						ConnectionKeepalive: keepalive,
+					},
+				},
+			},
+		},
+	}
+
+	toPB, err := anypb.New(httpOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]*anypb.Any{
+		"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": toPB,
+	}, nil
+}
+
+func getAPIServerConnectionKeepalive() *core.KeepaliveSettings {
+	return &core.KeepaliveSettings{
+		Interval: &durationpb.Duration{
+			Seconds: 30,
+		},
+		Timeout: &durationpb.Duration{
+			Seconds: 20,
+		},
+	}
 }
 
 const (
