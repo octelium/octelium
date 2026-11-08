@@ -230,10 +230,10 @@ github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25 h1:9bCMuD3Tc
 github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25/go.mod h1:eDjgYHYDJbPLBLsyZ6qRaugP0mX8vePOhZ5id1fdzJw=
 github.com/open-policy-agent/opa v1.20.1 h1:wSC3zjHbRyt7X3daV/DsjnhDywzB3l0m0gWhgX1W2vQ=
 github.com/open-policy-agent/opa v1.20.1/go.mod h1:pxxSP1noAirD8UJ7PgAjoRw39IE0Bk/JRFkUP3+51lU=
-github.com/oschwald/geoip2-golang/v2 v2.3.0 h1:hT8/BT137lPJXq0DXwGQUS228k8pEhgBRJ1B70eqyAk=
-github.com/oschwald/geoip2-golang/v2 v2.3.0/go.mod h1:tHUYg65ssvQSSzSCkiFR6LWJPYOvSw/85JiBp8kXz0U=
-github.com/oschwald/maxminddb-golang/v2 v2.5.0 h1:WvEHCE8HwFS5pKWhW8nvvRxNzczuRUOGBLn2L03VlEQ=
-github.com/oschwald/maxminddb-golang/v2 v2.5.0/go.mod h1:EBnvLGgY+aSckqcgyfB5LPDviqaWdMZPBDwu8c2jJbs=
+github.com/oschwald/geoip2-golang/v2 v2.5.0 h1:/t4eBuRbaaRXnZH4iQzuU+IevgJEH6XhBKhduWfjqiY=
+github.com/oschwald/geoip2-golang/v2 v2.5.0/go.mod h1:xqrzE9hxQpB5eYtF+V5dez567GMK5HGqrS5NuuFrTDc=
+github.com/oschwald/maxminddb-golang/v2 v2.8.0 h1:enP6KMn9sCV4bRAg3LfHMaU2qjOP2xqY8LjatJMwufU=
+github.com/oschwald/maxminddb-golang/v2 v2.8.0/go.mod h1:kvJXAdsCahFxSWHiigYomcbP0qnEtsL929Mv98Hz8dM=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=

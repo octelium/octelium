@@ -2038,6 +2038,8 @@ github.com/openzipkin/zipkin-go v0.2.1/go.mod h1:NaW6tEwdmWMaCDZzg8sh+IBNOxHMPnh
 github.com/openzipkin/zipkin-go v0.2.2/go.mod h1:NaW6tEwdmWMaCDZzg8sh+IBNOxHMPnhQw8ySjnjRyN4=
 github.com/orcaman/concurrent-map/v2 v2.0.1/go.mod h1:9Eq3TG2oBe5FirmYWQfYO5iH1q0Jv47PLaNK++uCdOM=
 github.com/ory/mail v2.3.1+incompatible h1:vHntHDHtQXamt2T+iwTTlCoBkDvILUeujE9Ocwe9md4=
+github.com/oschwald/geoip2-golang/v2 v2.3.0/go.mod h1:tHUYg65ssvQSSzSCkiFR6LWJPYOvSw/85JiBp8kXz0U=
+github.com/oschwald/maxminddb-golang/v2 v2.5.0/go.mod h1:EBnvLGgY+aSckqcgyfB5LPDviqaWdMZPBDwu8c2jJbs=
 github.com/osrg/gobgp/v3 v3.37.0/go.mod h1:kVHVFy1/fyZHJ8P32+ctvPeJogn9qKwa1YCeMRXXrP0=
 github.com/osrg/gobgp/v4 v4.6.1-0.20260630022313-d6dee8360046/go.mod h1:j1GLEuE20jm2YAoGmaHGb3y9lGH/KBgCBT4Ss5RY/wQ=
 github.com/otiai10/copy v1.2.0/go.mod h1:rrF5dJ5F0t/EWSYODDu4j9/vEeYHMkc8jt0zJChqQWw=

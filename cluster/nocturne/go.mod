@@ -80,8 +80,8 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/octelium/octelium/cluster/rscserver v0.0.0-00010101000000-000000000000 // indirect
 	github.com/open-policy-agent/opa v1.20.1 // indirect
-	github.com/oschwald/geoip2-golang/v2 v2.3.0 // indirect
-	github.com/oschwald/maxminddb-golang/v2 v2.5.0 // indirect
+	github.com/oschwald/geoip2-golang/v2 v2.5.0 // indirect
+	github.com/oschwald/maxminddb-golang/v2 v2.8.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect

@@ -228,10 +228,10 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/open-policy-agent/opa v1.20.1 h1:wSC3zjHbRyt7X3daV/DsjnhDywzB3l0m0gWhgX1W2vQ=
 github.com/open-policy-agent/opa v1.20.1/go.mod h1:pxxSP1noAirD8UJ7PgAjoRw39IE0Bk/JRFkUP3+51lU=
-github.com/oschwald/geoip2-golang/v2 v2.3.0 h1:hT8/BT137lPJXq0DXwGQUS228k8pEhgBRJ1B70eqyAk=
-github.com/oschwald/geoip2-golang/v2 v2.3.0/go.mod h1:tHUYg65ssvQSSzSCkiFR6LWJPYOvSw/85JiBp8kXz0U=
-github.com/oschwald/maxminddb-golang/v2 v2.5.0 h1:WvEHCE8HwFS5pKWhW8nvvRxNzczuRUOGBLn2L03VlEQ=
-github.com/oschwald/maxminddb-golang/v2 v2.5.0/go.mod h1:EBnvLGgY+aSckqcgyfB5LPDviqaWdMZPBDwu8c2jJbs=
+github.com/oschwald/geoip2-golang/v2 v2.5.0 h1:/t4eBuRbaaRXnZH4iQzuU+IevgJEH6XhBKhduWfjqiY=
+github.com/oschwald/geoip2-golang/v2 v2.5.0/go.mod h1:xqrzE9hxQpB5eYtF+V5dez567GMK5HGqrS5NuuFrTDc=
+github.com/oschwald/maxminddb-golang/v2 v2.8.0 h1:enP6KMn9sCV4bRAg3LfHMaU2qjOP2xqY8LjatJMwufU=
+github.com/oschwald/maxminddb-golang/v2 v2.8.0/go.mod h1:kvJXAdsCahFxSWHiigYomcbP0qnEtsL929Mv98Hz8dM=
 github.com/pingcap/errors v0.11.0/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTwv5KuLY8=
 github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee h1:/IDPbpzkzA97t1/Z1+C3KlxbevjMeaI6BQYxvivu4u8=
 github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee/go.mod h1:X2r9ueLEUZgtx2cIogM0v4Zj5uvvzhuuiu7Pn8HzMPg=
