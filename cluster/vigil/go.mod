@@ -16,7 +16,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/kaptinlin/jsonschema v0.9.10
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.20.0
 	github.com/lib/pq v1.12.3
 	github.com/miekg/dns v1.1.73
 	github.com/moby/term v0.5.2
@@ -82,7 +82,7 @@ require (
 	github.com/go-openapi/swag/stringutils v0.28.0 // indirect
 	github.com/go-openapi/swag/typeutils v0.28.0 // indirect
 	github.com/go-openapi/swag/yamlutils v0.28.0 // indirect
-	github.com/gobwas/glob v0.2.3 // indirect
+	github.com/gobwas/glob v1.0.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
@@ -98,11 +98,11 @@ require (
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7 // indirect
 	github.com/kaptinlin/jsonpointer v0.4.28 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
-	github.com/lestrrat-go/dsig v1.2.1 // indirect
+	github.com/lestrrat-go/dsig v1.4.0 // indirect
 	github.com/lestrrat-go/dsig-secp256k1 v1.0.0 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
-	github.com/lestrrat-go/httprc/v3 v3.0.5 // indirect
-	github.com/lestrrat-go/jwx/v3 v3.1.1 // indirect
+	github.com/lestrrat-go/httprc/v3 v3.0.6 // indirect
+	github.com/lestrrat-go/jwx/v3 v3.3.0 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mileusna/useragent v1.3.5 // indirect
@@ -110,22 +110,20 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/octelium/octelium/cluster/rscserver v0.0.0-00010101000000-000000000000 // indirect
-	github.com/open-policy-agent/opa v1.20.1 // indirect
+	github.com/open-policy-agent/opa v1.22.2 // indirect
 	github.com/oschwald/geoip2-golang/v2 v2.5.0 // indirect
 	github.com/oschwald/maxminddb-golang/v2 v2.8.0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee // indirect
 	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a // indirect
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20260219190905-9b9281fa8d6d // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
-	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.9.0 // indirect
-	github.com/tchap/go-patricia/v2 v2.3.3 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
-	github.com/vektah/gqlparser/v2 v2.5.36 // indirect
+	github.com/vektah/gqlparser/v2 v2.5.58 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect

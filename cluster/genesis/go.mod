@@ -75,7 +75,7 @@ require (
 	github.com/go-openapi/validate v0.26.1 // indirect
 	github.com/go-resty/resty/v2 v2.17.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/gobwas/glob v0.2.3 // indirect
+	github.com/gobwas/glob v1.0.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
@@ -93,11 +93,11 @@ require (
 	github.com/kaptinlin/jsonpointer v0.4.28 // indirect
 	github.com/kaptinlin/jsonschema v0.9.10 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
-	github.com/lestrrat-go/dsig v1.2.1 // indirect
+	github.com/lestrrat-go/dsig v1.4.0 // indirect
 	github.com/lestrrat-go/dsig-secp256k1 v1.0.0 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
-	github.com/lestrrat-go/httprc/v3 v3.0.5 // indirect
-	github.com/lestrrat-go/jwx/v3 v3.1.1 // indirect
+	github.com/lestrrat-go/httprc/v3 v3.0.6 // indirect
+	github.com/lestrrat-go/jwx/v3 v3.3.0 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de // indirect
 	github.com/mackerelio/go-osstat v0.2.7 // indirect
@@ -109,21 +109,20 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
-	github.com/open-policy-agent/opa v1.20.1 // indirect
+	github.com/open-policy-agent/opa v1.22.2 // indirect
 	github.com/oschwald/geoip2-golang/v2 v2.5.0 // indirect
 	github.com/oschwald/maxminddb-golang/v2 v2.8.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.24.1 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
+	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
-	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.9 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -131,9 +130,8 @@ require (
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.9.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/tchap/go-patricia/v2 v2.3.3 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
-	github.com/vektah/gqlparser/v2 v2.5.36 // indirect
+	github.com/vektah/gqlparser/v2 v2.5.58 // indirect
 	github.com/vishvananda/netlink v1.3.2-0.20260624190457-bab08b3566fc // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
