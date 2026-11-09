@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"slices"
 	"strings"
 	"sync"
 
@@ -49,6 +50,14 @@ type dctx struct {
 type envVar struct {
 	key string
 	val string
+}
+
+var secretEnvVars = []string{
+	"OCTELIUM_AUTH_TOKEN",
+	"OCTELIUM_AUTH_TOKEN_FILE",
+	"OCTELIUM_AUTH_ASSERTION",
+	"OCTELIUM_ACCESS_TOKEN",
+	"OCTELIUM_ACCESS_TOKEN_FILE",
 }
 
 func newDctx(conn net.Conn, sshConn *ssh.ServerConn, usr *user.User, sameUser bool) (*dctx, error) {
@@ -100,6 +109,10 @@ func (c *dctx) getEnv(additional []*envVar) []string {
 	env := []string{}
 
 	for _, keyVal := range curEnv {
+		key, _, _ := strings.Cut(keyVal, "=")
+		if slices.Contains(secretEnvVars, key) {
+			continue
+		}
 
 		switch {
 		case strings.HasPrefix(keyVal, "OCTELIUM_"):

@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/client/daemonv1"
 	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/client/common/cliutils/secretfile"
 	"github.com/pkg/errors"
 )
 
@@ -124,9 +125,25 @@ func (d *DB) SetSessionToken(clusterDomain string, resp *authv1.SessionToken) er
 	return d.db.set(context.Background(), clusterDomain, resp)
 }
 
+func IsStaticAccessToken() bool {
+	return os.Getenv("OCTELIUM_ACCESS_TOKEN") != "" || os.Getenv("OCTELIUM_ACCESS_TOKEN_FILE") != ""
+}
+
+func GetStaticAccessToken() (string, error) {
+	if ret := os.Getenv("OCTELIUM_ACCESS_TOKEN"); ret != "" {
+		return ret, nil
+	}
+
+	return secretfile.Read(os.Getenv("OCTELIUM_ACCESS_TOKEN_FILE"))
+}
+
 func (d *DB) GetSessionToken(clusterDomain string) (*authv1.SessionToken, error) {
 
-	if accessToken := os.Getenv("OCTELIUM_ACCESS_TOKEN"); accessToken != "" {
+	if IsStaticAccessToken() {
+		accessToken, err := GetStaticAccessToken()
+		if err != nil {
+			return nil, err
+		}
 		return &authv1.SessionToken{
 			AccessToken: accessToken,
 		}, nil

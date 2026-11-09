@@ -25,6 +25,7 @@ import (
 
 type args struct {
 	Token             string
+	TokenFile         string
 	IsWeb             bool
 	Assertion         string
 	AssertionProvider string
@@ -36,13 +37,14 @@ var cmdArgs args
 func init() {
 	cobra.EnableTraverseRunHooks = true
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Token, "auth-token", "", "Authentication Token")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.TokenFile, "auth-token-file", "", "Read the authentication Token from a file")
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.IsWeb, "web", false, "Authenticate using the web Portal")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Assertion, "assertion", "", "Authenticate using an assertion. Refer to the docs for more details.")
-	Cmd.MarkFlagsMutuallyExclusive("auth-token", "web", "assertion")
+	Cmd.MarkFlagsMutuallyExclusive("auth-token", "auth-token-file", "web", "assertion")
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Scopes, "scope", nil,
 		`
 Scope is a way to limit the access to certain Services and Octelium APIs that works similarly to OAuth2.
-This flag is used ONLY while authenticating using the --auth-token or --assertion flags.
+This flag is used ONLY while authenticating using the --auth-token, --auth-token-file or --assertion flags.
 You can use this flag also using the login subcommand.
 For example, you can only limit the Session to access the Service "svc1.ns1" only using the scope "service:svc1.ns1"
 You can also limit yourself to access only Services belonging to the Namespace "ns2" using the scope "service:ns2/*"
@@ -55,6 +57,7 @@ var Cmd = &cobra.Command{
 	Short: "Log in to a Cluster",
 	Example: `
 octeliumctl login --auth-token <AUTHENTICATION_TOKEN>
+octeliumctl login --auth-token-file /path/to/token
 octeliumctl login --domain octelium.example.com
 	`,
 
@@ -80,10 +83,11 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := &authenticator.AuthenticateOpts{
-		Domain:    i.Domain,
-		AuthToken: cmdArgs.Token,
-		IsWeb:     cmdArgs.IsWeb,
-		Scopes:    cmdArgs.Scopes,
+		Domain:        i.Domain,
+		AuthToken:     cmdArgs.Token,
+		AuthTokenFile: cmdArgs.TokenFile,
+		IsWeb:         cmdArgs.IsWeb,
+		Scopes:        cmdArgs.Scopes,
 	}
 
 	if cmdArgs.Assertion != "" {

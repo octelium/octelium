@@ -16,12 +16,15 @@ package login
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +37,7 @@ func TestLoginModes(t *testing.T) {
 	t.Setenv("OCTELIUM_ACCESS_TOKEN", "static-token")
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
-	for _, arg := range []args{{}, {Token: "token"}, {IsWeb: true}, {Assertion: "jwt:env=JWT"}} {
+	for _, arg := range []args{{}, {Token: "token"}, {TokenFile: "missing"}, {IsWeb: true}, {Assertion: "jwt:env=JWT"}} {
 		cmdArgs = arg
 		assert.NoError(t, Cmd.RunE(cmd, nil))
 	}
@@ -47,7 +50,7 @@ func TestLoginModes(t *testing.T) {
 }
 
 func TestLoginRequiresInteractiveAuthentication(t *testing.T) {
-	for _, key := range []string{"OCTELIUM_ACCESS_TOKEN", "OCTELIUM_AUTH_PROXY_SOCKET", "OCTELIUM_AUTH_TOKEN", "OCTELIUM_AUTH_ASSERTION"} {
+	for _, key := range []string{"OCTELIUM_ACCESS_TOKEN", "OCTELIUM_ACCESS_TOKEN_FILE", "OCTELIUM_AUTH_PROXY_SOCKET", "OCTELIUM_AUTH_TOKEN", "OCTELIUM_AUTH_TOKEN_FILE", "OCTELIUM_AUTH_ASSERTION"} {
 		t.Setenv(key, "")
 	}
 	t.Setenv("OCTELIUM_DOMAIN", "example.invalid")
@@ -60,4 +63,39 @@ func TestLoginRequiresInteractiveAuthentication(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(authenticator.WithNonInteractive(cliutils.WithDB(context.Background(), d)))
 	assert.ErrorIs(t, doCmd(cmd, nil), authenticator.ErrAuthenticationRequired)
+}
+
+func TestLoginAuthTokenFile(t *testing.T) {
+	for _, key := range []string{"OCTELIUM_ACCESS_TOKEN", "OCTELIUM_ACCESS_TOKEN_FILE", "OCTELIUM_AUTH_PROXY_SOCKET", "OCTELIUM_AUTH_TOKEN", "OCTELIUM_AUTH_TOKEN_FILE", "OCTELIUM_AUTH_ASSERTION"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("OCTELIUM_DOMAIN", "example.invalid")
+	d, err := db.Open("mem")
+	require.NoError(t, err)
+	t.Cleanup(func() { d.Close() })
+	prev := cmdArgs
+	t.Cleanup(func() {
+		cmdArgs = prev
+		Cmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	})
+
+	cmdArgs = args{TokenFile: filepath.Join(t.TempDir(), "missing")}
+	cmd := &cobra.Command{}
+	cmd.SetContext(authenticator.WithNonInteractive(cliutils.WithDB(context.Background(), d)))
+	assert.ErrorContains(t, doCmd(cmd, nil), "Could not get the authentication Token")
+
+	filePath := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(filePath, []byte("token\n"), 0600))
+	require.NoError(t, Cmd.Flags().Set("auth-token-file", filePath))
+	assert.Equal(t, filePath, cmdArgs.TokenFile)
+	assert.NoError(t, Cmd.ValidateFlagGroups())
+	for _, flag := range []string{"auth-token", "web", "assertion"} {
+		t.Run(flag, func(t *testing.T) {
+			f := Cmd.Flags().Lookup(flag)
+			require.NotNil(t, f)
+			f.Changed = true
+			defer func() { f.Changed = false }()
+			assert.ErrorContains(t, Cmd.ValidateFlagGroups(), "none of the others can be")
+		})
+	}
 }

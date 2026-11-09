@@ -29,7 +29,9 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/client/common/authc"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/client/common/cliutils/secretfile"
 	authn "github.com/octelium/octelium/client/common/commands/auth/authenticator"
+	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/octelium/octelium/pkg/utils/ldflags"
@@ -38,12 +40,13 @@ import (
 )
 
 type AuthenticateOpts struct {
-	Domain       string
-	AuthToken    string
-	Assertion    *AuthenticateOptsAssertion
-	IsWeb        bool
-	Scopes       []string
-	CodeVerifier []byte
+	Domain        string
+	AuthToken     string
+	AuthTokenFile string
+	Assertion     *AuthenticateOptsAssertion
+	IsWeb         bool
+	Scopes        []string
+	CodeVerifier  []byte
 }
 
 type AuthenticateOptsAssertion struct {
@@ -71,14 +74,6 @@ func isAuthProxyMode() bool {
 	return os.Getenv("OCTELIUM_AUTH_PROXY_SOCKET") != ""
 }
 
-func isStaticAccessToken() bool {
-	return getStaticAccessToken() != ""
-}
-
-func getStaticAccessToken() string {
-	return os.Getenv("OCTELIUM_ACCESS_TOKEN")
-}
-
 func Authenticate(ctx context.Context, opts *AuthenticateOpts) error {
 
 	if isAuthProxyMode() {
@@ -86,7 +81,7 @@ func Authenticate(ctx context.Context, opts *AuthenticateOpts) error {
 		return nil
 	}
 
-	if isStaticAccessToken() {
+	if db.IsStaticAccessToken() {
 		zap.L().Debug("static accessToken mode. No need to authenticate")
 		return nil
 	}
@@ -106,7 +101,7 @@ func StartGetAccessToken(ctx context.Context, domain string) {
 		return
 	}
 
-	if isStaticAccessToken() {
+	if db.IsStaticAccessToken() {
 		zap.L().Debug("static accessToken mode. No need to periodically fetch access token")
 		return
 	}
@@ -144,8 +139,8 @@ func getAccessToken(ctx context.Context, domain string, isRenew bool) (string, e
 		return "", nil
 	}
 
-	if isStaticAccessToken() {
-		return getStaticAccessToken(), nil
+	if db.IsStaticAccessToken() {
+		return db.GetStaticAccessToken()
 	}
 
 	authC, err := newAuthenticator(ctx, &AuthenticateOpts{
@@ -193,7 +188,7 @@ func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticat
 		skipStore: false,
 	}
 
-	if isAuthProxyMode() || isStaticAccessToken() {
+	if isAuthProxyMode() || db.IsStaticAccessToken() {
 		return ret, nil
 	}
 
@@ -203,10 +198,12 @@ func newAuthenticator(ctx context.Context, opts *AuthenticateOpts) (*authenticat
 	}
 
 	if ret.opts != nil {
-		if ret.opts.AuthToken == "" && ret.opts.Assertion == nil {
+		if ret.opts.AuthToken == "" && ret.opts.AuthTokenFile == "" && ret.opts.Assertion == nil {
 			switch {
 			case os.Getenv("OCTELIUM_AUTH_TOKEN") != "":
 				ret.opts.AuthToken = os.Getenv("OCTELIUM_AUTH_TOKEN")
+			case os.Getenv("OCTELIUM_AUTH_TOKEN_FILE") != "":
+				ret.opts.AuthTokenFile = os.Getenv("OCTELIUM_AUTH_TOKEN_FILE")
 			case os.Getenv("OCTELIUM_AUTH_ASSERTION") != "":
 				ret.opts.Assertion = &AuthenticateOptsAssertion{
 					Arg: os.Getenv("OCTELIUM_AUTH_ASSERTION"),
@@ -248,8 +245,8 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		return "", nil
 	}
 
-	if isStaticAccessToken() {
-		return getStaticAccessToken(), nil
+	if db.IsStaticAccessToken() {
+		return db.GetStaticAccessToken()
 	}
 
 	switch {
@@ -274,10 +271,14 @@ func (a *authenticator) doGetAccessToken(ctx context.Context) (string, error) {
 		switch {
 		case a.opts.IsWeb:
 			return a.doWebAuthentication(ctx)
-		case a.opts.AuthToken != "":
+		case a.opts.AuthToken != "" || a.opts.AuthTokenFile != "":
+			authToken, err := a.getAuthToken()
+			if err != nil {
+				return "", err
+			}
 			sessTkn, err := a.c.C().AuthenticateWithAuthenticationToken(ctx,
 				&authv1.AuthenticateWithAuthenticationTokenRequest{
-					AuthenticationToken: a.opts.AuthToken,
+					AuthenticationToken: authToken,
 					Scopes:              a.opts.Scopes,
 					CodeVerifier:        a.opts.CodeVerifier,
 				})
@@ -329,6 +330,19 @@ You must choose the authentication type: either with an authentication token usi
 		return "", errors.Errorf("Neither a refresh nor an authentication flow")
 	}
 
+}
+
+func (a *authenticator) getAuthToken() (string, error) {
+	if a.opts.AuthToken != "" {
+		return a.opts.AuthToken, nil
+	}
+
+	ret, err := secretfile.Read(a.opts.AuthTokenFile)
+	if err != nil {
+		return "", errors.Errorf("Could not get the authentication Token: %v", err)
+	}
+
+	return ret, nil
 }
 
 var errRefreshTokenRejected = errors.New("The refresh token was rejected by the Cluster")

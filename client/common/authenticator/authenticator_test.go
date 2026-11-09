@@ -480,6 +480,7 @@ func TestTokenExpiration(t *testing.T) {
 
 func TestAuthenticationModes(t *testing.T) {
 	ctx := context.Background()
+	t.Setenv("OCTELIUM_ACCESS_TOKEN_FILE", "")
 	assert.False(t, IsNonInteractive(ctx))
 	assert.True(t, IsNonInteractive(WithNonInteractive(ctx)))
 	t.Setenv("OCTELIUM_ACCESS_TOKEN", "static")
@@ -621,7 +622,7 @@ func TestGithubActionsAssertionHTTP(t *testing.T) {
 
 func newAuthenticationTestContext(t *testing.T, path string, handler grpc.UnaryServerInterceptor) (context.Context, *db.DB) {
 	t.Helper()
-	for _, key := range []string{"OCTELIUM_ACCESS_TOKEN", "OCTELIUM_AUTH_PROXY_SOCKET", "OCTELIUM_AUTH_TOKEN", "OCTELIUM_AUTH_ASSERTION"} {
+	for _, key := range []string{"OCTELIUM_ACCESS_TOKEN", "OCTELIUM_ACCESS_TOKEN_FILE", "OCTELIUM_AUTH_PROXY_SOCKET", "OCTELIUM_AUTH_TOKEN", "OCTELIUM_AUTH_TOKEN_FILE", "OCTELIUM_AUTH_ASSERTION"} {
 		t.Setenv(key, "")
 	}
 	t.Setenv("OCTELIUM_INSECURE_TLS", "true")
@@ -784,6 +785,191 @@ func TestAuthenticationTokenE2E(t *testing.T) {
 	assert.Equal(t, "access", token.AccessToken)
 }
 
+func TestAuthenticationTokenFileE2E(t *testing.T) {
+	for _, fromEnv := range []bool{false, true} {
+		t.Run(fmt.Sprintf("env-%t", fromEnv), func(t *testing.T) {
+			var calls atomic.Int32
+			ctx, d := newAuthenticationTestContext(t, "mem",
+				func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+					if !strings.HasSuffix(info.FullMethod, "/AuthenticateWithAuthenticationToken") {
+						return handler(ctx, req)
+					}
+					calls.Add(1)
+					arg := req.(*authv1.AuthenticateWithAuthenticationTokenRequest)
+					assert.Equal(t, "file-token", arg.AuthenticationToken)
+					assert.Equal(t, []string{"service:api"}, arg.Scopes)
+					return &authv1.SessionToken{AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 7200, RefreshTokenExpiresIn: 86400}, nil
+				})
+			filePath := filepath.Join(t.TempDir(), "token")
+			require.NoError(t, os.WriteFile(filePath, []byte("file-token\n"), 0600))
+			opts := &AuthenticateOpts{Domain: "example.invalid", Scopes: []string{"service:api"}}
+			if fromEnv {
+				t.Setenv("OCTELIUM_AUTH_TOKEN_FILE", filePath)
+			} else {
+				opts.AuthTokenFile = filePath
+			}
+			require.NoError(t, Authenticate(WithNonInteractive(ctx), opts))
+			token, err := d.GetSessionToken("example.invalid")
+			require.NoError(t, err)
+			assert.Equal(t, "access", token.AccessToken)
+			assert.Equal(t, int32(1), calls.Load())
+		})
+	}
+}
+
+func TestAuthenticationTokenFileRead(t *testing.T) {
+	var calls atomic.Int32
+	ctx, d := newAuthenticationTestContext(t, "mem",
+		func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+			calls.Add(1)
+			return handler(ctx, req)
+		})
+	ctx = WithNonInteractive(ctx)
+	domain := "example.invalid"
+	dir := t.TempDir()
+	missingPath := filepath.Join(dir, "missing")
+	emptyPath := filepath.Join(dir, "empty")
+	require.NoError(t, os.WriteFile(emptyPath, []byte("\n"), 0600))
+
+	for _, filePath := range []string{missingPath, emptyPath} {
+		err := Authenticate(ctx, &AuthenticateOpts{Domain: domain, AuthTokenFile: filePath})
+		assert.ErrorContains(t, err, "Could not get the authentication Token")
+	}
+
+	t.Setenv("OCTELIUM_AUTH_TOKEN_FILE", missingPath)
+	_, err := GetAccessToken(ctx, domain)
+	assert.ErrorContains(t, err, "Could not get the authentication Token")
+	assert.Equal(t, int32(0), calls.Load())
+
+	require.NoError(t, d.SetSessionToken(domain, &authv1.SessionToken{AccessToken: "access", RefreshToken: "refresh", ExpiresIn: 7200, RefreshTokenExpiresIn: 86400}))
+	require.NoError(t, Authenticate(ctx, &AuthenticateOpts{Domain: domain, AuthTokenFile: missingPath}))
+	got, err := GetAccessToken(ctx, domain)
+	require.NoError(t, err)
+	assert.Equal(t, "access", got)
+	assert.Equal(t, int32(0), calls.Load())
+
+	got, err = (&authenticator{opts: &AuthenticateOpts{AuthToken: "token", AuthTokenFile: missingPath}}).getAuthToken()
+	require.NoError(t, err)
+	assert.Equal(t, "token", got)
+}
+
+func TestRefreshRejectedAuthenticationTokenFileE2E(t *testing.T) {
+	var refreshCalls, authCalls atomic.Int32
+	ctx, d := newAuthenticationTestContext(t, "mem",
+		func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+			switch {
+			case strings.HasSuffix(info.FullMethod, "/AuthenticateWithRefreshToken"):
+				refreshCalls.Add(1)
+				return nil, status.Error(codes.Unauthenticated, "refresh failed")
+			case strings.HasSuffix(info.FullMethod, "/AuthenticateWithAuthenticationToken"):
+				authCalls.Add(1)
+				assert.Equal(t, "rotated-token", req.(*authv1.AuthenticateWithAuthenticationTokenRequest).AuthenticationToken)
+				return &authv1.SessionToken{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 7200, RefreshTokenExpiresIn: 86400}, nil
+			default:
+				return handler(ctx, req)
+			}
+		})
+	filePath := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(filePath, []byte("rotated-token\n"), 0600))
+	t.Setenv("OCTELIUM_AUTH_TOKEN_FILE", filePath)
+	domain := "example.invalid"
+	require.NoError(t, d.SetSessionToken(domain, &authv1.SessionToken{AccessToken: "old-access", RefreshToken: "old-refresh", ExpiresIn: 60, RefreshTokenExpiresIn: 86400}))
+	got, err := GetAccessToken(WithNonInteractive(ctx), domain)
+	require.NoError(t, err)
+	assert.Equal(t, "new-access", got)
+	stored, err := d.GetSessionToken(domain)
+	require.NoError(t, err)
+	assert.Equal(t, "new-refresh", stored.RefreshToken)
+	assert.Equal(t, int32(1), refreshCalls.Load())
+	assert.Equal(t, int32(1), authCalls.Load())
+}
+
+func TestStaticAccessTokenFile(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "")
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
+	filePath := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(filePath, []byte("static-file\n"), 0600))
+	t.Setenv("OCTELIUM_ACCESS_TOKEN_FILE", filePath)
+
+	assert.NoError(t, Authenticate(ctx, nil))
+	StartGetAccessToken(ctx, "")
+	for _, fn := range []func(context.Context, string) (string, error){GetAccessToken, RenewAccessToken} {
+		token, err := fn(ctx, "")
+		require.NoError(t, err)
+		assert.Equal(t, "static-file", token)
+	}
+	a, err := newAuthenticator(ctx, &AuthenticateOpts{Domain: "example.invalid"})
+	require.NoError(t, err)
+	token, err := a.doGetAccessToken(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "static-file", token)
+
+	require.NoError(t, os.WriteFile(filePath, []byte("rotated"), 0600))
+	token, err = GetAccessToken(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, "rotated", token)
+
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "env-token")
+	token, err = GetAccessToken(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, "env-token", token)
+
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
+	require.NoError(t, os.Remove(filePath))
+	assert.NoError(t, Authenticate(ctx, nil))
+	_, err = GetAccessToken(ctx, "")
+	assert.ErrorContains(t, err, "Could not open")
+	_, err = a.doGetAccessToken(ctx)
+	assert.ErrorContains(t, err, "Could not open")
+}
+
+func TestNewAuthenticatorAuthTokenFileSelection(t *testing.T) {
+	for _, key := range []string{"OCTELIUM_ACCESS_TOKEN", "OCTELIUM_ACCESS_TOKEN_FILE", "OCTELIUM_AUTH_PROXY_SOCKET"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("OCTELIUM_DOMAIN", "example.invalid")
+	d, err := db.Open("mem")
+	require.NoError(t, err)
+	t.Cleanup(func() { d.Close() })
+	ctx := cliutils.WithDB(context.Background(), d)
+
+	for _, itm := range []struct {
+		name          string
+		envToken      string
+		envTokenFile  string
+		envAssertion  string
+		opts          *AuthenticateOpts
+		wantToken     string
+		wantTokenFile string
+		wantAssertion string
+	}{
+		{"env-token", "env-token", "/env/file", "jwt:env=JWT", nil, "env-token", "", ""},
+		{"env-file", "", "/env/file", "jwt:env=JWT", nil, "", "/env/file", ""},
+		{"env-assertion", "", "", "jwt:env=JWT", nil, "", "", "jwt:env=JWT"},
+		{"opts-file", "env-token", "/env/file", "", &AuthenticateOpts{AuthTokenFile: "/opts/file"}, "", "/opts/file", ""},
+		{"opts-token", "", "/env/file", "", &AuthenticateOpts{AuthToken: "opts-token"}, "opts-token", "", ""},
+		{"opts-assertion", "", "/env/file", "", &AuthenticateOpts{Assertion: &AuthenticateOptsAssertion{Arg: "jwt:env=OPTS"}}, "", "", "jwt:env=OPTS"},
+	} {
+		t.Run(itm.name, func(t *testing.T) {
+			t.Setenv("OCTELIUM_AUTH_TOKEN", itm.envToken)
+			t.Setenv("OCTELIUM_AUTH_TOKEN_FILE", itm.envTokenFile)
+			t.Setenv("OCTELIUM_AUTH_ASSERTION", itm.envAssertion)
+			a, err := newAuthenticator(ctx, itm.opts)
+			require.NoError(t, err)
+			defer a.c.Close()
+			assert.Equal(t, itm.wantToken, a.opts.AuthToken)
+			assert.Equal(t, itm.wantTokenFile, a.opts.AuthTokenFile)
+			if itm.wantAssertion == "" {
+				assert.Nil(t, a.opts.Assertion)
+			} else {
+				require.NotNil(t, a.opts.Assertion)
+				assert.Equal(t, itm.wantAssertion, a.opts.Assertion.Arg)
+			}
+		})
+	}
+}
+
 func TestRefreshAccessTokenE2E(t *testing.T) {
 	for _, code := range []codes.Code{codes.OK, codes.AlreadyExists, codes.Unauthenticated, codes.PermissionDenied} {
 		t.Run(code.String(), func(t *testing.T) {
@@ -831,6 +1017,8 @@ func TestRefreshAccessTokenE2E(t *testing.T) {
 
 func TestNewAuthenticatorSelection(t *testing.T) {
 	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
+	t.Setenv("OCTELIUM_ACCESS_TOKEN_FILE", "")
+	t.Setenv("OCTELIUM_AUTH_TOKEN_FILE", "")
 	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "")
 	t.Setenv("OCTELIUM_DOMAIN", "example.invalid")
 	t.Setenv("OCTELIUM_AUTH_TOKEN", "env-token")

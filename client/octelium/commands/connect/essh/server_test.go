@@ -449,6 +449,44 @@ func TestEnvValidation(t *testing.T) {
 	assert.NotContains(t, env, "UNRELATED_ENV_VAR=value")
 }
 
+func TestSecretEnvVars(t *testing.T) {
+	for _, key := range secretEnvVars {
+		t.Setenv(key, "connector-secret")
+	}
+	t.Setenv("OCTELIUM_DOMAIN", "example.com")
+	t.Setenv("OCTELIUM_AUTH_PROXY_SOCKET", "/var/run/octelium-proxy.sock")
+	t.Setenv("OCTELIUM_AUTH_TOKEN_SAVE_PATH", "/tmp/token")
+	t.Setenv("CORDIUM_NAME", "ws")
+
+	usr, err := user.Current()
+	require.NoError(t, err)
+
+	for _, sameUser := range []bool{true, false} {
+		dctx := &dctx{usr: usr, sameUser: sameUser}
+		env := dctx.getEnv(nil)
+		for _, keyVal := range env {
+			assert.NotContains(t, keyVal, "connector-secret")
+		}
+		assert.Contains(t, env, "OCTELIUM_DOMAIN=example.com")
+		assert.Contains(t, env, "OCTELIUM_AUTH_PROXY_SOCKET=/var/run/octelium-proxy.sock")
+		assert.Contains(t, env, "OCTELIUM_AUTH_TOKEN_SAVE_PATH=/tmp/token")
+		assert.Contains(t, env, "CORDIUM_NAME=ws")
+
+		env = dctx.getEnv([]*envVar{{key: "OCTELIUM_AUTH_TOKEN", val: "client-value"}})
+		assert.Contains(t, env, "OCTELIUM_AUTH_TOKEN=client-value")
+	}
+
+	_, sshC := newTestServer(t)
+	sess, err := sshC.NewSession()
+	require.NoError(t, err)
+	output, err := sess.Output("env")
+	require.NoError(t, err)
+	assert.NotContains(t, string(output), "connector-secret")
+	assert.Contains(t, string(output), "OCTELIUM_DOMAIN=example.com")
+	assert.Contains(t, string(output), "OCTELIUM_AUTH_PROXY_SOCKET=/var/run/octelium-proxy.sock")
+	assert.Contains(t, string(output), "CORDIUM_NAME=ws")
+}
+
 func TestSSHAuthSockEnv(t *testing.T) {
 	usr, err := user.Current()
 	require.NoError(t, err)

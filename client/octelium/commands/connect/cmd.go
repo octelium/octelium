@@ -36,6 +36,7 @@ type args struct {
 	L3Mode    string
 	IgnoreDNS bool
 	Token     string
+	TokenFile string
 
 	ServeServices      []string
 	ServeAll           bool
@@ -86,6 +87,8 @@ octelium connect --essh
 
 # Connect with an Authentication Token
 octelium connect --detach --auth-token <AUTHENTICATION_TOKEN>
+# OR read the Authentication Token from a file
+octelium connect --detach --auth-token-file /path/to/token
 
 # Connect using IPv4 only and skip using the Cluster DNS
 octelium connect --ip-mode v4 --no-dns
@@ -109,6 +112,8 @@ func init() {
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.IgnoreDNS, "no-dns", false, "Skip setting the Cluster private DNS")
 	Cmd.PersistentFlags().StringVar(&cmdArgs.Token, "auth-token", "",
 		"Connect using an authentication Token without having to be logged in")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.TokenFile, "auth-token-file", "",
+		"Connect using an authentication Token read from a file without having to be logged in")
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.ServeAll, "serve-all", false,
 		"Serve all services assigned to the User")
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.ServeServices, "serve", nil,
@@ -135,7 +140,7 @@ to find the best mode performance-wise and only resorts to the gvisor implementa
 	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.Scopes, "scope", nil,
 		`
 Scope is a way to limit the access to certain Services and Octelium APIs that works similarly to OAuth2.
-This flag is used ONLY while authenticating using the --auth-token or --assertion flags.
+This flag is used ONLY while authenticating using the --auth-token, --auth-token-file or --assertion flags.
 You can use this flag also using the login subcommand.
 For example, you can only limit the Session to access the Service "svc1.ns1" only using the scope "service:svc1.ns1"
 You can also limit yourself to access only Services belonging to the Namespace "ns2" using the scope "service:ns2/*"
@@ -154,6 +159,9 @@ This mode implicitly enables the local DNS server.`)
 	and "quicv0" which uses QUIC. Currently "quicv0" is experimental and not suitable for production environments`)
 
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseESOCKS5, "esocks5", false, "Run embedded SOCKS5 server")
+
+	Cmd.MarkFlagsMutuallyExclusive("auth-token", "auth-token-file")
+	Cmd.MarkFlagsMutuallyExclusive("auth-token-file", "assertion")
 }
 
 func (a *args) toOpts() (*Opts, error) {
@@ -202,9 +210,10 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	authOpts := &authenticator.AuthenticateOpts{
-		Domain:    domain,
-		AuthToken: cmdArgs.Token,
-		Scopes:    cmdArgs.Scopes,
+		Domain:        domain,
+		AuthToken:     cmdArgs.Token,
+		AuthTokenFile: cmdArgs.TokenFile,
+		Scopes:        cmdArgs.Scopes,
 	}
 	if cmdArgs.Assertion != "" {
 		authOpts.Assertion = &authenticator.AuthenticateOptsAssertion{
@@ -259,7 +268,7 @@ func runDetached(cmd *cobra.Command, domain string) error {
 
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		switch f.Name {
-		case "detach", "homedir", "domain", "auth-token", "assertion":
+		case "detach", "homedir", "domain", "auth-token", "auth-token-file", "assertion":
 			return
 		}
 		if !f.Changed {

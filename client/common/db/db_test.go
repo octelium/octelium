@@ -17,6 +17,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -141,6 +142,7 @@ func TestDBStaticSessionToken(t *testing.T) {
 	d, err := Open("mem")
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, d.Close()) })
+	t.Setenv("OCTELIUM_ACCESS_TOKEN_FILE", "")
 	t.Setenv("OCTELIUM_ACCESS_TOKEN", "static-token")
 	token, err := d.GetSessionToken("missing.example")
 	require.NoError(t, err)
@@ -149,6 +151,57 @@ func TestDBStaticSessionToken(t *testing.T) {
 	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
 	_, err = d.GetSessionToken("missing.example")
 	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestDBStaticSessionTokenFile(t *testing.T) {
+	d, err := Open("mem")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, d.Close()) })
+	require.NoError(t, d.SetSessionToken("one.example", &authv1.SessionToken{AccessToken: "stored", RefreshToken: "refresh"}))
+
+	filePath := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(filePath, []byte("file-token\n"), 0600))
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
+	t.Setenv("OCTELIUM_ACCESS_TOKEN_FILE", filePath)
+	assert.True(t, IsStaticAccessToken())
+	for _, domain := range []string{"missing.example", "one.example"} {
+		token, err := d.GetSessionToken(domain)
+		require.NoError(t, err)
+		assert.Equal(t, "file-token", token.AccessToken)
+		assert.Empty(t, token.RefreshToken)
+	}
+
+	require.NoError(t, os.WriteFile(filePath, []byte("rotated-token"), 0600))
+	token, err := d.GetSessionToken("missing.example")
+	require.NoError(t, err)
+	assert.Equal(t, "rotated-token", token.AccessToken)
+
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "env-token")
+	token, err = d.GetSessionToken("missing.example")
+	require.NoError(t, err)
+	assert.Equal(t, "env-token", token.AccessToken)
+
+	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
+	require.NoError(t, os.WriteFile(filePath, []byte("\n"), 0600))
+	_, err = d.GetSessionToken("missing.example")
+	assert.ErrorContains(t, err, "is empty")
+	assert.NotErrorIs(t, err, ErrNotFound)
+
+	require.NoError(t, os.Remove(filePath))
+	assert.True(t, IsStaticAccessToken())
+	_, err = GetStaticAccessToken()
+	assert.ErrorContains(t, err, "Could not open")
+	_, err = d.GetSessionToken("one.example")
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, ErrNotFound)
+
+	t.Setenv("OCTELIUM_ACCESS_TOKEN_FILE", "")
+	assert.False(t, IsStaticAccessToken())
+	_, err = d.GetSessionToken("missing.example")
+	assert.ErrorIs(t, err, ErrNotFound)
+	token, err = d.GetSessionToken("one.example")
+	require.NoError(t, err)
+	assert.Equal(t, "stored", token.AccessToken)
 }
 
 func TestDBOpenDefault(t *testing.T) {

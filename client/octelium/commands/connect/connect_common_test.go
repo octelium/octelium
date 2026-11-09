@@ -35,12 +35,15 @@ import (
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/common/authenticator"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/octelium/octelium/client/octelium/commands/connect/proxy"
 	"github.com/octelium/octelium/client/octelium/internal/testutils"
 	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -3443,4 +3446,48 @@ func TestRunGRPCConnectedEventSnapshotsRemainIndependentAcrossReconnect(t *testi
 	assert.Equal(t, int32(2), attempts.Load())
 	_, err := dbC.GetConnectionCleanup("example.com")
 	assert.True(t, dbC.ErrorIsNotFound(err))
+}
+
+func TestAuthTokenFile(t *testing.T) {
+	for _, key := range []string{"OCTELIUM_ACCESS_TOKEN", "OCTELIUM_ACCESS_TOKEN_FILE", "OCTELIUM_AUTH_PROXY_SOCKET", "OCTELIUM_AUTH_TOKEN", "OCTELIUM_AUTH_TOKEN_FILE", "OCTELIUM_AUTH_ASSERTION"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("OCTELIUM_DOMAIN", "example.invalid")
+	d, err := db.Open("mem")
+	require.NoError(t, err)
+	t.Cleanup(func() { d.Close() })
+	prev := cmdArgs
+	t.Cleanup(func() {
+		cmdArgs = prev
+		Cmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	})
+
+	cmdArgs = args{TokenFile: filepath.Join(t.TempDir(), "missing")}
+	cmd := &cobra.Command{}
+	cmd.SetContext(authenticator.WithNonInteractive(cliutils.WithDB(context.Background(), d)))
+	assert.ErrorContains(t, doCmd(cmd, nil), "Could not get the authentication Token")
+
+	require.NoError(t, Cmd.Flags().Set("auth-token-file", "/path/to/token"))
+	assert.Equal(t, "/path/to/token", cmdArgs.TokenFile)
+	assert.NoError(t, Cmd.ValidateFlagGroups())
+	for _, flag := range []string{"auth-token", "assertion"} {
+		t.Run(flag, func(t *testing.T) {
+			f := Cmd.Flags().Lookup(flag)
+			require.NotNil(t, f)
+			f.Changed = true
+			defer func() { f.Changed = false }()
+			assert.ErrorContains(t, Cmd.ValidateFlagGroups(), "none of the others can be")
+		})
+	}
+
+	Cmd.Flags().Lookup("auth-token-file").Changed = false
+	for _, flags := range [][]string{{"auth-token", "assertion"}, {"auth-token"}, {"assertion"}} {
+		for _, flag := range flags {
+			Cmd.Flags().Lookup(flag).Changed = true
+		}
+		assert.NoError(t, Cmd.ValidateFlagGroups())
+		for _, flag := range flags {
+			Cmd.Flags().Lookup(flag).Changed = false
+		}
+	}
 }
