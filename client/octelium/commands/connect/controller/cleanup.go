@@ -19,7 +19,11 @@ import (
 	"crypto/sha256"
 	stderrors "errors"
 	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/client/common/db"
@@ -29,6 +33,22 @@ import (
 )
 
 func ReconcileConnectionCleanup(dbC *db.DB, domain string) {
+	if dbC == nil || domain == "" {
+		return
+	}
+
+	getCleanupStore(dbC).reconcile(domain)
+}
+
+func ListConnectionCleanupDomains(dbC *db.DB) []string {
+	if dbC == nil {
+		return nil
+	}
+
+	return getCleanupStore(dbC).listDomains()
+}
+
+func reconcileConnectionCleanup(dbC *db.DB, domain string, isPrivileged bool) {
 	if dbC == nil || domain == "" {
 		return
 	}
@@ -47,6 +67,10 @@ func ReconcileConnectionCleanup(dbC *db.DB, domain string) {
 				zap.Int("pid", pid))
 			return
 		}
+	}
+
+	if isPrivileged {
+		sanitizeConnectionCleanup(cleanup, domain)
 	}
 
 	cleanup.Phase = cliconfigv1.ConnectionCleanup_CLEANING
@@ -81,8 +105,18 @@ func (c *Controller) ReconcileCleanup() {
 	}
 
 	zap.L().Debug("Reconciling the connection cleanup state after an incomplete close")
-	ReconcileConnectionCleanup(c.dbC, c.cleanupDomain())
+	if domain := c.cleanupDomain(); domain != "" {
+		c.getCleanupStore().reconcile(domain)
+	}
 	c.releaseResolvConfLock()
+}
+
+func (c *Controller) getCleanupStore() *cleanupStore {
+	if c.cleanupStore == nil {
+		c.cleanupStore = getCleanupStore(c.dbC)
+	}
+
+	return c.cleanupStore
 }
 
 func (c *Controller) cleanupDomain() string {
@@ -93,17 +127,18 @@ func (c *Controller) cleanupDomain() string {
 }
 
 func (c *Controller) prepareCleanup() {
-	if c.dbC == nil {
-		return
-	}
 	domain := c.cleanupDomain()
 	if domain == "" {
 		return
 	}
-	if cleanup, err := c.dbC.GetConnectionCleanup(domain); err == nil && cleanup != nil {
+	dbC := c.getCleanupStore().dbC
+	if dbC == nil {
+		return
+	}
+	if cleanup, err := dbC.GetConnectionCleanup(domain); err == nil && cleanup != nil {
 		zap.L().Warn("A previous connection cleanup state is still pending")
 		return
-	} else if err != nil && !c.dbC.ErrorIsNotFound(err) {
+	} else if err != nil && !dbC.ErrorIsNotFound(err) {
 		zap.L().Warn("Could not check the connection cleanup state", zap.Error(err))
 		return
 	}
@@ -116,18 +151,18 @@ func (c *Controller) prepareCleanup() {
 			"pid": strconv.Itoa(os.Getpid()),
 		},
 	}
-	if err := c.dbC.SetConnectionCleanup(domain, c.cleanup); err != nil {
+	if err := dbC.SetConnectionCleanup(domain, c.cleanup); err != nil {
 		zap.L().Warn("Could not persist the connection cleanup state", zap.Error(err))
 		c.cleanup = nil
 	}
 }
 
 func (c *Controller) updateCleanup(fn func(*cliconfigv1.ConnectionCleanup)) {
-	if c.cleanup == nil || c.dbC == nil {
+	if c.cleanup == nil || c.getCleanupStore().dbC == nil {
 		return
 	}
 	fn(c.cleanup)
-	if err := c.dbC.SetConnectionCleanup(c.cleanupDomain(), c.cleanup); err != nil {
+	if err := c.cleanupStore.dbC.SetConnectionCleanup(c.cleanupDomain(), c.cleanup); err != nil {
 		zap.L().Warn("Could not update the connection cleanup state", zap.Error(err))
 	}
 }
@@ -139,10 +174,10 @@ func (c *Controller) setCleanupPhase(phase cliconfigv1.ConnectionCleanup_Phase) 
 }
 
 func (c *Controller) deleteCleanup() {
-	if c.cleanup == nil || c.dbC == nil {
+	if c.cleanup == nil || c.getCleanupStore().dbC == nil {
 		return
 	}
-	if err := c.dbC.DeleteConnectionCleanup(c.cleanupDomain()); err != nil {
+	if err := c.cleanupStore.dbC.DeleteConnectionCleanup(c.cleanupDomain()); err != nil {
 		zap.L().Warn("Could not delete the connection cleanup state", zap.Error(err))
 		return
 	}
@@ -220,4 +255,76 @@ func reconcileSSHCleanup(cfg *cliconfigv1.ConnectionCleanup_SSH) error {
 		}
 	}
 	return retErr
+}
+
+func sanitizeConnectionCleanup(cleanup *cliconfigv1.ConnectionCleanup, domain string) {
+	if cfg := cleanup.GetDns().GetResolvConf(); cfg != nil {
+		if cfg.Path != resolvConfPath || (cfg.IsSymlink && cfg.LinkTarget == "") {
+			zap.L().Warn("Ignoring an invalid resolv.conf in the connection cleanup state",
+				zap.String("path", cfg.Path))
+			cleanup.Dns = nil
+		} else {
+			cfg.Mode = uint32(os.FileMode(cfg.Mode).Perm() &^ 0o022)
+		}
+	}
+
+	if cfg := cleanup.GetDns().GetSystemdResolved(); cfg != nil && !isCleanupDeviceName(cfg.DeviceName) {
+		zap.L().Warn("Ignoring an invalid systemd-resolved device in the connection cleanup state",
+			zap.String("device", cfg.DeviceName))
+		cleanup.Dns = nil
+	}
+
+	if cfg := cleanup.GetDns().GetMacos(); cfg != nil && cfg.ScutilKey != "" &&
+		!scutilCleanupKeyRegex.MatchString(cfg.ScutilKey) {
+		zap.L().Warn("Ignoring an invalid scutil key in the connection cleanup state",
+			zap.String("key", cfg.ScutilKey))
+		cfg.ScutilKey = ""
+	}
+
+	if cfg := cleanup.GetDns().GetWindows(); cfg != nil {
+		if rulePath, err := getNRPTRuleLocalPath(domain); err != nil ||
+			cfg.NrptRulePath != rulePath || cfg.NrptMarker != managedMarkerPrefix+domain {
+			zap.L().Warn("Ignoring an invalid NRPT rule in the connection cleanup state",
+				zap.String("path", cfg.NrptRulePath))
+			cleanup.Dns = nil
+		}
+	}
+
+	if cfg := cleanup.GetDevice(); cfg != nil && !isCleanupDeviceName(cfg.Name) {
+		zap.L().Warn("Ignoring an invalid device in the connection cleanup state",
+			zap.String("device", cfg.Name))
+		cleanup.Device = nil
+	}
+
+	if cfg := cleanup.GetSsh(); cfg != nil {
+		if cfg.Marker != managedMarkerPrefix+domain {
+			zap.L().Warn("Ignoring an invalid SSH marker in the connection cleanup state",
+				zap.String("marker", cfg.Marker))
+			cleanup.Ssh = nil
+		} else {
+			cfg.FilePaths = slices.DeleteFunc(cfg.FilePaths, func(filePath string) bool {
+				if isSSHCleanupPath(filePath) {
+					return false
+				}
+				zap.L().Warn("Ignoring an invalid SSH file in the connection cleanup state",
+					zap.String("filePath", filePath))
+				return true
+			})
+		}
+	}
+}
+
+var scutilCleanupKeyRegex = regexp.MustCompile(`^State:/Network/Service/octelium-[A-Za-z0-9-]+/DNS$`)
+
+func isCleanupDeviceName(name string) bool {
+	return strings.HasPrefix(name, "octelium")
+}
+
+func isSSHCleanupPath(filePath string) bool {
+	switch filepath.Base(filePath) {
+	case "known_hosts", "authorized_keys":
+		return filepath.IsAbs(filePath) && filepath.Base(filepath.Dir(filePath)) == ".ssh"
+	default:
+		return false
+	}
 }

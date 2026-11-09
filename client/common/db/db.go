@@ -97,6 +97,14 @@ func (d *DB) Migrate() error {
 	return d.db.migrate(context.Background())
 }
 
+func (d *DB) Path() string {
+	if ret, ok := d.db.(*fsDB); ok {
+		return ret.dbPath
+	}
+
+	return ""
+}
+
 func (d *DB) Close() error {
 	return d.db.close(context.Background())
 }

@@ -160,6 +160,26 @@ func TestDBOpenDefault(t *testing.T) {
 	}
 }
 
+func TestDBPath(t *testing.T) {
+	dir := t.TempDir()
+	d, err := Open(dir)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Clean(filepath.Join(dir, "octelium.db")), filepath.Clean(d.Path()))
+	assert.Equal(t, filepath.Clean(dir), filepath.Dir(d.Path()))
+
+	home := t.TempDir()
+	t.Setenv("OCTELIUM_HOME", home)
+	d, err = OpenDefault()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Clean(home), filepath.Dir(d.Path()))
+
+	for _, path := range []string{"mem", "memory"} {
+		d, err := Open(path)
+		require.NoError(t, err)
+		assert.Empty(t, d.Path())
+	}
+}
+
 func TestDBSessionTokenInputIsolation(t *testing.T) {
 	t.Setenv("OCTELIUM_ACCESS_TOKEN", "")
 	for _, path := range []string{"mem", t.TempDir()} {

@@ -252,11 +252,7 @@ func (p *principal) loadDomains() error {
 		p.domains[domain] = d
 	}
 
-	for domain, itm := range domainMap {
-		if itm.GetConnectionCleanup() == nil {
-			continue
-		}
-
+	for _, domain := range controller.ListConnectionCleanupDomains(p.dbC) {
 		zap.L().Debug("Reconciling the connection cleanup state of a previous process",
 			zap.String("principal", p.id), zap.String("domain", domain))
 		controller.ReconcileConnectionCleanup(p.dbC, domain)

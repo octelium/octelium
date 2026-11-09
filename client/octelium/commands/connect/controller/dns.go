@@ -380,6 +380,17 @@ func getNRPTRuleKey(clusterDomain string) (string, error) {
 	return fmt.Sprintf("{%x-%x-%x-%x-%x}", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16]), nil
 }
 
+const nrptLocalBase = `SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig`
+
+func getNRPTRuleLocalPath(clusterDomain string) (string, error) {
+	ruleKey, err := getNRPTRuleKey(clusterDomain)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf(`%s\%s`, nrptLocalBase, ruleKey), nil
+}
+
 const (
 	resolvConfPath             = "/etc/resolv.conf"
 	resolvConfMaxNameservers   = 3

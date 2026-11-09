@@ -16,7 +16,6 @@ package controller
 
 import (
 	stderrors "errors"
-	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -181,7 +180,6 @@ func (c *Controller) doUnsetDNS() error {
 }
 
 const (
-	nrptLocalBase  = `SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig`
 	nrptGPBase     = `SOFTWARE\Policies\Microsoft\Windows NT\DNSClient\DnsPolicyConfig`
 	tcpipParamsKey = `SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`
 
@@ -211,12 +209,7 @@ func (c *Controller) getNRPTRulePath() (string, error) {
 		return "", errors.Errorf("The Connection does not have Cluster info")
 	}
 
-	ruleKey, err := getNRPTRuleKey(c.c.Info.Cluster.Domain)
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf(`%s\%s`, nrptLocalBase, ruleKey), nil
+	return getNRPTRuleLocalPath(c.c.Info.Cluster.Domain)
 }
 
 func (c *Controller) setNRPT() (retErr error) {

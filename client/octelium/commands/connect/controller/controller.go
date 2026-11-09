@@ -85,6 +85,7 @@ type Controller struct {
 	localDNSSrv  *dnssrv.Server
 	dbC          *db.DB
 	cleanup      *cliconfigv1.ConnectionCleanup
+	cleanupStore *cleanupStore
 
 	localDNSRetryCancel context.CancelFunc
 	localDNSRetryDoneCh chan struct{}
