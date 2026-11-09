@@ -28,11 +28,18 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/octelium/octelium/client/octelium/internal/userexec"
 	"github.com/pkg/errors"
 	"github.com/pkg/sftp"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
+
+const sftpServerCmdName = "sftp-server"
+
+func init() {
+	userexec.Register(sftpServerCmdName, runSFTPServerCmd)
+}
 
 type ptyReqParams struct {
 	Env   string
@@ -488,15 +495,12 @@ func (c *dctx) handleSubsystemSFTP(ctx context.Context, sessCtx *sessCtx, req *s
 		root = c.usr.HomeDir
 	}
 
-	serverOpts := []sftp.ServerOption{
-		sftp.WithServerWorkingDirectory(root),
+	if !c.sameUser {
+		return c.handleSubsystemSFTPCmd(ctx, sessCtx, req, root)
 	}
 
-	if !c.sameUser {
-		if os.Getenv("OCTELIUM_ESSH_SFTP_USER") != "true" {
-			return errors.Errorf(
-				`Cannot run SFTP while running as root and having --essh-user unless when setting "OCTELIUM_ESSH_SFTP_USER" env var to "true"`)
-		}
+	serverOpts := []sftp.ServerOption{
+		sftp.WithServerWorkingDirectory(root),
 	}
 
 	srv, err := sftp.NewServer(ch, serverOpts...)
@@ -531,6 +535,72 @@ func (c *dctx) handleSubsystemSFTP(ctx context.Context, sessCtx *sessCtx, req *s
 	}()
 
 	return nil
+}
+
+func (c *dctx) handleSubsystemSFTPCmd(ctx context.Context, sessCtx *sessCtx, req *ssh.Request, root string) error {
+	ch := sessCtx.ch
+
+	credential, err := getSysProcCredential(c.usr)
+	if err != nil {
+		return err
+	}
+
+	cmd, err := userexec.Command(ctx, credential, sftpServerCmdName, root)
+	if err != nil {
+		return err
+	}
+
+	cmd.Stdout = ch
+	cmd.Stderr = ch.Stderr()
+
+	inPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		inPipe.Close()
+		return errors.Errorf("Could not start the SFTP server as the user %s: %+v", c.usr.Username, err)
+	}
+	if err := replySuccess(req); err != nil {
+		cmd.Process.Kill()
+		_ = cmd.Wait()
+		inPipe.Close()
+		return err
+	}
+
+	go func() {
+		io.Copy(inPipe, ch)
+		inPipe.Close()
+	}()
+
+	sessCtx.wg.Add(1)
+	go func() {
+		defer sessCtx.wg.Done()
+		defer ch.Close()
+
+		if err := cmd.Wait(); err != nil {
+			zap.L().Debug("SFTP server command exited", zap.Error(err))
+		}
+	}()
+
+	return nil
+}
+
+func runSFTPServerCmd(args []string) error {
+	if len(args) != 1 || args[0] == "" {
+		return errors.Errorf("Invalid SFTP server working directory")
+	}
+
+	srv, err := sftp.NewServer(struct {
+		io.Reader
+		io.WriteCloser
+	}{os.Stdin, os.Stdout}, sftp.WithServerWorkingDirectory(args[0]))
+	if err != nil {
+		return err
+	}
+
+	return srv.Serve()
 }
 
 func parsePTYReq(req *ssh.Request) (*ptyReqParams, error) {

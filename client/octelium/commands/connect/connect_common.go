@@ -113,7 +113,7 @@ func (c *Connector) sendInitializeRequest(streamC userv1.MainService_ConnectClie
 
 					return nil
 				}(),
-				ESSHEnable: c.opts.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true",
+				ESSHEnable: c.isESSH(),
 				ESSHPort: func() int32 {
 					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESSH_PORT"), 10, 32); err == nil {
 						return int32(port)
@@ -252,17 +252,8 @@ func (c *Connector) getConnectionConfig(ctx context.Context,
 				ProxyMode: cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE,
 			},
 			ESSH: &cliconfigv1.Connection_Preferences_ESSH{
-				IsEnabled: c.opts.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true",
-				User: func() string {
-					if c.opts.ESSHUser != "" {
-						return c.opts.ESSHUser
-					}
-					if val := os.Getenv("OCTELIUM_ESSH_USER"); val != "" {
-						return val
-					}
-
-					return ""
-				}(),
+				IsEnabled: c.isESSH(),
+				User:      c.getESSHUser(),
 				Port: func() int32 {
 					if port, err := strconv.ParseInt(os.Getenv("OCTELIUM_ESSH_PORT"), 10, 32); err == nil {
 						return int32(port)

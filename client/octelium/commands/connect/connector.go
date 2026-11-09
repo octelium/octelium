@@ -18,7 +18,9 @@ import (
 	"os"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
+	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type Opts struct {
@@ -101,4 +103,36 @@ func (c *Connector) isQUICV0() bool {
 
 func (c *Connector) isFullDNS() bool {
 	return c.opts.UseFullDNS || os.Getenv("OCTELIUM_FULL_DNS") == "true"
+}
+
+func (c *Connector) isESSH() bool {
+	return c.opts.UseESSH || os.Getenv("OCTELIUM_ESSH") == "true"
+}
+
+func (c *Connector) getESSHUser() string {
+	if c.opts.ESSHUser != "" {
+		return c.opts.ESSHUser
+	}
+	if val := os.Getenv("OCTELIUM_ESSH_USER"); val != "" {
+		return val
+	}
+	if !c.isESSH() {
+		return ""
+	}
+
+	return getESSHInvokingUser()
+}
+
+func getESSHInvokingUser() string {
+	usr, err := vhome.GetInvokingUser()
+	if err != nil {
+		zap.L().Warn("Could not find the OS user that invoked Octelium. eSSH sessions will run as root",
+			zap.Error(err))
+		return ""
+	}
+	if usr == nil {
+		return ""
+	}
+
+	return usr.Username
 }

@@ -17,6 +17,8 @@ package connect
 import (
 	"fmt"
 	"os"
+	"os/user"
+	"strconv"
 	"strings"
 
 	"github.com/octelium/octelium/client/common/authenticator"
@@ -25,6 +27,7 @@ import (
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 const ExitCodeRejected = 3
@@ -120,7 +123,8 @@ in the format "service:host:port" (e.g. "svc1:0.0.0.0:8000", "svc1.ns1:0.0.0.0:8
 		"Run in the background")
 
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseESSH, "essh", false, "Enable serving SSH Services via embedded SSH")
-	Cmd.PersistentFlags().StringVar(&cmdArgs.ESSHUser, "essh-user", "", "Force a host user to be used for eSSH sessions. This only works if Octelium is running as root")
+	Cmd.PersistentFlags().StringVar(&cmdArgs.ESSHUser, "essh-user", "", `Force a host user to be used for eSSH sessions. This only works if Octelium is running as root.
+By default, eSSH sessions run as the user who ran Octelium via sudo, pkexec or --detach, otherwise as the user running Octelium`)
 	Cmd.PersistentFlags().StringVar(&cmdArgs.ImplementationMode, "implementation", "",
 		`Force implementation mode. Current values are "kernel" which is the kernel mode and currently works for WireGuard on Linux,
 "tun" which is the TUN device mode and "gvisor" which is a pure userspace implementation. By default, Octelium would try
@@ -272,6 +276,10 @@ func runDetached(cmd *cobra.Command, domain string) error {
 		args = append(args, fmt.Sprintf("--%s=%s", f.Name, f.Value.String()))
 	})
 
+	if val := getDetachedESSHUser(&cmdArgs); val != "" {
+		args = append(args, fmt.Sprintf("--essh-user=%s", val))
+	}
+
 	if cmd.Flags() != nil && cmd.Flags().Lookup("homedir") != nil && cmd.Flags().Lookup("homedir").Value.String() != "" {
 		args = append(args, fmt.Sprintf("--homedir=%s", cmd.Flags().Lookup("homedir").Value.String()))
 	} else {
@@ -289,6 +297,26 @@ func runDetached(cmd *cobra.Command, domain string) error {
 	cliutils.LineNotify("Octelium has started running in detached mode.\n")
 
 	return nil
+}
+
+func getDetachedESSHUser(a *args) string {
+	if cliutils.IsWindows() || a.ESSHUser != "" || os.Getenv("OCTELIUM_ESSH_USER") != "" {
+		return ""
+	}
+	if !a.UseESSH && os.Getenv("OCTELIUM_ESSH") != "true" {
+		return ""
+	}
+	if os.Getuid() == 0 {
+		return getESSHInvokingUser()
+	}
+
+	usr, err := user.LookupId(strconv.Itoa(os.Getuid()))
+	if err != nil {
+		zap.L().Warn("Could not find the current OS user. eSSH sessions will run as root", zap.Error(err))
+		return ""
+	}
+
+	return usr.Username
 }
 
 func getDetachedModeEnvVars() map[string]string {

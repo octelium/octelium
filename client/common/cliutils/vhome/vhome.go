@@ -68,20 +68,27 @@ func GetOcteliumUserHome() (string, error) {
 		return os.UserHomeDir()
 	}
 
-	if usr, err := func() (*user.User, error) {
-		if uid := os.Getenv("SUDO_UID"); uid != "" {
-			return user.LookupId(uid)
-		}
-		if u := os.Getenv("SUDO_USER"); u != "" {
-			return user.Lookup(u)
-		}
-		if uid := os.Getenv("PKEXEC_UID"); uid != "" {
-			return user.LookupId(uid)
-		}
-		return nil, errors.Errorf("Could not find initial user")
-	}(); err == nil {
+	if usr, err := GetInvokingUser(); err == nil && usr != nil {
 		return usr.HomeDir, nil
 	}
 
 	return os.UserHomeDir()
+}
+
+func GetInvokingUser() (*user.User, error) {
+	if os.Getuid() != 0 {
+		return nil, nil
+	}
+
+	if uid := os.Getenv("SUDO_UID"); uid != "" {
+		return user.LookupId(uid)
+	}
+	if u := os.Getenv("SUDO_USER"); u != "" {
+		return user.Lookup(u)
+	}
+	if uid := os.Getenv("PKEXEC_UID"); uid != "" {
+		return user.LookupId(uid)
+	}
+
+	return nil, nil
 }

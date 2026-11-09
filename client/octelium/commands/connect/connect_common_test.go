@@ -20,8 +20,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -707,6 +709,75 @@ func TestConnectEnvironmentFeatureFlags(t *testing.T) {
 			assert.Equal(t, value == "true", cfg.Preferences.FullDNS)
 		})
 	}
+}
+
+func clearTestInvokingUserEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"SUDO_UID", "SUDO_USER", "PKEXEC_UID"} {
+		t.Setenv(key, "")
+	}
+}
+
+func getTestRootUsername(t *testing.T) string {
+	t.Helper()
+	if os.Getuid() != 0 {
+		return ""
+	}
+	usr, err := user.LookupId("0")
+	require.NoError(t, err)
+	return usr.Username
+}
+
+func TestGetESSHUser(t *testing.T) {
+	clearTestConnectEnv(t)
+	clearTestInvokingUserEnv(t)
+
+	c, err := NewConnector("example.com", &Opts{UseESSH: true, ESSHUser: "option-user"})
+	require.NoError(t, err)
+	assert.Equal(t, "option-user", c.getESSHUser())
+	t.Setenv("OCTELIUM_ESSH_USER", "environment-user")
+	assert.Equal(t, "option-user", c.getESSHUser())
+	c.opts.ESSHUser = ""
+	assert.Equal(t, "environment-user", c.getESSHUser())
+	t.Setenv("OCTELIUM_ESSH_USER", "")
+	assert.Equal(t, "", c.getESSHUser())
+
+	t.Setenv("SUDO_UID", "0")
+	assert.Equal(t, getTestRootUsername(t), c.getESSHUser())
+	c.opts.UseESSH = false
+	assert.Equal(t, "", c.getESSHUser())
+	t.Setenv("OCTELIUM_ESSH", "true")
+	assert.Equal(t, getTestRootUsername(t), c.getESSHUser())
+
+	t.Setenv("SUDO_UID", "octelium-invalid-user-id")
+	assert.Equal(t, "", c.getESSHUser())
+}
+
+func TestGetDetachedESSHUser(t *testing.T) {
+	clearTestConnectEnv(t)
+	clearTestInvokingUserEnv(t)
+
+	assert.Equal(t, "", getDetachedESSHUser(&args{}))
+	assert.Equal(t, "", getDetachedESSHUser(&args{UseESSH: true, ESSHUser: "option-user"}))
+	t.Setenv("OCTELIUM_ESSH_USER", "environment-user")
+	assert.Equal(t, "", getDetachedESSHUser(&args{UseESSH: true}))
+	t.Setenv("OCTELIUM_ESSH_USER", "")
+
+	expected := ""
+	switch {
+	case runtime.GOOS == "windows":
+	case os.Getuid() == 0:
+		assert.Equal(t, "", getDetachedESSHUser(&args{UseESSH: true}))
+		t.Setenv("SUDO_UID", "0")
+		expected = getTestRootUsername(t)
+	default:
+		usr, err := user.LookupId(strconv.Itoa(os.Getuid()))
+		require.NoError(t, err)
+		expected = usr.Username
+	}
+	assert.Equal(t, expected, getDetachedESSHUser(&args{UseESSH: true}))
+	t.Setenv("OCTELIUM_ESSH", "true")
+	assert.Equal(t, expected, getDetachedESSHUser(&args{}))
 }
 
 func TestPublishedServicesGRPCLookup(t *testing.T) {

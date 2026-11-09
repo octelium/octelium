@@ -26,6 +26,7 @@ import (
 	"crypto/rand"
 	"io"
 	"net"
+	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -36,6 +37,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
+	"github.com/octelium/octelium/client/octelium/internal/userexec"
+	"github.com/pkg/sftp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -72,10 +75,21 @@ func newTestOpts(t *testing.T) (*Opts, ssh.Signer) {
 	}, ca
 }
 
+func TestMain(m *testing.M) {
+	userexec.Init()
+	os.Exit(m.Run())
+}
+
 func newTestServer(t *testing.T) (*Server, *ssh.Client) {
 	t.Helper()
 
 	opts, caSigner := newTestOpts(t)
+
+	return newTestServerWithOpts(t, opts, caSigner)
+}
+
+func newTestServerWithOpts(t *testing.T, opts *Opts, caSigner ssh.Signer) (*Server, *ssh.Client) {
+	t.Helper()
 
 	srv, err := NewServer(opts)
 	require.NoError(t, err)
@@ -224,6 +238,131 @@ func TestSFTPSubsystemReply(t *testing.T) {
 	ok, err = ch.SendRequest("unsupported", true, nil)
 	require.NoError(t, err)
 	assert.False(t, ok)
+}
+
+func TestSFTP(t *testing.T) {
+	srv, sshC := newTestServer(t)
+
+	c, err := sftp.NewClient(sshC)
+	require.NoError(t, err)
+	defer c.Close()
+
+	wd, err := c.Getwd()
+	require.NoError(t, err)
+	assert.Equal(t, srv.usr.HomeDir, wd)
+
+	filePath := filepath.Join(t.TempDir(), "file")
+	f, err := c.Create(filePath)
+	require.NoError(t, err)
+	_, err = f.Write([]byte("octelium"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	content, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	assert.Equal(t, "octelium", string(content))
+}
+
+func TestSFTPAsOtherUser(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("This test requires root to run SFTP as another OS user")
+	}
+
+	usr, err := user.Lookup("nobody")
+	if err != nil {
+		t.Skip("This test requires the nobody OS user")
+	}
+	uid, err := strconv.ParseUint(usr.Uid, 10, 32)
+	if err != nil {
+		t.Skip("This test requires a numeric uid for the nobody OS user")
+	}
+	gid, err := strconv.ParseUint(usr.Gid, 10, 32)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(filepath.Dir(dir), 0755))
+	require.NoError(t, os.Chmod(dir, 0755))
+	ownedDir := filepath.Join(dir, "owned")
+	require.NoError(t, os.Mkdir(ownedDir, 0700))
+	require.NoError(t, os.Chown(ownedDir, int(uid), int(gid)))
+	secretPath := filepath.Join(dir, "secret")
+	require.NoError(t, os.WriteFile(secretPath, []byte("secret"), 0600))
+
+	opts, caSigner := newTestOpts(t)
+	opts.User = usr.Username
+	srv, sshC := newTestServerWithOpts(t, opts, caSigner)
+	require.False(t, srv.sameUser)
+
+	c, err := sftp.NewClient(sshC)
+	require.NoError(t, err)
+	defer c.Close()
+
+	wd, err := c.Getwd()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Clean(usr.HomeDir), wd)
+
+	filePath := filepath.Join(ownedDir, "file")
+	f, err := c.Create(filePath)
+	require.NoError(t, err)
+	_, err = f.Write([]byte("octelium"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	fi, err := os.Stat(filePath)
+	require.NoError(t, err)
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	require.True(t, ok)
+	assert.Equal(t, uint32(uid), st.Uid)
+	assert.Equal(t, uint32(gid), st.Gid)
+
+	_, err = c.Open(secretPath)
+	assert.ErrorIs(t, err, os.ErrPermission)
+	_, err = c.Create(filepath.Join(dir, "new"))
+	assert.ErrorIs(t, err, os.ErrPermission)
+	assert.ErrorIs(t, c.Remove(secretPath), os.ErrPermission)
+	assert.NoFileExists(t, filepath.Join(dir, "new"))
+
+	content, err := os.ReadFile(secretPath)
+	require.NoError(t, err)
+	assert.Equal(t, "secret", string(content))
+}
+
+func TestSFTPServerCmd(t *testing.T) {
+	assert.Error(t, runSFTPServerCmd(nil))
+	assert.Error(t, runSFTPServerCmd([]string{""}))
+	assert.Error(t, runSFTPServerCmd([]string{"/", "/"}))
+
+	dir := t.TempDir()
+	cmd, err := userexec.Command(t.Context(), &syscall.Credential{
+		Uid:         uint32(os.Getuid()),
+		Gid:         uint32(os.Getgid()),
+		NoSetGroups: true,
+	}, sftpServerCmdName, dir)
+	require.NoError(t, err)
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+
+	c, err := sftp.NewClientPipe(stdout, stdin)
+	require.NoError(t, err)
+
+	wd, err := c.Getwd()
+	require.NoError(t, err)
+	assert.Equal(t, dir, wd)
+
+	f, err := c.Create("file")
+	require.NoError(t, err)
+	_, err = f.Write([]byte("octelium"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	require.NoError(t, c.Close())
+	require.NoError(t, cmd.Wait())
+
+	content, err := os.ReadFile(filepath.Join(dir, "file"))
+	require.NoError(t, err)
+	assert.Equal(t, "octelium", string(content))
 }
 
 func TestServerLifecycle(t *testing.T) {

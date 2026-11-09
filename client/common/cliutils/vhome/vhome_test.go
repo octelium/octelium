@@ -16,6 +16,7 @@ package vhome
 
 import (
 	"os"
+	"os/user"
 	"path"
 	"runtime"
 	"testing"
@@ -106,4 +107,47 @@ func TestGetOcteliumUserHome(t *testing.T) {
 	ret, err = GetOcteliumUserHome()
 	require.NoError(t, err)
 	assert.Equal(t, want, ret)
+}
+
+func TestGetInvokingUser(t *testing.T) {
+	for _, key := range []string{"SUDO_UID", "SUDO_USER", "PKEXEC_UID"} {
+		t.Setenv(key, "")
+	}
+	usr, err := GetInvokingUser()
+	require.NoError(t, err)
+	assert.Nil(t, usr)
+
+	if os.Getuid() != 0 {
+		for _, key := range []string{"SUDO_UID", "SUDO_USER", "PKEXEC_UID"} {
+			t.Setenv(key, "0")
+		}
+		usr, err = GetInvokingUser()
+		require.NoError(t, err)
+		assert.Nil(t, usr)
+		return
+	}
+
+	root, err := user.LookupId("0")
+	require.NoError(t, err)
+
+	t.Setenv("PKEXEC_UID", "0")
+	usr, err = GetInvokingUser()
+	require.NoError(t, err)
+	assert.Equal(t, root.Username, usr.Username)
+
+	t.Setenv("SUDO_USER", root.Username)
+	t.Setenv("PKEXEC_UID", "octelium-invalid-user-id")
+	usr, err = GetInvokingUser()
+	require.NoError(t, err)
+	assert.Equal(t, root.Uid, usr.Uid)
+
+	t.Setenv("SUDO_UID", "0")
+	t.Setenv("SUDO_USER", "octelium-invalid-user")
+	usr, err = GetInvokingUser()
+	require.NoError(t, err)
+	assert.Equal(t, root.Uid, usr.Uid)
+
+	t.Setenv("SUDO_UID", "octelium-invalid-user-id")
+	_, err = GetInvokingUser()
+	assert.Error(t, err)
 }
