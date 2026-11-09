@@ -13,7 +13,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/go-attestation v0.6.4
 	github.com/google/go-github/v93 v93.0.0
-	github.com/google/go-tpm-tools v0.4.7
+	github.com/google/go-tpm-tools v0.4.11
 	github.com/google/uuid v1.6.0
 	github.com/gosimple/slug v1.15.0
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25
