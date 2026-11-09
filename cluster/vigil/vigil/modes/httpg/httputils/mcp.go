@@ -20,12 +20,12 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"net/http"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/go-json-experiment/json/jsontext"
 	"github.com/pkg/errors"
 )
 

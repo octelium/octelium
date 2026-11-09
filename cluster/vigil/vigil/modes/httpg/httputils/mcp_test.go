@@ -288,6 +288,7 @@ func TestParseMCPRequestInvalidMembers(t *testing.T) {
 		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","name":"get_weather"}}`, ``},
 		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","name":"get_weather"}}`, ``},
 		{`{"jsonrpc":"2.0","id":1,"method":"tools/list","method":"tools/call"}`, ``},
+		{`{"jsonrpc":"2.0","id":1,"method":"tools/list","\u006dethod":"tools/call"}`, ``},
 		{`{"jsonrpc":"2.0","id":1,"id":2,"method":"tools/list"}`, ``},
 		{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":1,"a":2}}}`, ``},
 		{"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"add\xff\"}}", ``},

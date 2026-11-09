@@ -231,6 +231,7 @@ func TestFunctionJSONParseDuplicateNames(t *testing.T) {
 		require.Nil(t, err)
 		for _, arg := range []string{
 			`{"role":"user","role":"admin"}`,
+			`{"role":"user","\u0072ole":"admin"}`,
 			`{"user":{"role":"user","role":"admin"}}`,
 			`{"users":[{"role":"user","role":"admin"}]}`,
 		} {
@@ -245,6 +246,7 @@ func TestFunctionJSONParseDuplicateNames(t *testing.T) {
 			{`{"a":{"role":"user"},"b":{"role":"admin"}}`, map[string]any{
 				"a": map[string]any{"role": "user"}, "b": map[string]any{"role": "admin"}}},
 			{"{\"name\":\"caf\xe9\"}", map[string]any{"name": "caf�"}},
+			{`{"name":"\ud800"}`, map[string]any{"name": "�"}},
 			{` {"name":"value"} `, map[string]any{"name": "value"}},
 		} {
 			out, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": tc.arg})

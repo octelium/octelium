@@ -18,6 +18,7 @@ package cellib
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"net"
 	"reflect"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"cel.dev/cel-go/common/types/ref"
 	"cel.dev/cel-go/common/types/traits"
 	"github.com/asaskevich/govalidator"
-	"github.com/go-json-experiment/json/jsontext"
 	"github.com/pkg/errors"
 )
 

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"hash/crc32"
 	"net/http"
 	"net/url"
@@ -27,7 +28,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/go-json-experiment/json/jsontext"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/pkg/errors"
 )

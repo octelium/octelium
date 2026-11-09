@@ -295,6 +295,7 @@ func TestBodyReadError(t *testing.T) {
 func TestJSONBodyMalformed(t *testing.T) {
 	for _, body := range []string{`{`, `{"key":}`, `[]`, `true`, `"text"`, `1`, `{} {}`, "{\"key\":\"\x00\"}",
 		`{"role":"user","role":"admin"}`, `{"user":{"role":"user","role":"admin"}}`,
+		`{"role":"user","\u0072ole":"admin"}`,
 		`{"users":[{"role":"user","role":"admin"}]}`} {
 		t.Run(body, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
