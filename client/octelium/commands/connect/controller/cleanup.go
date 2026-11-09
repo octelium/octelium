@@ -250,7 +250,11 @@ func reconcileSSHCleanup(cfg *cliconfigv1.ConnectionCleanup_SSH) error {
 
 	var retErr error
 	for _, filePath := range cfg.FilePaths {
-		if err := removeManagedLines(filePath, cfg.Marker); err != nil {
+		if err := doSSHConfigOp(&sshConfigOp{
+			FilePath: filePath,
+			Marker:   cfg.Marker,
+			Remove:   true,
+		}); err != nil {
 			retErr = stderrors.Join(retErr, err)
 		}
 	}

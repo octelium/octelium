@@ -18,14 +18,22 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/octelium/internal/userexec"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	userexec.Init()
+	os.Exit(m.Run())
+}
 
 const (
 	testCAKey      = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB6mZ0Ck0dPl0hLQ1nLnLnQ0Q1lQ0lQ0lQ0lQ0lQ0lQ0"
@@ -281,4 +289,51 @@ func TestIsManagedLine(t *testing.T) {
 		marker))
 	assert.False(t, isManagedLine(
 		fmt.Sprintf("%s %s trailing", testAuthorizedKeyLine(testCAKey), marker), marker))
+}
+
+func TestRunSSHConfigCmd(t *testing.T) {
+	marker := "octelium-managed:example.com"
+	sshDir := filepath.Join(t.TempDir(), ".ssh")
+	require.NoError(t, os.Mkdir(sshDir, 0700))
+	knownHostsPath := filepath.Join(sshDir, "known_hosts")
+	line := testKnownHostLine(testCAKey)
+
+	assert.NoError(t, runSSHConfigCmd(strings.NewReader(
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"lines":[%q]}`, knownHostsPath, marker, line))))
+	assert.Equal(t, []string{fmt.Sprintf("%s %s", line, marker)}, readLines(t, knownHostsPath))
+
+	assert.NoError(t, runSSHConfigCmd(strings.NewReader(
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"remove":true}`, knownHostsPath, marker))))
+	assert.Empty(t, readLines(t, knownHostsPath))
+
+	for _, req := range []string{
+		"",
+		"{",
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"lines":[%q]}`, "known_hosts", marker, line),
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"lines":[%q]}`, filepath.Join(sshDir, "config"), marker, line),
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"lines":[%q]}`, filepath.Join(t.TempDir(), "known_hosts"), marker, line),
+		fmt.Sprintf(`{"filePath":%q,"lines":[%q]}`, knownHostsPath, line),
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"lines":[%q]}`, knownHostsPath, "example.com", line),
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"lines":[%q]}`, knownHostsPath, marker+" x", line),
+		fmt.Sprintf(`{"filePath":%q,"marker":%q,"lines":[%q]}`, knownHostsPath, marker+"\n"+line, line),
+	} {
+		assert.Error(t, runSSHConfigCmd(strings.NewReader(req)), req)
+	}
+	assert.Empty(t, readLines(t, knownHostsPath))
+	_, err := os.Stat(filepath.Join(sshDir, "config"))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestDoSSHConfigOpWithoutSSHDir(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "missing", ".ssh", "known_hosts")
+	marker := "octelium-managed:example.com"
+
+	assert.NoError(t, doSSHConfigOp(&sshConfigOp{FilePath: filePath, Marker: marker, Remove: true}))
+	assert.Error(t, doSSHConfigOp(&sshConfigOp{
+		FilePath: filePath,
+		Marker:   marker,
+		Lines:    []string{testKnownHostLine(testCAKey)},
+	}))
+	_, err := os.Stat(filepath.Dir(filePath))
+	assert.True(t, os.IsNotExist(err))
 }

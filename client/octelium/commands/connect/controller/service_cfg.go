@@ -17,14 +17,17 @@ package controller
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
+	"github.com/octelium/octelium/client/octelium/internal/userexec"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -32,6 +35,48 @@ import (
 const managedMarkerPrefix = "octelium-managed:"
 
 const sshConfigLockName = "sshconfig.lock"
+
+const sshConfigCmdName = "ssh-config"
+
+const sshConfigCmdMaxInput = 1024 * 1024
+
+func init() {
+	userexec.Register(sshConfigCmdName, func(args []string) error {
+		return runSSHConfigCmd(os.Stdin)
+	})
+}
+
+type sshConfigOp struct {
+	FilePath string   `json:"filePath"`
+	Marker   string   `json:"marker"`
+	Lines    []string `json:"lines,omitempty"`
+	Remove   bool     `json:"remove,omitempty"`
+}
+
+func (o *sshConfigOp) run() error {
+	if o.Remove {
+		return removeManagedLines(o.FilePath, o.Marker)
+	}
+
+	return addManagedLines(o.FilePath, o.Marker, o.Lines)
+}
+
+func runSSHConfigCmd(r io.Reader) error {
+	op := &sshConfigOp{}
+	if err := json.NewDecoder(io.LimitReader(r, sshConfigCmdMaxInput)).Decode(op); err != nil {
+		return err
+	}
+
+	if !isSSHCleanupPath(op.FilePath) {
+		return errors.Errorf("Invalid SSH config file: %q", op.FilePath)
+	}
+
+	if !strings.HasPrefix(op.Marker, managedMarkerPrefix) || strings.ContainsAny(op.Marker, " \t\r\n") {
+		return errors.Errorf("Invalid SSH config marker: %q", op.Marker)
+	}
+
+	return op.run()
+}
 
 func (c *Controller) setServiceConfigs() error {
 	for _, svcCfg := range c.c.Connection.ServiceConfigs {
@@ -89,12 +134,20 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 	knownHostsPath := filepath.Join(sshDir, "known_hosts")
 	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
 	c.setCleanupSSH(marker, []string{knownHostsPath, authorizedKeysPath})
-	if err := addManagedLines(knownHostsPath, sshDir, marker, svcCfg.KnownHosts); err != nil {
+	if err := doSSHConfigOp(&sshConfigOp{
+		FilePath: knownHostsPath,
+		Marker:   marker,
+		Lines:    svcCfg.KnownHosts,
+	}); err != nil {
 		zap.L().Warn("Could not set the Cluster CA in the known_hosts file",
 			zap.String("filePath", knownHostsPath), zap.Error(err))
 	}
 
-	if err := addManagedLines(authorizedKeysPath, sshDir, marker, svcCfg.AuthorizedKeys); err != nil {
+	if err := doSSHConfigOp(&sshConfigOp{
+		FilePath: authorizedKeysPath,
+		Marker:   marker,
+		Lines:    svcCfg.AuthorizedKeys,
+	}); err != nil {
 		zap.L().Warn("Could not set the Cluster CA in the authorized keys file",
 			zap.String("filePath", authorizedKeysPath), zap.Error(err))
 	}
@@ -127,7 +180,11 @@ func (c *Controller) unsetServiceConfigSSH() error {
 		filepath.Join(sshDir, "known_hosts"),
 		filepath.Join(sshDir, "authorized_keys"),
 	} {
-		if err := removeManagedLines(filePath, marker); err != nil {
+		if err := doSSHConfigOp(&sshConfigOp{
+			FilePath: filePath,
+			Marker:   marker,
+			Remove:   true,
+		}); err != nil {
 			zap.L().Debug("Could not remove the Cluster CA",
 				zap.String("filePath", filePath), zap.Error(err))
 			retErr = stderrors.Join(retErr, err)
@@ -173,7 +230,7 @@ func isManagedLine(line, marker string) bool {
 	return strings.HasSuffix(strings.TrimRight(line, " \t\r"), fmt.Sprintf(" %s", marker))
 }
 
-func addManagedLines(filePath, sshDir, marker string, lines []string) error {
+func addManagedLines(filePath, marker string, lines []string) error {
 	var entries []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -195,7 +252,6 @@ func addManagedLines(filePath, sshDir, marker string, lines []string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	fileExisted := err == nil
 
 	existing := make(map[string]struct{})
 	scanner := bufio.NewScanner(bytes.NewReader(content))
@@ -246,20 +302,7 @@ func addManagedLines(filePath, sshDir, marker string, lines []string) error {
 		return err
 	}
 
-	if err := f.Close(); err != nil {
-		return err
-	}
-
-	if !fileExisted {
-		if fi, err := os.Stat(sshDir); err == nil {
-			if err := setFileOwner(filePath, fi); err != nil {
-				zap.L().Debug("Could not set the SSH config file owner",
-					zap.String("filePath", filePath), zap.Error(err))
-			}
-		}
-	}
-
-	return nil
+	return f.Close()
 }
 
 func removeManagedLines(filePath, marker string) error {

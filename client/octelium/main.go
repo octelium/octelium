@@ -23,6 +23,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands"
+	"github.com/octelium/octelium/client/octelium/internal/userexec"
 	"github.com/spf13/cobra"
 )
 
@@ -32,6 +33,8 @@ func init() {
 }
 
 func main() {
+	userexec.Init()
+
 	ctx, cancelFn := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancelFn()
 

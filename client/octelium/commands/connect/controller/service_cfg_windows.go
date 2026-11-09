@@ -19,3 +19,7 @@ import "os"
 func setFileOwner(filePath string, src os.FileInfo) error {
 	return nil
 }
+
+func doSSHConfigOp(op *sshConfigOp) error {
+	return op.run()
+}
