@@ -273,7 +273,7 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		return retErrStr("FIDO possible cloned Authenticator")
 	}
 
-	if !cred.Flags.UserVerified {
+	if !parsedResponse.Response.AuthenticatorData.Flags.HasUserVerified() {
 		attempt.SetReason(authevents.ReasonInvalidCredential)
 		return retErrStr("FIDO user verification failed")
 	}
