@@ -22,6 +22,7 @@ import (
 	"crypto/cipher"
 	"fmt"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -72,7 +73,8 @@ type FinishRegistrationReq struct {
 }
 
 type FinishResp struct {
-	Cred *webauthn.Credential
+	Cred      *webauthn.Credential
+	FIDOFlags protocol.AuthenticatorFlags
 }
 
 type FinishRegistrationResp struct {

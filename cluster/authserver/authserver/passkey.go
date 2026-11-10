@@ -30,6 +30,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcachev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators"
 	"github.com/octelium/octelium/cluster/authserver/authserver/authenticators/fido"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/authevents"
@@ -54,13 +55,15 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 		return nil, s.errPermissionDenied("Passkey login is not enabled")
 	}
 
-	usr, authn, cred, query, err := s.doAuthenticationWithPasskey(ctx, req.Response)
+	usr, authn, finishResp, query, err := s.doAuthenticationWithPasskey(ctx, req.Response)
 	if err != nil {
 		zap.L().Debug("Could not doAuthenticationWithPasskey", zap.Error(err))
 		return nil, grpcutils.Unauthorized("Invalid authentication")
 	}
 
 	attempt := authevents.GetAttempt(ctx)
+
+	cred := finishResp.Cred
 
 	if cred.Authenticator.SignCount > 0 {
 		if fido := authn.Status.GetInfo().GetFido(); fido != nil &&
@@ -80,7 +83,7 @@ func (s *server) doAuthenticateWithPasskey(ctx context.Context,
 				Type:             corev1.Authenticator_Status_FIDO,
 				Info: &corev1.Session_Status_Authentication_Info_Authenticator_Info{
 					Type: &corev1.Session_Status_Authentication_Info_Authenticator_Info_Fido{
-						Fido: s.getSessionAuthenticatorInfoFIDO(cred, authn),
+						Fido: s.getSessionAuthenticatorInfoFIDO(finishResp.FIDOFlags, authn),
 					},
 				},
 				Mode: corev1.Session_Status_Authentication_Info_Authenticator_PASSKEY,
@@ -177,13 +180,13 @@ func (s *server) checkGRPCRequestIsWeb(ctx context.Context) error {
 }
 
 func (s *server) doAuthenticationWithPasskey(ctx context.Context,
-	response string) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, string, error) {
+	response string) (*corev1.User, *corev1.Authenticator, *authenticators.FinishResp, string, error) {
 
-	retErr := func(err error) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, string, error) {
+	retErr := func(err error) (*corev1.User, *corev1.Authenticator, *authenticators.FinishResp, string, error) {
 		return nil, nil, nil, "", err
 	}
 
-	retErrStr := func(err string) (*corev1.User, *corev1.Authenticator, *webauthn.Credential, string, error) {
+	retErrStr := func(err string) (*corev1.User, *corev1.Authenticator, *authenticators.FinishResp, string, error) {
 		return retErr(errors.Errorf("%s", err))
 	}
 
@@ -318,7 +321,10 @@ func (s *server) doAuthenticationWithPasskey(ctx context.Context,
 		return retErrStr("Authenticator is not ACTIVE")
 	}
 
-	return usr, authn, cred, state.Query, nil
+	return usr, authn, &authenticators.FinishResp{
+		Cred:      cred,
+		FIDOFlags: parsedResponse.Response.AuthenticatorData.Flags,
+	}, state.Query, nil
 }
 
 type passkeyState struct {

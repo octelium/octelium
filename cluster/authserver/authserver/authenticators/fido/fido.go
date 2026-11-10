@@ -215,7 +215,8 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 		return nil, authenticators.ErrInvalidAuthMsg("FIDO possible cloned Authenticator")
 	}
 
-	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
+	if sessData.UserVerification == protocol.VerificationRequired &&
+		!parsedResponse.Response.AuthenticatorData.Flags.HasUserVerified() {
 		return nil, authenticators.ErrInvalidAuthMsg("User is not verified")
 	}
 
@@ -226,6 +227,7 @@ func (c *WebAuthNFactor) Finish(ctx context.Context, reqCtx *factors.FinishReq) 
 	zap.L().Debug("webauthn login successful", zap.Any("cred", cred))
 
 	ret.Cred = cred
+	ret.FIDOFlags = parsedResponse.Response.AuthenticatorData.Flags
 
 	return ret, nil
 }
@@ -408,7 +410,8 @@ func (c *WebAuthNFactor) FinishRegistration(ctx context.Context,
 
 	zap.L().Debug("Successful CreateCredential", zap.Any("cred", cred))
 
-	if sessData.UserVerification == protocol.VerificationRequired && !cred.Flags.UserVerified {
+	if sessData.UserVerification == protocol.VerificationRequired &&
+		!parsedResponse.Response.AttestationObject.AuthData.Flags.HasUserVerified() {
 		return nil, authenticators.ErrInvalidAuthMsg("User is not verified")
 	}
 

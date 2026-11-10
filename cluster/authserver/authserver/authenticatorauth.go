@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -195,7 +195,7 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 					if authn.Status.Type == corev1.Authenticator_Status_FIDO && finishResp.Cred != nil {
 						return &corev1.Session_Status_Authentication_Info_Authenticator_Info{
 							Type: &corev1.Session_Status_Authentication_Info_Authenticator_Info_Fido{
-								Fido: s.getSessionAuthenticatorInfoFIDO(finishResp.Cred, authn),
+								Fido: s.getSessionAuthenticatorInfoFIDO(finishResp.FIDOFlags, authn),
 							},
 						}
 					}
@@ -217,11 +217,11 @@ func (s *server) doAuthenticateAuthenticator(ctx context.Context,
 	return authInfo, nil
 }
 
-func (s *server) getSessionAuthenticatorInfoFIDO(cred *webauthn.Credential,
+func (s *server) getSessionAuthenticatorInfoFIDO(flags protocol.AuthenticatorFlags,
 	authn *corev1.Authenticator) *corev1.Session_Status_Authentication_Info_Authenticator_Info_FIDO {
 	ret := &corev1.Session_Status_Authentication_Info_Authenticator_Info_FIDO{
-		UserPresent:  cred.Flags.UserPresent,
-		UserVerified: cred.Flags.UserVerified,
+		UserPresent:  flags.HasUserPresent(),
+		UserVerified: flags.HasUserVerified(),
 	}
 	if authn.Status.Info != nil && authn.Status.Info.GetFido() != nil {
 		fido := authn.Status.Info.GetFido()

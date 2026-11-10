@@ -27,6 +27,7 @@ import (
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -1103,7 +1104,7 @@ func TestPasskeyLoginPostAuthenticationRules(t *testing.T) {
 		{
 			Condition: &corev1.Condition{
 				Type: &corev1.Condition_Match{
-					Match: `ctx.info.authenticator.mode == "PASSKEY"`,
+					Match: `ctx.info.authenticator.mode == "PASSKEY" && ctx.info.authenticator.info.fido.userVerified`,
 				},
 			},
 			Effect: corev1.ClusterConfig_Spec_Authenticator_Rule_DENY,
@@ -1402,6 +1403,131 @@ func TestFIDOUserVerification(t *testing.T) {
 		_, err := authenticateFIDO(t, srv, usrT, srv.mustGetAuthenticator(t, authn), d)
 		assert.NotNil(t, err)
 		assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+	}
+}
+
+func TestFIDOUserVerificationChanges(t *testing.T) {
+
+	srv, tst, adminSrv := newWebAuthnTestEnv(t)
+
+	for _, registeredVerified := range []bool{false, true} {
+		for _, verified := range []bool{false, true} {
+			for _, required := range []bool{false, true} {
+				t.Run(fmt.Sprintf("RegisteredVerified=%t/Verified=%t/Required=%t",
+					registeredVerified, verified, required), func(t *testing.T) {
+					setClusterAuthenticator(t, tst, &corev1.ClusterConfig_Spec_Authenticator{})
+
+					usrT, err := tstuser.NewUserWeb(tst.C.OcteliumC, adminSrv, nil, nil)
+					assert.Nil(t, err, "%+v", err)
+
+					authn := createFIDOAuthenticator(t, srv, usrT)
+					d := newVirtualFIDO(srv.domain, usrT.Usr, virtualwebauthn.AuthenticatorOptions{
+						UserNotVerified: !registeredVerified,
+					})
+
+					assert.Nil(t, registerFIDO(t, srv, usrT, authn, d))
+
+					if required {
+						setClusterAuthenticator(t, tst, &corev1.ClusterConfig_Spec_Authenticator{
+							Fido: &corev1.ClusterConfig_Spec_Authenticator_FIDO{
+								UserVerification: corev1.ClusterConfig_Spec_Authenticator_FIDO_REQUIRED,
+							},
+						})
+					}
+
+					d.auth.Options.UserNotVerified = !verified
+
+					resyncWebSession(t, srv, usrT)
+					_, err = authenticateFIDO(t, srv, usrT, srv.mustGetAuthenticator(t, authn), d)
+					if required && !verified {
+						assert.NotNil(t, err)
+						assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+						return
+					}
+					if !assert.Nil(t, err, "%+v", err) {
+						return
+					}
+
+					usrT.Resync()
+					info := usrT.Session.Status.Authentication.Info.GetAuthenticator().GetInfo().GetFido()
+					assert.True(t, info.UserPresent)
+					assert.Equal(t, verified, info.UserVerified)
+				})
+			}
+		}
+	}
+}
+
+func TestFIDOSessionChallenge(t *testing.T) {
+
+	ctx := context.Background()
+
+	srv, tst, adminSrv := newWebAuthnTestEnv(t)
+
+	tbl := []struct {
+		name      string
+		challenge []byte
+		allowed   bool
+	}{
+		{name: "Empty"},
+		{name: "Short", challenge: utilrand.GetRandomBytesMust(protocol.MinimumChallengeLength - 1)},
+		{name: "Minimum", challenge: utilrand.GetRandomBytesMust(protocol.MinimumChallengeLength), allowed: true},
+	}
+
+	for _, registration := range []bool{false, true} {
+		for _, itm := range tbl {
+			t.Run(fmt.Sprintf("Registration=%t/%s", registration, itm.name), func(t *testing.T) {
+				usrT, err := tstuser.NewUserWeb(tst.C.OcteliumC, adminSrv, nil, nil)
+				assert.Nil(t, err, "%+v", err)
+
+				authn := createFIDOAuthenticator(t, srv, usrT)
+				d := newVirtualFIDO(srv.domain, usrT.Usr, virtualwebauthn.AuthenticatorOptions{})
+
+				var req string
+				if registration {
+					req, err = beginFIDORegistration(t, srv, usrT, authn)
+				} else {
+					assert.Nil(t, registerFIDO(t, srv, usrT, authn, d))
+					req, err = beginFIDOAuthentication(t, srv, usrT, authn)
+				}
+				assert.Nil(t, err, "%+v", err)
+
+				authn = srv.mustGetAuthenticator(t, authn)
+
+				session := &webauthn.SessionData{}
+				assert.Nil(t, json.Unmarshal(authn.Status.AuthenticationAttempt.DataMap["session"], session))
+
+				session.Challenge = base64.RawURLEncoding.EncodeToString(itm.challenge)
+				authn.Status.AuthenticationAttempt.DataMap["session"], err = json.Marshal(session)
+				assert.Nil(t, err)
+
+				_, err = srv.octeliumC.CoreC().UpdateAuthenticator(ctx, authn)
+				assert.Nil(t, err)
+
+				if registration {
+					opts, parseErr := virtualwebauthn.ParseAttestationOptions(req)
+					assert.Nil(t, parseErr)
+					opts.Challenge = itm.challenge
+
+					err = finishFIDORegistration(t, srv, usrT, authn,
+						virtualwebauthn.CreateAttestationResponse(d.rp, d.auth, d.cred, *opts))
+				} else {
+					opts, parseErr := virtualwebauthn.ParseAssertionOptions(req)
+					assert.Nil(t, parseErr)
+					opts.Challenge = itm.challenge
+
+					_, err = finishFIDOAuthentication(t, srv, usrT, authn,
+						virtualwebauthn.CreateAssertionResponse(d.rp, d.auth, d.cred, *opts))
+				}
+				if itm.allowed {
+					assert.Nil(t, err, "%+v", err)
+				} else {
+					assert.NotNil(t, err)
+					assert.True(t, grpcerr.IsPermissionDenied(err), "%+v", err)
+				}
+				assert.Nil(t, srv.mustGetAuthenticator(t, authn).Status.AuthenticationAttempt)
+			})
+		}
 	}
 }
 
