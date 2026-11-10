@@ -19,8 +19,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -370,6 +372,37 @@ func TestOpenDBDefault(t *testing.T) {
 	require.NoError(t, openDBDefault())
 	assert.NotNil(t, GetDB())
 	assert.NoError(t, CloseDB())
+}
+
+func TestGetDBOwner(t *testing.T) {
+	for _, key := range []string{"SUDO_UID", "SUDO_USER", "PKEXEC_UID"} {
+		t.Setenv(key, "")
+	}
+	assert.Nil(t, getDBOwner())
+
+	if os.Getuid() != 0 {
+		t.Setenv("SUDO_UID", "0")
+		t.Setenv("PKEXEC_UID", "1000")
+		assert.Nil(t, getDBOwner())
+		return
+	}
+
+	t.Setenv("SUDO_UID", "0")
+	assert.Nil(t, getDBOwner())
+
+	t.Setenv("SUDO_UID", "octelium-invalid-user-id")
+	assert.Nil(t, getDBOwner())
+
+	usr, err := user.Lookup("nobody")
+	if err != nil {
+		t.Skip("This test requires the nobody OS user")
+	}
+
+	t.Setenv("SUDO_UID", usr.Uid)
+	ret := getDBOwner()
+	require.NotNil(t, ret)
+	assert.Equal(t, usr.Uid, strconv.Itoa(ret.UID))
+	assert.Equal(t, usr.Gid, strconv.Itoa(ret.GID))
 }
 
 func TestIsSuggestedWorkloadHost(t *testing.T) {

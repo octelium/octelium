@@ -219,11 +219,14 @@ func (o *Owner) createHomeDirIfNotExists(dirPath string) error {
 		return err
 	}
 
-	missingDirs, err := getMissingDirs(dirPath)
-	if err != nil {
-		return err
+	if o != nil {
+		return o.createDirs(dirPath)
 	}
 
+	return createDirs(dirPath)
+}
+
+func createDirs(dirPath string) error {
 	if parent := filepath.Dir(dirPath); parent != dirPath {
 		if err := os.MkdirAll(parent, 0755); err != nil {
 			return err
@@ -232,12 +235,6 @@ func (o *Owner) createHomeDirIfNotExists(dirPath string) error {
 
 	if err := os.Mkdir(dirPath, 0700); err != nil && !os.IsExist(err) {
 		return err
-	}
-
-	for _, dir := range missingDirs {
-		if err := o.setOwner(dir); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -265,16 +262,4 @@ func getMissingDirs(dirPath string) ([]string, error) {
 	}
 
 	return ret, nil
-}
-
-func (o *Owner) setOwner(filePath string) error {
-	if o == nil {
-		return nil
-	}
-
-	if err := os.Chown(filePath, o.UID, o.GID); err != nil {
-		return errors.Errorf("OcteliumDB: Could not set the owner of %s: %+v", filePath, err)
-	}
-
-	return nil
 }

@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func TestFSDB(t *testing.T) {
@@ -760,6 +761,40 @@ func TestFSDBCorruptState(t *testing.T) {
 			assert.Equal(t, corrupt, got)
 		})
 	}
+}
+
+func TestFSDBStateSizeLimit(t *testing.T) {
+	ctx := context.Background()
+	d, err := newFSDB(&Opts{Path: t.TempDir()})
+	require.NoError(t, err)
+
+	content := protowire.AppendTag(nil, 15, protowire.BytesType)
+	content = protowire.AppendVarint(content, uint64(maxStateSize-len(content)-4))
+	content = append(content, make([]byte, maxStateSize-len(content))...)
+	require.Equal(t, maxStateSize, len(content))
+	require.NoError(t, os.WriteFile(d.dbPath, content, 0600))
+
+	_, err = d.get(ctx, "example.com")
+	assert.True(t, errors.Is(err, ErrNotFound))
+
+	require.NoError(t, os.WriteFile(d.dbPath, append(content, 0), 0600))
+
+	_, err = d.get(ctx, "example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+	_, err = d.list(ctx)
+	assert.Error(t, err)
+	assert.Error(t, d.set(ctx, "example.com", &authv1.SessionToken{AccessToken: "token"}))
+
+	info, err := os.Stat(d.dbPath)
+	require.NoError(t, err)
+	assert.Equal(t, int64(maxStateSize+1), info.Size())
+
+	require.NoError(t, os.Remove(d.dbPath))
+	require.NoError(t, d.set(ctx, "example.com", &authv1.SessionToken{AccessToken: "token"}))
+	itm, err := d.get(ctx, "example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "token", itm.SessionToken.AccessToken)
 }
 
 func TestWriteFileAtomicRollback(t *testing.T) {

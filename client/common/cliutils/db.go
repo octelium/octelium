@@ -16,7 +16,9 @@ package cliutils
 
 import (
 	"context"
+	"strconv"
 
+	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/common/db"
 )
 
@@ -33,11 +35,36 @@ func openDBDefault() error {
 
 func OpenDB(path string) error {
 	var err error
-	dbC, err = db.Open(path)
+	dbC, err = db.OpenWithOpts(&db.Opts{
+		Path:  path,
+		Owner: getDBOwner(),
+	})
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func getDBOwner() *db.Owner {
+	usr, err := vhome.GetInvokingUser()
+	if err != nil || usr == nil {
+		return nil
+	}
+
+	uid, err := strconv.Atoi(usr.Uid)
+	if err != nil || uid == 0 {
+		return nil
+	}
+
+	gid, err := strconv.Atoi(usr.Gid)
+	if err != nil {
+		return nil
+	}
+
+	return &db.Owner{
+		UID: uid,
+		GID: gid,
+	}
 }
 
 func GetDB() *db.DB {

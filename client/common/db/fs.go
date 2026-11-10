@@ -21,6 +21,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -44,6 +45,8 @@ const (
 )
 
 const encryptionKeyLen = 32
+
+const maxStateSize = 16 * 1024 * 1024
 
 var encryptedStatePrefix = []byte("octelium-db-v1:")
 
@@ -84,9 +87,7 @@ func newFSDB(o *Opts) (*fsDB, error) {
 	ret.dbPath = path.Join(dbDir, "octelium.db")
 
 	lockPath := fmt.Sprintf("%s.lock", ret.dbPath)
-	if err := ret.createLockFile(lockPath); err != nil {
-		return nil, err
-	}
+	ret.owner.createFile(lockPath)
 
 	ret.flock = flock.New(lockPath)
 
@@ -136,20 +137,6 @@ func (d *fsDB) open(ciphertext []byte) ([]byte, error) {
 	return ret, nil
 }
 
-func (d *fsDB) createLockFile(lockPath string) error {
-	if d.owner == nil {
-		return nil
-	}
-
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	f.Close()
-
-	return d.owner.setOwner(lockPath)
-}
-
 func (d *fsDB) lock() (func(), error) {
 
 	d.mu.Lock()
@@ -191,6 +178,8 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 		return err
 	}
 
+	d.owner.createFile(d.dbPath)
+
 	if d.aead != nil {
 		stateBytes, err = d.seal(stateBytes)
 		if err != nil {
@@ -203,7 +192,7 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 			}
 		}
 
-		return d.owner.setOwner(d.dbPath)
+		return nil
 	}
 
 	if err := replaceFile(d.dbPath, stateBytes); err != nil {
@@ -212,7 +201,7 @@ func (d *fsDB) writeStateLocked(state *cliconfigv1.State) error {
 		}
 	}
 
-	return d.owner.setOwner(d.dbPath)
+	return nil
 }
 
 func writeFileAtomic(filePath string, content []byte) error {
@@ -284,7 +273,7 @@ func (d *fsDB) readStateLocked() (*cliconfigv1.State, error) {
 
 	ret := &cliconfigv1.State{}
 
-	stateBytes, err := os.ReadFile(d.dbPath)
+	stateBytes, err := readStateFile(d.dbPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			ret.DomainMap = make(map[string]*cliconfigv1.State_Domain)
@@ -310,6 +299,25 @@ func (d *fsDB) readStateLocked() (*cliconfigv1.State, error) {
 
 	return ret, nil
 
+}
+
+func readStateFile(filePath string) ([]byte, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	ret, err := io.ReadAll(io.LimitReader(f, maxStateSize+1))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(ret) > maxStateSize {
+		return nil, errors.Errorf("OcteliumDB: The state file %s is too large", filePath)
+	}
+
+	return ret, nil
 }
 
 func (d *fsDB) migrate(_ context.Context) error {
