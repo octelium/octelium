@@ -1,0 +1,45 @@
+name: generate-sbom
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    name: Generate GitHub dependency-graph SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test SBOM export
+        run: python3 -B -m unittest discover -s .github/scripts/sbom -p 'test_*.py' -v
+
+      - name: Generate and download SBOM from GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/sbom/generate_sbom.py artifacts/sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: github-sbom
+          path: artifacts/sbom.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize export
+        shell: bash
+        run: |
+          {
+            echo "## GitHub dependency-graph SBOM"
+            echo
+            echo "Download the github-sbom artifact from this run for sbom.json."
+            echo
+            echo "The export contains the current repository dependency graph; it is not tied to the selected workflow ref."
+          } >> "$GITHUB_STEP_SUMMARY"

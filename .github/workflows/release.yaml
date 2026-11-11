@@ -573,14 +573,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "Fetching SBOM from GitHub Dependency Graph API..."
-          gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/dependency-graph/sbom" \
-            | jq -e '.sbom' > release-files/sbom.json
+        run: python3 .github/scripts/sbom/generate_sbom.py release-files/sbom.json
 
       - name: Generate release provenance attestation
         id: attest
