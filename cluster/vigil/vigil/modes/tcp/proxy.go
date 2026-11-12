@@ -19,7 +19,6 @@ package tcp
 import (
 	"context"
 	"crypto/tls"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -31,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes"
 	"github.com/octelium/octelium/cluster/vigil/vigil/mtls"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
+	"github.com/octelium/octelium/pkg/utils/netutils"
 	"go.uber.org/zap"
 )
 
@@ -157,12 +157,16 @@ func (p *proxy) doServe(clientConn, backendConn net.Conn) {
 
 func (p *proxy) connCopy(dst, src net.Conn, isToDownstream bool) {
 	defer p.wg.Done()
-	defer modes.Recover(func(any) {
+
+	closeConns := func() {
 		dst.Close()
 		src.Close()
+	}
+	defer modes.Recover(func(any) {
+		closeConns()
 	})
 
-	n, err := io.Copy(dst, src)
+	n, err := netutils.CopyAndCloseWrite(dst, src, closeConns)
 	if isToDownstream {
 		p.bytesToDownstream = n
 	} else {
@@ -170,25 +174,6 @@ func (p *proxy) connCopy(dst, src net.Conn, isToDownstream bool) {
 	}
 
 	if err != nil {
-		dst.Close()
-		src.Close()
-		return
+		zap.L().Debug("TCP copy ended with error", zap.String("id", p.dctx.id), zap.Error(err))
 	}
-
-	if err := closeWrite(dst); err != nil {
-		zap.L().Debug("Could not closeWrite dst", zap.String("id", p.dctx.id), zap.Error(err))
-		dst.Close()
-		src.Close()
-	}
-}
-
-func closeWrite(conn net.Conn) error {
-	if cw, ok := conn.(closeWriter); ok {
-		return cw.CloseWrite()
-	}
-	return conn.Close()
-}
-
-type closeWriter interface {
-	CloseWrite() error
 }

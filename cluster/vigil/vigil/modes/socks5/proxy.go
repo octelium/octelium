@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/utils/netutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -66,7 +67,7 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 			zap.String("target", p.dctx.target.addr),
 			zap.Error(err))
 
-		gosocks5.SendReply(p.dctx.downstreamWriter, statute.RepServerFailure, nil)
+		gosocks5.SendReply(p.dctx.downstreamConn, statute.RepServerFailure, nil)
 		p.upstreamErr = err
 		return err
 	}
@@ -74,11 +75,11 @@ func (p *proxy) serve(ctx context.Context, svc *corev1.Service, secretMan *secre
 	defer upstreamConn.Close()
 	p.dctx.network = logentry.WithUpstream(p.dctx.network, upstreamConn)
 
-	if err := gosocks5.SendReply(p.dctx.downstreamWriter, statute.RepSuccess, upstreamConn.LocalAddr()); err != nil {
+	if err := gosocks5.SendReply(p.dctx.downstreamConn, statute.RepSuccess, upstreamConn.LocalAddr()); err != nil {
 		return err
 	}
 
-	p.doServe(p.dctx.downstreamWriter, p.dctx.downstreamReader, upstreamConn)
+	p.doServe(p.dctx.downstreamConn, p.dctx.downstreamReader, upstreamConn)
 
 	zap.L().Debug("Done serving SOCKS5 connection",
 		zap.String("id", p.dctx.id),
@@ -197,20 +198,27 @@ func getEmbeddedSessionAddr(sess *corev1.Session) string {
 	return ""
 }
 
-func (p *proxy) doServe(clientWriter io.Writer, clientReader io.Reader, upstreamConn net.Conn) {
+func (p *proxy) doServe(clientConn net.Conn, clientReader io.Reader, upstreamConn net.Conn) {
+	closeConns := func() {
+		clientConn.Close()
+		upstreamConn.Close()
+	}
+
 	p.wg.Add(2)
 
-	go p.connCopy(upstreamConn, clientReader, true)
-	go p.connCopy(clientWriter, upstreamConn, false)
+	go p.connCopy(upstreamConn, clientReader, true, closeConns)
+	go p.connCopy(clientConn, upstreamConn, false, closeConns)
 
 	p.wg.Wait()
 }
 
-func (p *proxy) connCopy(dst io.Writer, src io.Reader, isFromDownstream bool) {
+func (p *proxy) connCopy(dst io.Writer, src io.Reader, isFromDownstream bool, closeConns func()) {
 	defer p.wg.Done()
-	defer modes.Recover()
+	defer modes.Recover(func(any) {
+		closeConns()
+	})
 
-	n, err := io.Copy(dst, src)
+	n, err := netutils.CopyAndCloseWrite(dst, src, closeConns)
 	if err != nil && !isExpectedNetErr(err) {
 		zap.L().Debug("SOCKS5 copy error",
 			zap.String("id", p.dctx.id),
@@ -223,20 +231,6 @@ func (p *proxy) connCopy(dst io.Writer, src io.Reader, isFromDownstream bool) {
 	} else {
 		p.bytesToDownstream = n
 	}
-
-	if err := closeWrite(dst); err != nil {
-		zap.L().Debug("Could not closeWrite",
-			zap.String("id", p.dctx.id),
-			zap.Error(err))
-	}
-
-	if c, ok := dst.(interface{ SetReadDeadline(time.Time) error }); ok {
-		if err := c.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
-			zap.L().Debug("Could not set read deadline",
-				zap.String("id", p.dctx.id),
-				zap.Error(err))
-		}
-	}
 }
 
 type upstreamDialer struct {
@@ -248,17 +242,6 @@ func (d *upstreamDialer) Dial(network, addr string) (net.Conn, error) {
 	var nd net.Dialer
 	nd.Timeout = d.timeout
 	return nd.DialContext(d.ctx, network, addr)
-}
-
-func closeWrite(conn any) error {
-	if cw, ok := conn.(closeWriter); ok {
-		return cw.CloseWrite()
-	}
-	return nil
-}
-
-type closeWriter interface {
-	CloseWrite() error
 }
 
 func isExpectedNetErr(err error) bool {

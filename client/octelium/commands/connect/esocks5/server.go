@@ -27,6 +27,7 @@ import (
 	"github.com/things-go/go-socks5/statute"
 
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
+	"github.com/octelium/octelium/pkg/utils/netutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -286,17 +287,22 @@ func proxyConn(
 	clientWriter io.Writer,
 	upstreamConn net.Conn,
 ) {
+	closeConns := func() {
+		clientConn.Close()
+		upstreamConn.Close()
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		copyAndCloseWrite(upstreamConn, clientReader)
+		copyAndCloseWrite(upstreamConn, clientReader, closeConns)
 	}()
 
 	go func() {
 		defer wg.Done()
-		copyAndCloseWrite(clientWriter, upstreamConn)
+		copyAndCloseWrite(clientWriter, upstreamConn, closeConns)
 	}()
 
 	doneCh := make(chan struct{})
@@ -307,25 +313,14 @@ func proxyConn(
 
 	select {
 	case <-ctx.Done():
-		clientConn.Close()
-		upstreamConn.Close()
+		closeConns()
 	case <-doneCh:
 	}
 }
 
-func copyAndCloseWrite(dst io.Writer, src io.Reader) {
-	if _, err := io.Copy(dst, src); err != nil && !isExpectedNetErr(err) {
+func copyAndCloseWrite(dst io.Writer, src io.Reader, closeConns func()) {
+	if _, err := netutils.CopyAndCloseWrite(dst, src, closeConns); err != nil && !isExpectedNetErr(err) {
 		zap.L().Debug("embedded SOCKS5 copy error", zap.Error(err))
-	}
-
-	if err := closeWrite(dst); err != nil {
-		zap.L().Debug("embedded SOCKS5 closeWrite failed", zap.Error(err))
-	}
-
-	if c, ok := dst.(interface{ SetReadDeadline(time.Time) error }); ok {
-		if err := c.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
-			zap.L().Debug("embedded SOCKS5 set read deadline failed", zap.Error(err))
-		}
 	}
 }
 
@@ -406,17 +401,6 @@ func normalizeDomain(domain string) (string, error) {
 func rejectUnsupportedCommand(ctx context.Context, writer io.Writer, req *gosocks5.Request) error {
 	gosocks5.SendReply(writer, statute.RepCommandNotSupported, nil)
 	return errors.Errorf("unsupported embedded SOCKS5 command: %d", req.Command)
-}
-
-func closeWrite(conn any) error {
-	if cw, ok := conn.(closeWriter); ok {
-		return cw.CloseWrite()
-	}
-	return nil
-}
-
-type closeWriter interface {
-	CloseWrite() error
 }
 
 func isExpectedNetErr(err error) bool {

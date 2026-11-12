@@ -17,7 +17,11 @@
 package socks5
 
 import (
+	"bufio"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -41,6 +45,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -528,4 +533,174 @@ func TestServer(t *testing.T) {
 
 	err = srv.Close()
 	assert.Nil(t, err)
+}
+
+func newSOCKS5ProxyTestPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
+	t.Helper()
+	lis, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.Nil(t, err)
+	defer lis.Close()
+	client, err := net.DialTCP("tcp4", nil, lis.Addr().(*net.TCPAddr))
+	require.Nil(t, err)
+	t.Cleanup(func() { client.Close() })
+	require.Nil(t, lis.SetDeadline(time.Now().Add(5*time.Second)))
+	server, err := lis.AcceptTCP()
+	require.Nil(t, err)
+	t.Cleanup(func() { server.Close() })
+	require.Nil(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.Nil(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	return client, server
+}
+
+func TestSOCKS5ProxyHalfCloseDirections(t *testing.T) {
+	crt, err := utils_cert.GenerateSelfSignedCert("localhost", []string{"localhost"}, time.Hour)
+	require.Nil(t, err)
+	certificate, err := tls.X509KeyPair(crt.MustGetCertPEM(), crt.MustGetPrivateKeyPEM())
+	require.Nil(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(crt.Certificate)
+	for _, downstreamTLS := range []bool{false, true} {
+		for _, clientFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("DownstreamTLS%t/ClientFirst%t", downstreamTLS, clientFirst), func(t *testing.T) {
+				var client, downstream net.Conn
+				client, downstream = newSOCKS5ProxyTestPair(t)
+				if downstreamTLS {
+					tlsClient := tls.Client(client, &tls.Config{RootCAs: roots, ServerName: "localhost", MinVersion: tls.VersionTLS12})
+					tlsServer := tls.Server(downstream, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
+					done := make(chan error, 1)
+					go func() { done <- tlsServer.HandshakeContext(t.Context()) }()
+					require.Nil(t, tlsClient.HandshakeContext(t.Context()))
+					require.Nil(t, <-done)
+					client, downstream = tlsClient, tlsServer
+				}
+				upstream, backend := newSOCKS5ProxyTestPair(t)
+				p := &proxy{dctx: &dctx{id: t.Name()}}
+				done := make(chan struct{})
+				go func() { defer close(done); p.doServe(downstream, bufio.NewReader(downstream), upstream) }()
+				t.Cleanup(func() {
+					downstream.Close()
+					upstream.Close()
+					select {
+					case <-done:
+					case <-time.After(3 * time.Second):
+						t.Error("The SOCKS5 proxy did not stop after closing its connections")
+					}
+				})
+				var first, second net.Conn = client, backend
+				if !clientFirst {
+					first, second = backend, client
+				}
+				_, err := first.Write([]byte("first"))
+				require.Nil(t, err)
+				require.Nil(t, first.(interface{ CloseWrite() error }).CloseWrite())
+				body, err := io.ReadAll(second)
+				require.Nil(t, err)
+				assert.Equal(t, "first", string(body))
+				timer := time.NewTimer(750 * time.Millisecond)
+				defer timer.Stop()
+				<-timer.C
+				_, err = second.Write([]byte("second"))
+				require.Nil(t, err)
+				require.Nil(t, second.(interface{ CloseWrite() error }).CloseWrite())
+				body, err = io.ReadAll(first)
+				require.Nil(t, err)
+				assert.Equal(t, "second", string(body))
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Fatal("The SOCKS5 proxy did not stop after both half-closes")
+				}
+				toClient, fromClient := int64(6), int64(5)
+				if !clientFirst {
+					toClient, fromClient = 5, 6
+				}
+				assert.Equal(t, toClient, p.bytesToDownstream)
+				assert.Equal(t, fromClient, p.bytesFromDownstream)
+			})
+		}
+	}
+}
+
+type tstSOCKS5ProxyFaultConn struct {
+	net.Conn
+	readErr   error
+	writeErr  error
+	panicRead bool
+}
+
+func (c *tstSOCKS5ProxyFaultConn) Read(buf []byte) (int, error) {
+	if c.panicRead {
+		panic("SOCKS5 read failed")
+	}
+	if c.readErr != nil {
+		return 0, c.readErr
+	}
+	return c.Conn.Read(buf)
+}
+
+func (c *tstSOCKS5ProxyFaultConn) Write(buf []byte) (int, error) {
+	if c.writeErr != nil {
+		return 0, c.writeErr
+	}
+	return c.Conn.Write(buf)
+}
+
+type tstSOCKS5ProxyCloseWriteErrorConn struct {
+	net.Conn
+}
+
+func (c *tstSOCKS5ProxyCloseWriteErrorConn) CloseWrite() error {
+	return io.ErrClosedPipe
+}
+
+func TestSOCKS5ProxyCopyFailureClosesBothConnections(t *testing.T) {
+	for _, name := range []string{"ReadError", "WriteError", "CloseWriteError", "ReadPanic"} {
+		t.Run(name, func(t *testing.T) {
+			client, downstream := net.Pipe()
+			upstream, backend := net.Pipe()
+			require.Nil(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+			require.Nil(t, backend.SetReadDeadline(time.Now().Add(2*time.Second)))
+			var reader io.Reader = downstream
+			var back net.Conn = upstream
+			switch name {
+			case "ReadError":
+				reader = &tstSOCKS5ProxyFaultConn{Conn: downstream, readErr: io.ErrUnexpectedEOF}
+			case "WriteError":
+				back = &tstSOCKS5ProxyFaultConn{Conn: upstream, writeErr: io.ErrClosedPipe}
+			case "CloseWriteError":
+				reader = &tstSOCKS5ProxyFaultConn{Conn: downstream, readErr: io.EOF}
+				back = &tstSOCKS5ProxyCloseWriteErrorConn{Conn: upstream}
+			case "ReadPanic":
+				reader = &tstSOCKS5ProxyFaultConn{Conn: downstream, panicRead: true}
+			}
+			p := &proxy{dctx: &dctx{id: name}}
+			done := make(chan struct{})
+			go func() { defer close(done); p.doServe(downstream, reader, back) }()
+			t.Cleanup(func() {
+				client.Close()
+				downstream.Close()
+				upstream.Close()
+				backend.Close()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Error("The SOCKS5 proxy did not stop during cleanup")
+				}
+			})
+			if name == "WriteError" {
+				require.Nil(t, client.SetWriteDeadline(time.Now().Add(time.Second)))
+				_, err := client.Write([]byte("request"))
+				require.Nil(t, err)
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("The SOCKS5 proxy did not stop after a copy failure")
+			}
+			for _, peer := range []net.Conn{client, backend} {
+				_, err := peer.Read(make([]byte, 1))
+				assert.ErrorIs(t, err, io.EOF)
+			}
+		})
+	}
 }

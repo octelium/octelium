@@ -17,6 +17,7 @@ package esocks5
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -279,4 +280,99 @@ func TestSOCKSKnownIssues(t *testing.T) {
 			assert.Less(t, time.Since(started), time.Second)
 		})
 	})
+}
+
+func newTCPTestPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
+	t.Helper()
+	lis, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	defer lis.Close()
+	client, err := net.DialTCP("tcp4", nil, lis.Addr().(*net.TCPAddr))
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+	require.NoError(t, lis.SetDeadline(time.Now().Add(5*time.Second)))
+	server, err := lis.AcceptTCP()
+	require.NoError(t, err)
+	t.Cleanup(func() { server.Close() })
+	require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+	require.NoError(t, server.SetDeadline(time.Now().Add(5*time.Second)))
+	return client, server
+}
+
+func TestSOCKSHalfCloseDirections(t *testing.T) {
+	srv, err := NewServer(&Opts{GoNetCtl: &tstGoNetCtl{}, ListenAddrs: []string{"127.0.0.1:0"}})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	require.NoError(t, srv.Start(ctx))
+	t.Cleanup(func() { srv.Close() })
+	for _, clientFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("ClientFirst%t", clientFirst), func(t *testing.T) {
+			lis, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			require.NoError(t, err)
+			defer lis.Close()
+			dialer, err := xproxy.SOCKS5("tcp", srv.listeners[0].Addr().String(), nil, xproxy.Direct)
+			require.NoError(t, err)
+			conn, err := dialer.Dial("tcp", lis.Addr().String())
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, lis.SetDeadline(time.Now().Add(5*time.Second)))
+			backend, err := lis.AcceptTCP()
+			require.NoError(t, err)
+			defer backend.Close()
+			client := conn.(*net.TCPConn)
+			require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+			require.NoError(t, backend.SetDeadline(time.Now().Add(5*time.Second)))
+			first, second := client, backend
+			if !clientFirst {
+				first, second = backend, client
+			}
+			_, err = first.Write([]byte("first"))
+			require.NoError(t, err)
+			require.NoError(t, first.CloseWrite())
+			body, err := io.ReadAll(second)
+			require.NoError(t, err)
+			assert.Equal(t, "first", string(body))
+			timer := time.NewTimer(750 * time.Millisecond)
+			defer timer.Stop()
+			<-timer.C
+			_, err = second.Write([]byte("second"))
+			require.NoError(t, err)
+			require.NoError(t, second.CloseWrite())
+			body, err = io.ReadAll(first)
+			require.NoError(t, err)
+			assert.Equal(t, "second", string(body))
+		})
+	}
+}
+
+func TestSOCKSCopyErrorClosesBothConnections(t *testing.T) {
+	for _, resetClient := range []bool{true, false} {
+		t.Run(fmt.Sprintf("ResetClient%t", resetClient), func(t *testing.T) {
+			client, downstream := newTCPTestPair(t)
+			upstream, backend := newTCPTestPair(t)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				proxyConn(t.Context(), downstream, downstream, downstream, upstream)
+			}()
+			reset, idle := client, backend
+			if !resetClient {
+				reset, idle = backend, client
+			}
+			require.NoError(t, reset.SetLinger(0))
+			require.NoError(t, reset.Close())
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("The embedded SOCKS5 proxy did not stop after a connection reset")
+			}
+			require.NoError(t, idle.SetReadDeadline(time.Now().Add(time.Second)))
+			_, err := idle.Read(make([]byte, 1))
+			require.Error(t, err)
+			if netErr, ok := err.(net.Error); ok {
+				assert.False(t, netErr.Timeout())
+			}
+		})
+	}
 }

@@ -365,7 +365,7 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 		}
 	}
 
-	dctx := newDctx(ctx, clientConn, writer, req.Reader, target, authResp, svcConfig, upstreamSession)
+	dctx := newDctx(ctx, clientConn, req.Reader, target, authResp, svcConfig, upstreamSession)
 
 	s.dctxMap.mu.Lock()
 	s.dctxMap.dctxMap[dctx.id] = dctx

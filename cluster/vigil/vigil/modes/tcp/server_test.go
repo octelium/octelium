@@ -921,7 +921,7 @@ func TestTCPProxyHalfCloseDirections(t *testing.T) {
 				}
 				_, err := first.Write([]byte("first"))
 				require.Nil(t, err)
-				require.Nil(t, first.(closeWriter).CloseWrite())
+				require.Nil(t, first.(interface{ CloseWrite() error }).CloseWrite())
 				body, err := io.ReadAll(second)
 				require.Nil(t, err)
 				assert.Equal(t, "first", string(body))
@@ -930,7 +930,7 @@ func TestTCPProxyHalfCloseDirections(t *testing.T) {
 				<-timer.C
 				_, err = second.Write([]byte("second"))
 				require.Nil(t, err)
-				require.Nil(t, second.(closeWriter).CloseWrite())
+				require.Nil(t, second.(interface{ CloseWrite() error }).CloseWrite())
 				body, err = io.ReadAll(first)
 				require.Nil(t, err)
 				assert.Equal(t, "second", string(body))
@@ -1106,8 +1106,13 @@ func TestCloseWriteFallbackClosesConnection(t *testing.T) {
 	peer, conn := net.Pipe()
 	defer peer.Close()
 	defer conn.Close()
+	srcPeer, src := net.Pipe()
+	defer srcPeer.Close()
+	defer src.Close()
 	require.Nil(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
-	require.Nil(t, closeWrite(conn))
+	p := &proxy{dctx: &dctx{id: t.Name()}}
+	p.wg.Add(1)
+	p.connCopy(conn, &tstTCPProxyFaultConn{Conn: src, readErr: io.EOF}, true)
 	_, err := peer.Read(make([]byte, 1))
 	assert.ErrorIs(t, err, io.EOF)
 }

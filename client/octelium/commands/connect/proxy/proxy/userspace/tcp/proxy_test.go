@@ -168,3 +168,130 @@ func TestServeTCPClosesBothSidesWhenUpstreamEnds(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "bye", string(got))
 }
+
+func TestServeTCPDeliversDelayedResponseAfterClientHalfClose(t *testing.T) {
+	const want = "the response that is sent after a long processing time"
+
+	upstream := newTestUpstream(t, func(conn *net.TCPConn) {
+		defer conn.Close()
+
+		body, err := io.ReadAll(conn)
+		if err != nil || string(body) != "request" {
+			return
+		}
+
+		time.Sleep(2500 * time.Millisecond)
+
+		conn.Write([]byte(want))
+		conn.CloseWrite()
+	})
+
+	conn := newTestProxiedConn(t, upstream)
+
+	_, err := conn.Write([]byte("request"))
+	assert.Nil(t, err)
+	assert.Nil(t, conn.CloseWrite())
+
+	assert.Nil(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+
+	got, err := io.ReadAll(conn)
+	assert.Nil(t, err)
+	assert.Equal(t, want, string(got))
+}
+
+func TestServeTCPDeliversDelayedRequestAfterUpstreamHalfClose(t *testing.T) {
+	gotCh := make(chan string, 1)
+
+	upstream := newTestUpstream(t, func(conn *net.TCPConn) {
+		defer conn.Close()
+
+		conn.Write([]byte("greeting"))
+		conn.CloseWrite()
+
+		body, _ := io.ReadAll(conn)
+		gotCh <- string(body)
+	})
+
+	conn := newTestProxiedConn(t, upstream)
+
+	assert.Nil(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+
+	got, err := io.ReadAll(conn)
+	assert.Nil(t, err)
+	assert.Equal(t, "greeting", string(got))
+
+	time.Sleep(2500 * time.Millisecond)
+
+	_, err = conn.Write([]byte("delayed request"))
+	assert.Nil(t, err)
+	assert.Nil(t, conn.CloseWrite())
+
+	select {
+	case body := <-gotCh:
+		assert.Equal(t, "delayed request", body)
+	case <-time.After(10 * time.Second):
+		t.Fatal("The upstream did not receive the request")
+	}
+}
+
+func TestServeTCPCopyErrorClosesBothConnections(t *testing.T) {
+	upstream := newTestUpstream(t, func(conn *net.TCPConn) {
+		buf := make([]byte, len("request"))
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			conn.Close()
+			return
+		}
+
+		conn.SetLinger(0)
+		conn.Close()
+	})
+
+	pp, err := NewProxy(upstream.String())
+	assert.Nil(t, err)
+
+	client, downstream := newTestTCPPair(t)
+
+	connBackend, err := net.DialTCP("tcp", nil, upstream)
+	assert.Nil(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pp.ServeTCP(downstream, connBackend)
+	}()
+
+	_, err = client.Write([]byte("request"))
+	assert.Nil(t, err)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("The TCP proxy did not stop after the upstream reset the connection")
+	}
+
+	assert.Nil(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+	_, err = client.Read(make([]byte, 1))
+	assert.NotNil(t, err)
+	if netErr, ok := err.(net.Error); ok {
+		assert.False(t, netErr.Timeout())
+	}
+}
+
+func newTestTCPPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
+	lis, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	assert.Nil(t, err)
+	defer lis.Close()
+
+	client, err := net.DialTCP("tcp", nil, lis.Addr().(*net.TCPAddr))
+	assert.Nil(t, err)
+
+	server, err := lis.AcceptTCP()
+	assert.Nil(t, err)
+
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+	})
+
+	return client, server
+}

@@ -39,7 +39,7 @@ type dctx struct {
 	sessUID string
 
 	conn             net.Conn
-	downstreamWriter io.Writer
+	downstreamConn   net.Conn
 	downstreamReader io.Reader
 
 	req    *gosocks5.Request
@@ -60,7 +60,6 @@ type dctx struct {
 func newDctx(
 	ctx context.Context,
 	conn net.Conn,
-	downstreamWriter io.Writer,
 	downstreamReader io.Reader,
 	target *target,
 	authResp *coctovigilv1.AuthenticateAndAuthorizeResponse,
@@ -72,7 +71,7 @@ func newDctx(
 		id:               vutils.GenerateLogID(),
 		sessUID:          authResp.RequestContext.Session.Metadata.Uid,
 		conn:             conn,
-		downstreamWriter: downstreamWriter,
+		downstreamConn:   conn,
 		downstreamReader: downstreamReader,
 		req:              target.req,
 		target:           target,

@@ -15,10 +15,9 @@
 package tcp
 
 import (
-	"io"
 	"net"
-	"time"
 
+	"github.com/octelium/octelium/pkg/utils/netutils"
 	"go.uber.org/zap"
 )
 
@@ -34,30 +33,26 @@ func (p *Proxy) ServeTCP(conn, connBackend WriteCloser) {
 	defer conn.Close()
 	defer connBackend.Close()
 
+	closeConns := func() {
+		conn.Close()
+		connBackend.Close()
+	}
+
 	errChan := make(chan error, 2)
-	go p.connCopy(conn, connBackend, errChan)
-	go p.connCopy(connBackend, conn, errChan)
+	go p.connCopy(conn, connBackend, closeConns, errChan)
+	go p.connCopy(connBackend, conn, closeConns, errChan)
 
 	<-errChan
 	<-errChan
 }
 
-func (p Proxy) connCopy(dst, src WriteCloser, errCh chan error) {
-	_, err := io.Copy(dst, src)
+func (p Proxy) connCopy(dst, src WriteCloser, closeConns func(), errCh chan error) {
+	_, err := netutils.CopyAndCloseWrite(dst, src, closeConns)
+	if err != nil {
+		zap.S().Debugf("conn copy err: %+v", err)
+	}
+
 	errCh <- err
-
-	errClose := dst.CloseWrite()
-	if errClose != nil {
-		zap.S().Debugf("conn copy err: %+v", errClose)
-		return
-	}
-
-	{
-		err := dst.SetReadDeadline(time.Now().Add(2 * time.Second))
-		if err != nil {
-			zap.S().Debugf("Could not set read deadline: %+v", err)
-		}
-	}
 }
 
 type WriteCloser interface {
