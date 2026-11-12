@@ -42,6 +42,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 type tstSecretMan struct {
@@ -499,4 +501,233 @@ func TestSecretManagerConcurrentCreate(t *testing.T) {
 	require.Nil(t, err)
 	require.Len(t, items, 1)
 	assert.True(t, pbutils.IsEqual(winners[0], items[0]))
+}
+
+func newSecretMsg() proto.Message {
+	return &corev1.Secret{}
+}
+
+func newSecretWatchEvent(typ string, items ...umetav1.ResourceObjectI) *rmetav1.WatchEvent {
+	ret := &rmetav1.WatchEvent{
+		Event: &rmetav1.WatchEvent_Event{
+			ApiVersion: ucorev1.APIVersion,
+			Kind:       ucorev1.KindSecret,
+		},
+	}
+
+	switch typ {
+	case eventTypeCreate:
+		ret.Event.Type = &rmetav1.WatchEvent_Event_Create_{
+			Create: &rmetav1.WatchEvent_Event_Create{Item: pbutils.MessageToAnyMust(items[0])},
+		}
+	case eventTypeUpdate:
+		ret.Event.Type = &rmetav1.WatchEvent_Event_Update_{
+			Update: &rmetav1.WatchEvent_Event_Update{
+				NewItem: pbutils.MessageToAnyMust(items[0]),
+				OldItem: pbutils.MessageToAnyMust(items[1]),
+			},
+		}
+	case eventTypeDelete:
+		ret.Event.Type = &rmetav1.WatchEvent_Event_Delete_{
+			Delete: &rmetav1.WatchEvent_Event_Delete{Item: pbutils.MessageToAnyMust(items[0])},
+		}
+	}
+
+	return ret
+}
+
+func getSecretWatchEventItems(t *testing.T, ev *rmetav1.WatchEvent) []*corev1.Secret {
+	t.Helper()
+	var items []*anypb.Any
+	switch getEventType(ev) {
+	case eventTypeCreate:
+		items = append(items, ev.Event.GetCreate().Item)
+	case eventTypeUpdate:
+		items = append(items, ev.Event.GetUpdate().NewItem, ev.Event.GetUpdate().OldItem)
+	case eventTypeDelete:
+		items = append(items, ev.Event.GetDelete().Item)
+	}
+	var ret []*corev1.Secret
+	for _, itm := range items {
+		secret := &corev1.Secret{}
+		require.Nil(t, itm.UnmarshalTo(secret))
+		ret = append(ret, secret)
+	}
+	return ret
+}
+
+func TestSecretWatchData(t *testing.T) {
+	for _, hasSecretManager := range []bool{false, true} {
+		t.Run(fmt.Sprintf("secretManager-%t", hasSecretManager), func(t *testing.T) {
+			srv := newTestServer(t, nil)
+			if hasSecretManager {
+				backend := newTstSecretMan(t)
+				srv.hasSecretManager = true
+				srv.secretmanC = &testSecretManClient{
+					get: backend.GetSecret, set: backend.SetSecret,
+					list: backend.ListSecret, delete: backend.DeleteSecret,
+				}
+			}
+			ctx := t.Context()
+			require.Nil(t, srv.eventHub.Start(ctx))
+			streamKey := getRscStreamKey(ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+			startID, err := srv.eventHub.getLastID(ctx, streamKey)
+			require.Nil(t, err)
+			stream := newFakeStream(ctx)
+			go srv.doHandleStreamRequest(&rmetav1.WatchOptions{SkipInitial: true}, stream,
+				ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+			require.Eventually(t, func() bool {
+				return srv.eventHub.hasSubscribers(streamKey)
+			}, 10*time.Second, 50*time.Millisecond)
+
+			chain := utilrand.GetRandomString(32)
+			values := []string{utilrand.GetRandomString(32), utilrand.GetRandomString(32)}
+			created, err := srv.doCreate(ctx, &corev1.Secret{
+				Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+				Spec: &corev1.Secret_Spec{
+					Data: &corev1.Secret_Spec_Data{Type: &corev1.Secret_Spec_Data_Value{Value: chain}},
+				},
+				Data: &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: values[0]}},
+			}, ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+			require.Nil(t, err)
+			uid := created.GetMetadata().Uid
+			assert.Equal(t, values[0], created.(*corev1.Secret).Data.GetValue())
+
+			ev := stream.waitFor(eventTypeCreate, uid, newSecretMsg, 30*time.Second)
+			require.NotNil(t, ev)
+			items := getSecretWatchEventItems(t, ev)
+			assert.Equal(t, values[0], items[0].Data.GetValue())
+			assert.Equal(t, chain, items[0].Spec.Data.GetValue())
+
+			created.(*corev1.Secret).Data = &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{Value: values[1]},
+			}
+			updated, old, err := srv.doUpdate(ctx, created, ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+			require.Nil(t, err)
+			assert.Equal(t, values[1], updated.(*corev1.Secret).Data.GetValue())
+			assert.Equal(t, values[0], old.(*corev1.Secret).Data.GetValue())
+
+			ev = stream.waitFor(eventTypeUpdate, uid, newSecretMsg, 30*time.Second)
+			require.NotNil(t, ev)
+			items = getSecretWatchEventItems(t, ev)
+			assert.Equal(t, values[1], items[0].Data.GetValue())
+			assert.Equal(t, updated.GetMetadata().ResourceVersion, items[0].Metadata.ResourceVersion)
+			assert.Nil(t, items[1].Data)
+			assert.Equal(t, chain, items[1].Spec.Data.GetValue())
+			assert.Equal(t, old.GetMetadata().ResourceVersion, items[1].Metadata.ResourceVersion)
+
+			deleted, err := srv.doDelete(ctx, &rmetav1.DeleteOptions{Uid: uid},
+				ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+			require.Nil(t, err)
+			assert.Equal(t, values[1], deleted.(*corev1.Secret).Data.GetValue())
+
+			ev = stream.waitFor(eventTypeDelete, uid, newSecretMsg, 30*time.Second)
+			require.NotNil(t, ev)
+			items = getSecretWatchEventItems(t, ev)
+			assert.Nil(t, items[0].Data)
+			assert.Equal(t, chain, items[0].Spec.Data.GetValue())
+
+			entries, err := srv.redisC.XRange(ctx, streamKey, "("+startID, "+").Result()
+			require.Nil(t, err)
+			var count int
+			for _, entry := range entries {
+				data, ok := entry.Values[rscStreamFieldData].(string)
+				require.True(t, ok)
+				for _, value := range values {
+					assert.NotContains(t, data, value)
+				}
+				ev := &rmetav1.WatchEvent{}
+				require.Nil(t, pbutils.Unmarshal([]byte(data), ev))
+				if getEventItemUID(ev, newSecretMsg()) != uid {
+					continue
+				}
+				count++
+				for _, itm := range getSecretWatchEventItems(t, ev) {
+					assert.Nil(t, itm.Data)
+					assert.Equal(t, chain, itm.Spec.Data.GetValue())
+				}
+			}
+			assert.Equal(t, 3, count)
+		})
+	}
+}
+
+func TestGetSecretWatchEvent(t *testing.T) {
+	srv := newTestServer(t, nil)
+	backend := newTstSecretMan(t)
+	var getErr error
+	srv.hasSecretManager = true
+	srv.secretmanC = &testSecretManClient{
+		get: func(ctx context.Context, req *csecretmanv1.GetSecretRequest) (*csecretmanv1.GetSecretResponse, error) {
+			if getErr != nil {
+				return nil, getErr
+			}
+			return backend.GetSecret(ctx, req)
+		},
+		set: backend.SetSecret, list: backend.ListSecret, delete: backend.DeleteSecret,
+	}
+	ctx := t.Context()
+	created, err := srv.doCreate(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: utilrand.GetRandomStringCanonical(8)},
+		Data:     &corev1.Secret_Data{Type: &corev1.Secret_Data_Value{Value: "private"}},
+	}, ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+	require.Nil(t, err)
+	stripped := withoutSecretData(created)
+	assert.Nil(t, stripped.(*corev1.Secret).Data)
+	assert.Equal(t, "private", created.(*corev1.Secret).Data.GetValue())
+	assert.Same(t, stripped, withoutSecretData(stripped))
+	user := newTestUser("user")
+	assert.Same(t, user, withoutSecretData(user))
+	missing := pbutils.Clone(stripped).(*corev1.Secret)
+	missing.Metadata.Uid = vutils.UUIDv4()
+
+	for _, typ := range []string{eventTypeCreate, eventTypeUpdate} {
+		ev := newSecretWatchEvent(typ, stripped, stripped)
+		ret, err := srv.getSecretWatchEvent(ctx, ev, ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+		require.Nil(t, err)
+		items := getSecretWatchEventItems(t, ret)
+		assert.True(t, pbutils.IsEqual(created, items[0]))
+		for _, itm := range items[1:] {
+			assert.Nil(t, itm.Data)
+		}
+		for _, itm := range getSecretWatchEventItems(t, ev) {
+			assert.Nil(t, itm.Data)
+		}
+
+		ret, err = srv.getSecretWatchEvent(ctx, newSecretWatchEvent(typ, missing, missing),
+			ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+		require.Nil(t, err)
+		assert.Nil(t, ret)
+	}
+
+	ev := newSecretWatchEvent(eventTypeDelete, missing)
+	ret, err := srv.getSecretWatchEvent(ctx, ev, ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+	require.Nil(t, err)
+	assert.Same(t, ev, ret)
+
+	getErr = status.Error(codes.Unavailable, "unavailable")
+	_, err = srv.getSecretWatchEvent(ctx, newSecretWatchEvent(eventTypeCreate, stripped),
+		ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+
+	streamKey := getRscStreamKey(ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+	stream := newFakeStream(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.doHandleStreamRequest(&rmetav1.WatchOptions{SkipInitial: true}, stream,
+			ucorev1.API, ucorev1.Version, ucorev1.KindSecret)
+	}()
+	require.Eventually(t, func() bool {
+		return srv.eventHub.hasSubscribers(streamKey)
+	}, 10*time.Second, 50*time.Millisecond)
+	streamID := fmt.Sprintf("%d-0", time.Now().Add(time.Hour).UnixMilli())
+	srv.eventHub.dispatch(streamKey, streamID, newSecretWatchEvent(eventTypeCreate, missing))
+	srv.eventHub.dispatch(streamKey, streamID, newSecretWatchEvent(eventTypeCreate, stripped))
+	select {
+	case err := <-errCh:
+		assert.Equal(t, codes.Unavailable, status.Code(err))
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "Timed out waiting for the Watch to fail")
+	}
+	assert.Empty(t, stream.getMsgs())
 }

@@ -21,11 +21,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 const (
@@ -91,4 +95,68 @@ func (s *Server) publishMessage(ctx context.Context, api, version, kind string, 
 	}
 
 	return nil
+}
+
+func (s *Server) getWatchEventItem(obj umetav1.ResourceObjectI, kind string) *anypb.Any {
+	if s.isTypeSecret(kind) {
+		obj = withoutSecretData(obj)
+	}
+
+	return pbutils.MessageToAnyMust(obj)
+}
+
+func withoutSecretData(obj umetav1.ResourceObjectI) umetav1.ResourceObjectI {
+	fd := obj.ProtoReflect().Descriptor().Fields().ByName("data")
+	if fd == nil || !obj.ProtoReflect().Has(fd) {
+		return obj
+	}
+
+	ret := pbutils.Clone(obj).(umetav1.ResourceObjectI)
+	ret.ProtoReflect().Clear(fd)
+
+	return ret
+}
+
+func (s *Server) getSecretWatchEvent(ctx context.Context,
+	ev *rmetav1.WatchEvent, api, version, kind string) (*rmetav1.WatchEvent, error) {
+
+	var item *anypb.Any
+
+	switch {
+	case ev.Event.GetCreate() != nil:
+		item = ev.Event.GetCreate().Item
+	case ev.Event.GetUpdate() != nil:
+		item = ev.Event.GetUpdate().NewItem
+	default:
+		return ev, nil
+	}
+
+	obj, err := s.opts.NewResourceObject(api, version, kind)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := pbutils.AnyToMessage(item, obj); err != nil {
+		return nil, err
+	}
+
+	cur, err := s.doGet(ctx, &rmetav1.GetOptions{
+		Uid: obj.GetMetadata().GetUid(),
+	}, api, version, kind)
+	if err != nil {
+		if grpcerr.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	ret := pbutils.Clone(ev).(*rmetav1.WatchEvent)
+
+	if ret.Event.GetUpdate() != nil {
+		ret.Event.GetUpdate().NewItem = pbutils.MessageToAnyMust(cur)
+	} else {
+		ret.Event.GetCreate().Item = pbutils.MessageToAnyMust(cur)
+	}
+
+	return ret, nil
 }

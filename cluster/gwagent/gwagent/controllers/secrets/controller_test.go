@@ -57,6 +57,7 @@ func TestController(t *testing.T) {
 		name      string
 		mutate    func(*corev1.Secret)
 		valid     bool
+		deleted   bool
 		nilServer bool
 		err       error
 	}{
@@ -64,12 +65,13 @@ func TestController(t *testing.T) {
 		{name: "nilServer", nilServer: true},
 		{name: "serverError", valid: true, err: fmt.Errorf("certificate update failed")},
 		{name: "otherSecret", mutate: func(sec *corev1.Secret) { sec.Metadata.Name = "other" }},
-		{name: "empty", mutate: func(sec *corev1.Secret) {
+		{name: "empty", deleted: true, mutate: func(sec *corev1.Secret) {
 			sec.Spec = &corev1.Secret_Spec{}
 			sec.Status = &corev1.Secret_Status{}
 		}},
-		{name: "invalidCertificate", mutate: func(sec *corev1.Secret) { ucorev1.ToSecret(sec).SetCertificate("invalid", string(key)) }},
-		{name: "invalidKey", mutate: func(sec *corev1.Secret) { ucorev1.ToSecret(sec).SetCertificate(chain, "invalid") }},
+		{name: "noData", deleted: true, mutate: func(sec *corev1.Secret) { sec.Data = nil }},
+		{name: "invalidCertificate", deleted: true, mutate: func(sec *corev1.Secret) { ucorev1.ToSecret(sec).SetCertificate("invalid", string(key)) }},
+		{name: "invalidKey", deleted: true, mutate: func(sec *corev1.Secret) { ucorev1.ToSecret(sec).SetCertificate(chain, "invalid") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sec := pbutils.Clone(ready).(*corev1.Secret)
@@ -89,6 +91,9 @@ func TestController(t *testing.T) {
 				assert.Same(t, sec, srv.certificates[0])
 				assert.Same(t, sec, srv.certificates[1])
 				assert.Nil(t, srv.certificates[2])
+			} else if tc.deleted {
+				require.Len(t, srv.certificates, 1)
+				assert.Nil(t, srv.certificates[0])
 			} else {
 				assert.Empty(t, srv.certificates)
 			}

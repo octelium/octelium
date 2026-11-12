@@ -223,6 +223,16 @@ func (s *Server) doHandleStreamRequest(req *rmetav1.WatchOptions, stream grpc.Se
 		case <-sub.Done():
 			return errWatchSubscriberClosed
 		case ev := <-sub.ch:
+			if s.isTypeSecret(kind) {
+				ev, err = s.getSecretWatchEvent(ctx, ev, api, version, kind)
+				if err != nil {
+					return err
+				}
+				if ev == nil {
+					continue
+				}
+			}
+
 			if err := stream.SendMsg(ev); err != nil {
 				return err
 			}

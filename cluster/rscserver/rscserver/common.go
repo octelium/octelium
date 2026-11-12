@@ -777,7 +777,7 @@ func (s *Server) doPostCreate(ctx context.Context, obj umetav1.ResourceObjectI, 
 			Kind:       kind,
 			Type: &rmetav1.WatchEvent_Event_Create_{
 				Create: &rmetav1.WatchEvent_Event_Create{
-					Item: pbutils.MessageToAnyMust(obj),
+					Item: s.getWatchEventItem(obj, kind),
 				},
 			},
 		},
@@ -802,8 +802,8 @@ func (s *Server) doPostUpdate(ctx context.Context, new, old umetav1.ResourceObje
 			Kind:       kind,
 			Type: &rmetav1.WatchEvent_Event_Update_{
 				Update: &rmetav1.WatchEvent_Event_Update{
-					NewItem: pbutils.MessageToAnyMust(new),
-					OldItem: pbutils.MessageToAnyMust(old),
+					NewItem: s.getWatchEventItem(new, kind),
+					OldItem: s.getWatchEventItem(old, kind),
 				},
 			},
 		},
@@ -837,7 +837,7 @@ func (s *Server) doPostDeletePublish(ctx context.Context, obj umetav1.ResourceOb
 			Kind:       kind,
 			Type: &rmetav1.WatchEvent_Event_Delete_{
 				Delete: &rmetav1.WatchEvent_Event_Delete{
-					Item: pbutils.MessageToAnyMust(obj),
+					Item: s.getWatchEventItem(obj, kind),
 				},
 			},
 		},

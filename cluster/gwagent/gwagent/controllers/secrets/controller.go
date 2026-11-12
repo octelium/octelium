@@ -59,11 +59,15 @@ func (c *Controller) OnUpdate(ctx context.Context, new, old *corev1.Secret) erro
 }
 
 func (c *Controller) OnDelete(ctx context.Context, secret *corev1.Secret) error {
-	if c.isReadyClusterCrt(secret) && c.srv != nil {
+	if c.isClusterCrt(secret) && c.srv != nil {
 		return c.srv.SetClusterCertificate(nil)
 	}
 
 	return nil
+}
+
+func (c *Controller) isClusterCrt(crt *corev1.Secret) bool {
+	return crt.Metadata.Name == vutils.ClusterCertSecretName
 }
 
 func (c *Controller) isReadyClusterCrt(crt *corev1.Secret) bool {

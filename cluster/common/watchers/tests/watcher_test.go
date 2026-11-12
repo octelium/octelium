@@ -359,3 +359,112 @@ func TestWatcherResyncAfterLostEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestWatcherSecretData(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	t.Setenv("OCTELIUM_REDIS_DATABASE", fmt.Sprintf("%d", utilrand.GetRandomRangeMath(1, 15)))
+
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	name := utilrand.GetRandomStringCanonical(8)
+	values := []string{utilrand.GetRandomString(32), utilrand.GetRandomString(32)}
+
+	var mu sync.Mutex
+	var creates, deletes []*corev1.Secret
+	var updates [][2]*corev1.Secret
+
+	err = watchers.NewCoreV1(fakeC.OcteliumC).Secret(ctx, nil,
+		func(ctx context.Context, item *corev1.Secret) error {
+			if item.Metadata.Name == name {
+				mu.Lock()
+				creates = append(creates, item)
+				mu.Unlock()
+			}
+			return nil
+		},
+		func(ctx context.Context, new, old *corev1.Secret) error {
+			if new.Metadata.Name == name {
+				mu.Lock()
+				updates = append(updates, [2]*corev1.Secret{new, old})
+				mu.Unlock()
+			}
+			return nil
+		},
+		func(ctx context.Context, item *corev1.Secret) error {
+			if item.Metadata.Name == name {
+				mu.Lock()
+				deletes = append(deletes, item)
+				mu.Unlock()
+			}
+			return nil
+		})
+	require.Nil(t, err)
+
+	waitFor := func(fn func() bool) {
+		require.Eventually(t, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return fn()
+		}, 30*time.Second, 50*time.Millisecond)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	secret, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+		Metadata: &metav1.Metadata{
+			Name: name,
+		},
+		Spec:   &corev1.Secret_Spec{},
+		Status: &corev1.Secret_Status{},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{
+				Value: values[0],
+			},
+		},
+	})
+	require.Nil(t, err)
+
+	waitFor(func() bool { return len(creates) == 1 })
+
+	secret.Data = &corev1.Secret_Data{
+		Type: &corev1.Secret_Data_Value{
+			Value: values[1],
+		},
+	}
+	secret, err = fakeC.OcteliumC.CoreC().UpdateSecret(ctx, secret)
+	require.Nil(t, err)
+
+	waitFor(func() bool { return len(updates) == 1 })
+
+	_, err = fakeC.OcteliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{Uid: secret.Metadata.Uid})
+	require.Nil(t, err)
+
+	waitFor(func() bool { return len(deletes) == 1 })
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	assert.Equal(t, values[0], creates[0].Data.GetValue())
+	assert.Equal(t, values[1], updates[0][0].Data.GetValue())
+	assert.Equal(t, secret.Metadata.ResourceVersion, updates[0][0].Metadata.ResourceVersion)
+	assert.Nil(t, updates[0][1].Data)
+	assert.Equal(t, secret.Metadata.LastResourceVersion, updates[0][1].Metadata.ResourceVersion)
+	assert.Nil(t, deletes[0].Data)
+	assert.Equal(t, secret.Metadata.Uid, deletes[0].Metadata.Uid)
+
+	entries, err := redisutils.NewClient().XRange(ctx, "octelium:rsc:stream:core:v1:Secret", "-", "+").Result()
+	require.Nil(t, err)
+	assert.NotEmpty(t, entries)
+	for _, entry := range entries {
+		for _, value := range values {
+			assert.NotContains(t, entry.Values["d"], value)
+		}
+	}
+}
