@@ -523,7 +523,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	trust, err := rdp.GetUpstreamTLSTrust(reqCtx.ServiceConfig)
 	if err != nil {
-		zap.L().Debug("Could not resolve webrdp upstream TLS trust", zap.Error(err))
+		zap.L().Warn("Could not resolve webrdp upstream TLS trust", zap.Error(err))
 		writeRDCleanPathError(ctx, ws, encodeRDCleanPathGeneralError())
 		ws.Close(websocket.StatusInternalError, "could not resolve upstream TLS trust")
 		return

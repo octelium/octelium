@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -28,10 +29,13 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 	"unicode/utf16"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
+	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,12 +143,35 @@ func TestCertificatePin(t *testing.T) {
 }
 
 func TestUpstreamTLSTrust(t *testing.T) {
+	for _, cfg := range []*corev1.Service_Spec_Config{
+		nil,
+		{},
+		{
+			Type: &corev1.Service_Spec_Config_Rdp{
+				Rdp: &corev1.Service_Spec_Config_RDP{
+					Auth: &corev1.Service_Spec_Config_RDP_Auth{
+						User: "user",
+						Password: &corev1.Service_Spec_Config_RDP_Auth_Password{
+							Type: &corev1.Service_Spec_Config_RDP_Auth_Password_FromSecret{
+								FromSecret: "secret",
+							},
+						},
+					},
+				},
+			},
+		},
+	} {
+		got, err := GetUpstreamTLSTrust(cfg)
+		assert.NotNil(t, err)
+		assert.Nil(t, got)
+	}
+
 	for _, tc := range []struct {
 		name string
 		tls  *corev1.Service_Spec_Config_RDP_UpstreamTLS
 		fail bool
 	}{
-		{"default", nil, false},
+		{"default", nil, true},
 		{"empty trust", &corev1.Service_Spec_Config_RDP_UpstreamTLS{}, true},
 		{"allow any", &corev1.Service_Spec_Config_RDP_UpstreamTLS{AllowAnyCert: true}, false},
 		{"valid pin", &corev1.Service_Spec_Config_RDP_UpstreamTLS{PinnedCertSHA256: []string{strings.Repeat("ab", 32)}}, false},
@@ -163,6 +190,136 @@ func TestUpstreamTLSTrust(t *testing.T) {
 			assert.NotNil(t, got)
 		})
 	}
+}
+
+func TestPerformHandshakeUpstreamTLSTrust(t *testing.T) {
+	ca, err := utils_cert.GenerateCARoot()
+	require.Nil(t, err)
+	upstreamCrt, err := utils_cert.GenerateCertificateTmp("windows.internal", ca, true)
+	require.Nil(t, err)
+	otherCrt, err := utils_cert.GenerateCertificateTmp("windows.internal", ca, true)
+	require.Nil(t, err)
+
+	getPin := func(crt *utils_cert.Cert) string {
+		sum := sha256.Sum256(crt.Certificate.Raw)
+		return hex.EncodeToString(sum[:])
+	}
+
+	credential := &Credential{
+		Username: "user",
+		Password: utilrand.GetRandomString(32),
+	}
+
+	for _, tc := range []struct {
+		name string
+		tls  *corev1.Service_Spec_Config_RDP_UpstreamTLS
+		fail bool
+	}{
+		{"other pin", &corev1.Service_Spec_Config_RDP_UpstreamTLS{
+			PinnedCertSHA256: []string{getPin(otherCrt)},
+		}, true},
+		{"other pin with allow any", &corev1.Service_Spec_Config_RDP_UpstreamTLS{
+			PinnedCertSHA256: []string{getPin(otherCrt)},
+			AllowAnyCert:     true,
+		}, true},
+		{"pin", &corev1.Service_Spec_Config_RDP_UpstreamTLS{
+			PinnedCertSHA256: []string{getPin(otherCrt), getPin(upstreamCrt)},
+		}, false},
+		{"allow any", &corev1.Service_Spec_Config_RDP_UpstreamTLS{
+			AllowAnyCert: true,
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+
+			trust, err := GetUpstreamTLSTrust(&corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Rdp{Rdp: &corev1.Service_Spec_Config_RDP{UpstreamTLS: tc.tls}},
+			})
+			require.Nil(t, err)
+
+			addr, recvCh := runTLSOnlyUpstream(t, upstreamCrt)
+
+			handshake, err := PerformHandshake(ctx, &HandshakeParams{
+				Upstream:   &loadbalancer.Upstream{HostPort: addr},
+				Credential: credential,
+				Trust:      trust,
+			})
+			if tc.fail {
+				assert.NotNil(t, err)
+				assert.Nil(t, handshake)
+				assert.Empty(t, <-recvCh)
+				return
+			}
+			require.Nil(t, err)
+			assert.Equal(t, [][]byte{upstreamCrt.Certificate.Raw}, handshake.CertChain)
+
+			packet := buildClientInfoPacket(t, []string{"", "", "", "", ""}, 0x00000010, nil)
+			expected, matched, err := rewriteClientInfoCredential(packet, credential)
+			require.Nil(t, err)
+			require.True(t, matched)
+
+			downstream, downstreamPeer := net.Pipe()
+			go func() {
+				downstreamPeer.Write(packet)
+				downstreamPeer.Close()
+			}()
+
+			Relay(ctx, downstream, handshake.TLSConn, handshake.RelayOptions)
+			assert.Equal(t, expected, <-recvCh)
+		})
+	}
+}
+
+func runTLSOnlyUpstream(t *testing.T, crt *utils_cert.Cert) (string, chan []byte) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.Nil(t, err)
+	t.Cleanup(func() {
+		lis.Close()
+	})
+
+	ret := make(chan []byte, 1)
+
+	go func() {
+		conn, err := lis.Accept()
+		if err != nil {
+			ret <- nil
+			return
+		}
+		defer conn.Close()
+
+		if _, err := ReadTPKT(conn); err != nil {
+			ret <- nil
+			return
+		}
+
+		if _, err := conn.Write([]byte{
+			0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x02, 0x00, 0x08, 0x00, 0x01,
+			0x00, 0x00, 0x00,
+		}); err != nil {
+			ret <- nil
+			return
+		}
+
+		tlsConn := tls.Server(conn, &tls.Config{
+			Certificates: []tls.Certificate{
+				{
+					Certificate: [][]byte{crt.Certificate.Raw},
+					PrivateKey:  crt.PrivateKey,
+				},
+			},
+		})
+		if err := tlsConn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			ret <- nil
+			return
+		}
+
+		data, _ := io.ReadAll(tlsConn)
+		ret <- data
+	}()
+
+	return lis.Addr().String(), ret
 }
 
 func TestClientInfoTextBounds(t *testing.T) {

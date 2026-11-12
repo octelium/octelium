@@ -717,6 +717,13 @@ func TestWebSocketUsesSelectedConfig(t *testing.T) {
 								Url: fmt.Sprintf("tcp://localhost:%d", cfg1Port),
 							},
 						},
+						Type: &corev1.Service_Spec_Config_Rdp{
+							Rdp: &corev1.Service_Spec_Config_RDP{
+								UpstreamTLS: &corev1.Service_Spec_Config_RDP_UpstreamTLS{
+									AllowAnyCert: true,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -779,6 +786,108 @@ func TestWebSocketUsesSelectedConfig(t *testing.T) {
 	select {
 	case <-defaultCh:
 		t.Fatal("The default Config upstream must not be used")
+	default:
+	}
+}
+
+func TestWebSocketRequiresUpstreamTLSTrust(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  fakeC.OcteliumC,
+		IsEmbedded: true,
+	})
+
+	upstreamPort := tests.GetPort()
+	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", upstreamPort))
+	assert.Nil(t, err)
+	defer lis.Close()
+
+	acceptCh := make(chan struct{}, 1)
+	go func() {
+		conn, err := lis.Accept()
+		if err != nil {
+			return
+		}
+		conn.Close()
+		acceptCh <- struct{}{}
+	}()
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			Port: uint32(tests.GetPort()),
+			Mode: corev1.Service_Spec_RDP_WEB,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("tcp://localhost:%d", upstreamPort),
+					},
+				},
+				Type: &corev1.Service_Spec_Config_Rdp{
+					Rdp: &corev1.Service_Spec_Config_RDP{},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err, "%+v", err)
+
+	srv, err := newServer(ctx, fakeC.OcteliumC, svc)
+	assert.Nil(t, err)
+
+	authResp := &coctovigilv1.AuthenticateAndAuthorizeResponse{
+		RequestContext: &corev1.RequestContext{
+			Service: svc,
+		},
+	}
+
+	mux := srv.getMux()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				Service:       svc,
+				AuthResponse:  authResp,
+				ServiceConfig: vigilutils.GetServiceConfig(r.Context(), authResp),
+			})))
+	}))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + webSocketPath
+
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
+	assert.Nil(t, err, "%+v", err)
+	defer ws.CloseNow()
+
+	rdcpReq := derWrap(derTagSequence, concatDER(
+		derWrapContext(0, derEncodeUint64(rdcleanpathVersion1)),
+		derWrapContext(2, derWrap(derTagUTF8String, []byte("rdp"))),
+		derWrapContext(6, derWrap(derTagOctetString, []byte(utilrand.GetRandomString(32)))),
+	))
+
+	err = ws.Write(ctx, websocket.MessageBinary, rdcpReq)
+	assert.Nil(t, err)
+
+	typ, data, err := ws.Read(ctx)
+	assert.Nil(t, err)
+	assert.Equal(t, websocket.MessageBinary, typ)
+	assert.Equal(t, encodeRDCleanPathGeneralError(), data)
+
+	_, _, err = ws.Read(ctx)
+	assert.Equal(t, websocket.StatusInternalError, websocket.CloseStatus(err))
+
+	select {
+	case <-acceptCh:
+		t.Fatal("The upstream must not be dialed without an upstream TLS trust")
 	default:
 	}
 }

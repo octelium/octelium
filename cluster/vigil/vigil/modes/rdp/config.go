@@ -66,15 +66,7 @@ func GetInjectedCredential(ctx context.Context, secretMan *secretman.SecretManag
 }
 
 func GetUpstreamTLSTrust(cfg *corev1.Service_Spec_Config) (*TLSTrustPolicy, error) {
-	if cfg == nil || cfg.GetRdp() == nil {
-		return &TLSTrustPolicy{allowAnyCert: true}, nil
-	}
-
 	upstreamTLS := cfg.GetRdp().GetUpstreamTLS()
-	if upstreamTLS == nil {
-		zap.L().Warn("RDP upstream TLS trust is not configured, accepting any upstream certificate")
-		return &TLSTrustPolicy{allowAnyCert: true}, nil
-	}
 
 	var pins [][32]byte
 	for _, raw := range upstreamTLS.GetPinnedCertSHA256() {
@@ -90,7 +82,7 @@ func GetUpstreamTLSTrust(cfg *corev1.Service_Spec_Config) (*TLSTrustPolicy, erro
 			zap.L().Warn("RDP upstream TLS trust allows any upstream certificate")
 			return &TLSTrustPolicy{allowAnyCert: true}, nil
 		}
-		return nil, errors.Errorf("RDP upstream TLS trust has neither pinned fingerprints nor allowAnyCert")
+		return nil, errors.Errorf("RDP upstreamTLS must set either pinnedCertSHA256 or allowAnyCert")
 	}
 
 	return &TLSTrustPolicy{pinnedSHA256: pins}, nil
