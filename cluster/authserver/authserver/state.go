@@ -83,21 +83,31 @@ func (s *server) saveLoginState(ctx context.Context, state *loginState) error {
 }
 
 func (s *server) getLoginStateFromCallback(r *http.Request) (*loginState, error) {
+	stateIDCookie, err := getStateIDFromCookie(r)
+	if err != nil {
+		return nil, errors.Errorf("Could not get state ID from cookie")
+	}
+
 	var stateID string
 
 	switch r.Method {
 	case http.MethodGet:
-		if errMsg := r.FormValue("error"); errMsg != "" {
+		q := r.URL.Query()
+		if errMsg := q.Get("error"); errMsg != "" {
 			s.setLoginStateProviderError(r)
-			return nil, errors.Errorf("%s", r.FormValue("error_description"))
+			return nil, errors.Errorf("%s", q.Get("error_description"))
 		}
 
-		if stateID = r.FormValue("state"); stateID == "" {
+		if stateID = q.Get("state"); stateID == "" {
 			return nil, errors.Errorf("No state found")
 		}
 
 	case http.MethodPost:
-		if stateID = r.PostFormValue("RelayState"); stateID == "" {
+		if err := r.ParseForm(); err != nil {
+			return nil, errors.Errorf("Could not parse callback form: %v", err)
+		}
+
+		if stateID = r.PostForm.Get("RelayState"); stateID == "" {
 			return nil, errors.Errorf("No state found")
 		}
 
@@ -107,11 +117,6 @@ func (s *server) getLoginStateFromCallback(r *http.Request) (*loginState, error)
 
 	if !rgxStateID.MatchString(stateID) {
 		return nil, errors.Errorf("Invalid state ID")
-	}
-
-	stateIDCookie, err := getStateIDFromCookie(r)
-	if err != nil {
-		return nil, errors.Errorf("Could not get state ID from cookie")
 	}
 
 	if !utils.SecureStringEqual(stateID, stateIDCookie) {
@@ -127,7 +132,7 @@ func (s *server) setLoginStateProviderError(r *http.Request) {
 		return
 	}
 
-	stateID := r.FormValue("state")
+	stateID := r.URL.Query().Get("state")
 	if !rgxStateID.MatchString(stateID) {
 		return
 	}

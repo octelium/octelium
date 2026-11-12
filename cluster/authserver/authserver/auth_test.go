@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -2408,10 +2409,11 @@ type callbackProvider interface {
 
 type callbackTestProvider struct {
 	callbackProvider
-	idp    *corev1.IdentityProvider
-	info   *corev1.Session_Status_Authentication_Info
-	err    error
-	called bool
+	idp      *corev1.IdentityProvider
+	info     *corev1.Session_Status_Authentication_Info
+	err      error
+	called   bool
+	postForm url.Values
 }
 
 func (p *callbackTestProvider) Provider() *corev1.IdentityProvider {
@@ -2421,7 +2423,19 @@ func (p *callbackTestProvider) Provider() *corev1.IdentityProvider {
 func (p *callbackTestProvider) HandleCallback(r *http.Request,
 	login *utils.GetLoginResponse) (*corev1.Session_Status_Authentication_Info, error) {
 	p.called = true
+	p.postForm = r.PostForm
 	return p.info, p.err
+}
+
+type callbackTestBody struct {
+	io.Reader
+	n int
+}
+
+func (b *callbackTestBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	b.n += n
+	return n, err
 }
 
 func newCallbackTestEnv(t *testing.T) (*server, *admin.Server) {
@@ -2566,6 +2580,137 @@ func TestHandleAuthCallback(t *testing.T) {
 			assert.Equal(t, srv.rootURL, w.Header().Get("Location"))
 			assert.False(t, p.called)
 			assert.Empty(t, w.Result().Cookies())
+		})
+	}
+}
+
+func TestHandleAuthCallbackBody(t *testing.T) {
+	ctx := context.Background()
+	srv, adminSrv := newCallbackTestEnv(t)
+
+	usrReq := tstuser.GenUserHuman(nil)
+	usrReq.Spec.Email = fmt.Sprintf("%s@example.com", usrReq.Metadata.Name)
+	usr, err := adminSrv.CreateUser(ctx, usrReq)
+	assert.Nil(t, err)
+
+	p := &callbackTestProvider{
+		idp: &corev1.IdentityProvider{
+			Metadata: &metav1.Metadata{Name: "test-idp", Uid: utilrand.GetRandomStringCanonical(36)},
+			Spec:     &corev1.IdentityProvider_Spec{},
+			Status:   &corev1.IdentityProvider_Status{Type: corev1.IdentityProvider_Status_SAML},
+		},
+	}
+	p.info = &corev1.Session_Status_Authentication_Info{
+		Type: corev1.Session_Status_Authentication_Info_IDENTITY_PROVIDER,
+		Details: &corev1.Session_Status_Authentication_Info_IdentityProvider_{
+			IdentityProvider: &corev1.Session_Status_Authentication_Info_IdentityProvider{
+				IdentityProviderRef: umetav1.GetObjectReference(p.idp),
+				Identifier:          usr.Metadata.Name,
+				Email:               usr.Spec.Email,
+				Type:                corev1.IdentityProvider_Status_SAML,
+			},
+		},
+	}
+	srv.webProvidersC.Lock()
+	srv.webProvidersC.connectors = []utils.Provider{p}
+	srv.webProvidersC.Unlock()
+
+	samlResponse := strings.Repeat("a", 512*1024)
+	padding := strings.Repeat("a", 2*1024*1024)
+
+	urlEncoded := func(vals url.Values) (string, string) {
+		return vals.Encode(), "application/x-www-form-urlencoded"
+	}
+
+	multipartForm := func(vals url.Values) (string, string) {
+		buf := &bytes.Buffer{}
+		mw := multipart.NewWriter(buf)
+		for k := range vals {
+			assert.Nil(t, mw.WriteField(k, vals.Get(k)))
+		}
+		fw, err := mw.CreateFormFile("file", "file")
+		assert.Nil(t, err)
+		_, err = io.WriteString(fw, padding)
+		assert.Nil(t, err)
+		assert.Nil(t, mw.Close())
+		return buf.String(), mw.FormDataContentType()
+	}
+
+	tests := []struct {
+		name     string
+		method   string
+		noCookie bool
+		body     func(stateID string) (string, string)
+		read     bool
+		valid    bool
+	}{
+		{name: "Valid", method: http.MethodPost, read: true, valid: true, body: func(stateID string) (string, string) {
+			return urlEncoded(url.Values{"RelayState": {stateID}, "SAMLResponse": {samlResponse}})
+		}},
+		{name: "MissingCookie", method: http.MethodPost, noCookie: true, body: func(stateID string) (string, string) {
+			return urlEncoded(url.Values{"RelayState": {stateID}, "SAMLResponse": {samlResponse}})
+		}},
+		{name: "TooLarge", method: http.MethodPost, read: true, body: func(stateID string) (string, string) {
+			return urlEncoded(url.Values{"RelayState": {stateID}, "SAMLResponse": {padding}})
+		}},
+		{name: "Multipart", method: http.MethodPost, body: func(stateID string) (string, string) {
+			return multipartForm(url.Values{"RelayState": {stateID}})
+		}},
+		{name: "MultipartMissingCookie", method: http.MethodPost, noCookie: true, body: func(stateID string) (string, string) {
+			return multipartForm(url.Values{"RelayState": {stateID}})
+		}},
+		{name: "GetMultipart", method: http.MethodGet, body: func(stateID string) (string, string) {
+			return multipartForm(url.Values{"state": {stateID}})
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &loginState{
+				ID:          newStateID(),
+				UID:         p.idp.Metadata.Uid,
+				CallbackURL: "https://portal.example.com/home",
+				Login:       &utils.GetLoginResponse{},
+			}
+			assert.Nil(t, srv.saveLoginState(ctx, state))
+
+			content, contentType := tt.body(state.ID)
+			body := &callbackTestBody{Reader: strings.NewReader(content)}
+			req := httptest.NewRequest(tt.method, "https://example.com/callback", body)
+			req.Header.Set("Content-Type", contentType)
+			if !tt.noCookie {
+				req.AddCookie(&http.Cookie{Name: "octelium_login_state", Value: state.ID})
+			}
+
+			p.called = false
+			p.postForm = nil
+			w := httptest.NewRecorder()
+			srv.handleAuthCallback(w, req)
+			assert.Equal(t, http.StatusSeeOther, w.Code)
+			assert.Equal(t, tt.valid, p.called)
+
+			switch {
+			case tt.valid:
+				assert.Equal(t, len(content), body.n)
+			case tt.read:
+				assert.Greater(t, body.n, 0)
+				assert.Less(t, body.n, len(content))
+			default:
+				assert.Equal(t, 0, body.n)
+			}
+
+			_, err := srv.getLoginStateFromStateID(ctx, state.ID)
+			if tt.valid {
+				assert.NotNil(t, err)
+				assert.Equal(t, samlResponse, p.postForm.Get("SAMLResponse"))
+				u, err := url.Parse(w.Header().Get("Location"))
+				assert.Nil(t, err)
+				assert.Equal(t, "/callback/success", u.Path)
+			} else {
+				assert.Nil(t, err)
+				assert.Equal(t, srv.rootURL, w.Header().Get("Location"))
+				assert.Empty(t, w.Result().Cookies())
+			}
 		})
 	}
 }

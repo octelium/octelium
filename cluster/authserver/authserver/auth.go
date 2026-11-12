@@ -272,6 +272,8 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+
 	userState, err := s.getLoginStateFromCallback(r)
 	if err != nil {
 		zap.L().Debug("Could not get login state", zap.Error(err))

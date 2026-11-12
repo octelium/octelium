@@ -705,6 +705,7 @@ func TestLoginCallbackInvalidStateDoesNotConsume(t *testing.T) {
 		{name: "ProviderError", method: http.MethodGet, query: "state=" + stateID + "&error=access_denied", cookie: stateID},
 		{name: "SAMLQueryOnly", method: http.MethodPost, query: "RelayState=" + stateID, cookie: stateID},
 		{name: "SAMLWrongCookie", method: http.MethodPost, cookie: newStateID(), body: url.Values{"RelayState": {stateID}}.Encode()},
+		{name: "SAMLMalformedBody", method: http.MethodPost, cookie: stateID, body: "RelayState=" + stateID + "&SAMLResponse=%zz"},
 	}
 
 	for _, tt := range tests {
