@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -48,10 +50,11 @@ import (
 type tstSigV4CoreClient struct {
 	rcorev1.ResourceServiceClient
 	secret *corev1.Secret
+	err    error
 }
 
 func (c *tstSigV4CoreClient) GetSecret(context.Context, *rmetav1.GetOptions, ...grpc.CallOption) (*corev1.Secret, error) {
-	return c.secret, nil
+	return c.secret, c.err
 }
 
 type tstSigV4Client struct {
@@ -148,4 +151,53 @@ func TestProxySigV4EscapedPaths(t *testing.T) {
 			assert.Equal(t, http.StatusOK, rec.Code, "%s", rec.Body.String())
 		})
 	}
+}
+
+func TestProxySigV4SecretFailureAborts(t *testing.T) {
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	cfg := &corev1.Service_Spec_Config{
+		Upstream: &corev1.Service_Spec_Config_Upstream{Type: &corev1.Service_Spec_Config_Upstream_Url{Url: upstream.URL}},
+		Type: &corev1.Service_Spec_Config_Http{Http: &corev1.Service_Spec_Config_HTTP{
+			Auth: &corev1.Service_Spec_Config_HTTP_Auth{Type: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4_{
+				Sigv4: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4{
+					AccessKeyID: "AKIAEXAMPLE", Region: "us-east-1", Service: "s3",
+					SecretAccessKey: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey{
+						Type: &corev1.Service_Spec_Config_HTTP_Auth_Sigv4_SecretAccessKey_FromSecret{FromSecret: "aws-key"},
+					},
+				},
+			}},
+		}},
+	}
+	svc := newForwardedSvc(false)
+	svc.Spec.Mode = corev1.Service_Spec_HTTP
+	svc.Spec.IsAnonymous = true
+	svc.Spec.Config = cfg
+	cache, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	cache.SetService(svc)
+	client := &tstSigV4Client{core: &tstSigV4CoreClient{err: grpcutils.NotFound("")}}
+	secrets, err := secretman.New(t.Context(), client, cache)
+	require.Nil(t, err)
+	require.Nil(t, secrets.ApplyService(t.Context()))
+	s := &Server{secretMan: secrets, lbManager: loadbalancer.NewLbManager(client, cache), transports: newTransportCache()}
+	defer s.transports.closeAll()
+	reqCtx := &middlewares.RequestContext{
+		Service: svc, ServiceConfig: cfg,
+		AuthResponse: &coctovigilv1.AuthenticateAndAuthorizeResponse{RequestContext: &corev1.RequestContext{Service: svc}, Config: cfg},
+	}
+	ctx := context.WithValue(t.Context(), middlewares.CtxRequestContext, reqCtx)
+	proxy, err := s.getProxy(ctx)
+	require.Nil(t, err)
+	req := httptest.NewRequest(http.MethodGet, "https://public.example.com/bucket/key", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 downstream")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, int32(0), hits.Load())
 }

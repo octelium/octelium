@@ -60,13 +60,18 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	if err := m.setRequestHeaders(req, reqCtx); err != nil {
 		zap.L().Warn("Could not setRequestHeaders", zap.Error(err))
-		llm.WriteError(rw, &llm.WriteErrorOpts{
-			Protocol:   reqCtx.LLM.GetProtocol(),
-			HTTPStatus: http.StatusBadGateway,
-			Type:       llm.ErrTypeAPI,
-			Code:       llm.ErrCodeUpstreamAuth,
-			Message:    "Octelium: could not set the upstream provider credentials",
-		})
+		if ucorev1.ToService(reqCtx.Service).IsLLM() {
+			llm.WriteError(rw, &llm.WriteErrorOpts{
+				Protocol:   reqCtx.LLM.GetProtocol(),
+				HTTPStatus: http.StatusBadGateway,
+				Type:       llm.ErrTypeAPI,
+				Code:       llm.ErrCodeUpstreamAuth,
+				Message:    "Octelium: could not set the upstream provider credentials",
+			})
+		} else {
+			rw.Header().Set("Server", "octelium")
+			http.Error(rw, "Octelium: could not set the upstream credentials", http.StatusBadGateway)
+		}
 		return
 	}
 
@@ -221,9 +226,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			} else {
 				zap.L().Warn("Could not get Bearer Secret",
 					zap.String("secretName", authS.GetBearer().GetFromSecret()), zap.Error(err))
-				if isLLM {
-					return err
-				}
+				return err
 			}
 		} else if authS.GetBasic() != nil &&
 			authS.GetBasic().GetPassword() != nil && authS.GetBasic().GetPassword().GetFromSecret() != "" {
@@ -236,9 +239,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			} else {
 				zap.L().Warn("Could not get Basic Secret",
 					zap.String("secretName", authS.GetBasic().GetPassword().GetFromSecret()), zap.Error(err))
-				if isLLM {
-					return err
-				}
+				return err
 			}
 		} else if authS.GetCustom() != nil &&
 			authS.GetCustom().GetValue() != nil && authS.GetCustom().GetValue().GetFromSecret() != "" {
@@ -248,9 +249,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 			} else {
 				zap.L().Warn("Could not get Custom Auth Secret",
 					zap.String("secretName", authS.GetCustom().GetValue().GetFromSecret()), zap.Error(err))
-				if isLLM {
-					return err
-				}
+				return err
 			}
 		} else if authS.GetOauth2ClientCredentials() != nil &&
 			authS.GetOauth2ClientCredentials().GetClientSecret() != nil &&
@@ -266,9 +265,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 			} else {
 				zap.L().Warn("Could not get oauth2 client credentials access token", zap.Error(err))
-				if isLLM {
-					return err
-				}
+				return err
 			}
 		}
 	}
@@ -293,21 +290,30 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 		kCfg := svcCfg.GetKubernetes()
 		switch {
 		case kCfg.GetBearerToken() != nil && kCfg.GetBearerToken().GetFromSecret() != "":
-			if tknSecret, err := m.secretMan.GetByName(ctx,
-				kCfg.GetBearerToken().GetFromSecret()); err == nil {
-				req.Header.Set("Authorization",
-					fmt.Sprintf("Bearer %s", ucorev1.ToSecret(tknSecret).GetValueStr()))
+			tknSecret, err := m.secretMan.GetByName(ctx, kCfg.GetBearerToken().GetFromSecret())
+			if err != nil {
+				return err
 			}
+			req.Header.Set("Authorization",
+				fmt.Sprintf("Bearer %s", ucorev1.ToSecret(tknSecret).GetValueStr()))
 		case kCfg.GetKubeconfig() != nil && kCfg.GetKubeconfig().GetFromSecret() != "":
-			if kubeConfigSecret, err := m.secretMan.GetByName(ctx, kCfg.GetKubeconfig().GetFromSecret()); err == nil {
-				if kubeconfig, err := k8sutils.UnmarshalKubeConfigFromYAML(
-					ucorev1.ToSecret(kubeConfigSecret).GetValueBytes()); err == nil {
-					if usr := kubeconfig.GetUser(
-						kCfg.GetKubeconfig().Context); usr != nil && usr.User.Token != "" {
-						req.Header.Set("Authorization",
-							fmt.Sprintf("Bearer %s", usr.User.Token))
-					}
-				}
+			kubeConfigSecret, err := m.secretMan.GetByName(ctx, kCfg.GetKubeconfig().GetFromSecret())
+			if err != nil {
+				return err
+			}
+			kubeconfig, err := k8sutils.UnmarshalKubeConfigFromYAML(
+				ucorev1.ToSecret(kubeConfigSecret).GetValueBytes())
+			if err != nil {
+				return err
+			}
+			usr := kubeconfig.GetUser(kCfg.GetKubeconfig().Context)
+			if usr == nil {
+				return errors.Errorf("Could not find the kubeconfig user of the context %q",
+					kCfg.GetKubeconfig().Context)
+			}
+			if usr.User.Token != "" {
+				req.Header.Set("Authorization",
+					fmt.Sprintf("Bearer %s", usr.User.Token))
 			}
 		}
 	}

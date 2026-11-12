@@ -28,6 +28,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/k8sutils"
 	"github.com/octelium/octelium/cluster/common/tests"
@@ -1243,8 +1244,472 @@ func TestLLMUpstreamSecretFailsClosed(t *testing.T) {
 			ReqCtxMap:     map[string]any{},
 		}
 		req := newScrubRequest(t, reqCtx)
+		req.Header.Set("X-Api-Key", "downstream")
 
 		mdlwr := &middleware{secretMan: secretMan}
-		assert.Nil(t, mdlwr.setRequestHeaders(req, reqCtx))
+		assert.NotNil(t, mdlwr.setRequestHeaders(req, reqCtx))
 	}
+}
+
+func TestConfiguredCredentialFailureFailsClosed(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	celEngine, err := celengine.New(ctx, nil)
+	assert.Nil(t, err)
+
+	missing := utilrand.GetRandomStringCanonical(8)
+
+	authCfgs := []*corev1.Service_Spec_Config_HTTP_Auth{
+		{
+			Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_{
+				Bearer: &corev1.Service_Spec_Config_HTTP_Auth_Bearer{
+					Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_FromSecret{
+						FromSecret: missing,
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Service_Spec_Config_HTTP_Auth_Basic_{
+				Basic: &corev1.Service_Spec_Config_HTTP_Auth_Basic{
+					Username: utilrand.GetRandomStringCanonical(8),
+					Password: &corev1.Service_Spec_Config_HTTP_Auth_Basic_Password{
+						Type: &corev1.Service_Spec_Config_HTTP_Auth_Basic_Password_FromSecret{
+							FromSecret: missing,
+						},
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_{
+				Custom: &corev1.Service_Spec_Config_HTTP_Auth_Custom{
+					Header: "X-Api-Key",
+					Value: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value{
+						Type: &corev1.Service_Spec_Config_HTTP_Auth_Custom_Value_FromSecret{
+							FromSecret: missing,
+						},
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Service_Spec_Config_HTTP_Auth_Oauth2ClientCredentials{
+				Oauth2ClientCredentials: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials{
+					ClientID: utilrand.GetRandomStringCanonical(8),
+					TokenURL: "http://localhost/oauth2/token",
+					ClientSecret: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret{
+						Type: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret_FromSecret{
+							FromSecret: missing,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	getConfigs := func(authS *corev1.Service_Spec_Config_HTTP_Auth,
+		hdr *corev1.Service_Spec_Config_HTTP_Header) []*corev1.Service_Spec_Config {
+		return []*corev1.Service_Spec_Config{
+			{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Auth:   authS,
+						Header: hdr,
+					},
+				},
+			},
+			{
+				Type: &corev1.Service_Spec_Config_Mcp{
+					Mcp: &corev1.Service_Spec_Config_MCP{
+						Auth:   authS,
+						Header: hdr,
+					},
+				},
+			},
+		}
+	}
+
+	for _, authS := range authCfgs {
+		for _, isAnonymous := range []bool{false, true} {
+			for _, mode := range []corev1.Service_Spec_Config_HTTP_Header_AuthorizationMode{
+				corev1.Service_Spec_Config_HTTP_Header_AUTHORIZATION_MODE_UNSET,
+				corev1.Service_Spec_Config_HTTP_Header_PASS,
+			} {
+				for _, svcCfg := range getConfigs(authS, &corev1.Service_Spec_Config_HTTP_Header{
+					AuthorizationMode: mode,
+				}) {
+					svc := &corev1.Service{
+						Metadata: &metav1.Metadata{
+							Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+						},
+						Spec: &corev1.Service_Spec{
+							IsAnonymous: isAnonymous,
+							Config:      svcCfg,
+						},
+						Status: &corev1.Service_Status{},
+					}
+
+					isCalled := false
+					mdlwr, err := New(ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						isCalled = true
+					}), celEngine, secretMan)
+					assert.Nil(t, err)
+
+					req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/path", nil)
+					req.Header.Set("Authorization", "Bearer downstream")
+					req.Header.Set("X-Api-Key", "downstream")
+					req = req.WithContext(context.WithValue(context.Background(),
+						middlewares.CtxRequestContext,
+						&middlewares.RequestContext{
+							CreatedAt:     time.Now(),
+							Service:       svc,
+							ServiceConfig: svc.Spec.Config,
+							ReqCtxMap:     map[string]any{},
+						}))
+					rw := httptest.NewRecorder()
+					mdlwr.ServeHTTP(rw, req)
+
+					assert.False(t, isCalled)
+					assert.Equal(t, http.StatusBadGateway, rw.Code)
+					assert.Equal(t, "octelium", rw.Header().Get("Server"))
+					assert.True(t, strings.HasPrefix(rw.Header().Get("Content-Type"), "text/plain"))
+					assert.NotContains(t, rw.Body.String(), "downstream")
+				}
+			}
+		}
+	}
+}
+
+func TestKubernetesCredentialFailureFailsClosed(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	createSecret := func(value string) string {
+		sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec:   &corev1.Secret_Spec{},
+			Status: &corev1.Secret_Status{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: value,
+				},
+			},
+		})
+		assert.Nil(t, err)
+		return sec.Metadata.Name
+	}
+
+	kubeCfg := &k8sutils.KubeConfig{
+		Clusters: []k8sutils.KubeConfigCluster{
+			{
+				Name: "cluster-1",
+			},
+		},
+		Contexts: []k8sutils.KubeConfigContext{
+			{
+				Name: "ctx-1",
+				Context: k8sutils.KubeConfigContextConfig{
+					Cluster: "cluster-1",
+					User:    "user-1",
+				},
+			},
+		},
+	}
+
+	kubeCfgYAML, err := kubeCfg.MarshalToYAML()
+	assert.Nil(t, err)
+
+	missing := utilrand.GetRandomStringCanonical(8)
+	noUserKubeconfig := createSecret(string(kubeCfgYAML))
+	invalidKubeconfig := createSecret("{")
+
+	k8sCfgs := []*corev1.Service_Spec_Config_Kubernetes{
+		{
+			Type: &corev1.Service_Spec_Config_Kubernetes_BearerToken_{
+				BearerToken: &corev1.Service_Spec_Config_Kubernetes_BearerToken{
+					Type: &corev1.Service_Spec_Config_Kubernetes_BearerToken_FromSecret{
+						FromSecret: missing,
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{
+				Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+					Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{
+						FromSecret: missing,
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{
+				Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+					Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{
+						FromSecret: invalidKubeconfig,
+					},
+				},
+			},
+		},
+		{
+			Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{
+				Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+					Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{
+						FromSecret: noUserKubeconfig,
+					},
+					Context: "ctx-1",
+				},
+			},
+		},
+	}
+
+	for _, k8sCfg := range k8sCfgs {
+		for _, isAnonymous := range []bool{false, true} {
+			svc := &corev1.Service{
+				Metadata: &metav1.Metadata{
+					Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+				},
+				Spec: &corev1.Service_Spec{
+					Mode:        corev1.Service_Spec_KUBERNETES,
+					IsAnonymous: isAnonymous,
+					Config: &corev1.Service_Spec_Config{
+						Type: &corev1.Service_Spec_Config_Kubernetes_{
+							Kubernetes: k8sCfg,
+						},
+					},
+				},
+				Status: &corev1.Service_Status{},
+			}
+
+			reqCtx := &middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+				ReqCtxMap:     map[string]any{},
+			}
+			req := newScrubRequest(t, reqCtx)
+			req.Header.Set("Authorization", "Bearer downstream")
+
+			mdlwr := &middleware{secretMan: secretMan}
+			assert.NotNil(t, mdlwr.setRequestHeaders(req, reqCtx))
+		}
+	}
+
+	{
+		token := utilrand.GetRandomString(32)
+		kubeCfg.Users = []k8sutils.KubeConfigUser{
+			{
+				Name: "user-1",
+				User: k8sutils.KubeConfigUserConfig{
+					Token: token,
+				},
+			},
+		}
+
+		kubeCfgYAML, err := kubeCfg.MarshalToYAML()
+		assert.Nil(t, err)
+
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+			},
+			Spec: &corev1.Service_Spec{
+				Mode: corev1.Service_Spec_KUBERNETES,
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Kubernetes_{
+						Kubernetes: &corev1.Service_Spec_Config_Kubernetes{
+							Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_{
+								Kubeconfig: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig{
+									Type: &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{
+										FromSecret: createSecret(string(kubeCfgYAML)),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt:     time.Now(),
+			Service:       svc,
+			ServiceConfig: svc.Spec.Config,
+			ReqCtxMap:     map[string]any{},
+		}
+		req := newScrubRequest(t, reqCtx)
+
+		mdlwr := &middleware{secretMan: secretMan}
+		assert.NotNil(t, mdlwr.setRequestHeaders(req, reqCtx))
+
+		kubeCfg.CurrentContext = "ctx-1"
+		kubeCfgYAML, err = kubeCfg.MarshalToYAML()
+		assert.Nil(t, err)
+		svc.Spec.Config.GetKubernetes().GetKubeconfig().Type = &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{
+			FromSecret: createSecret(string(kubeCfgYAML)),
+		}
+
+		req = newScrubRequest(t, reqCtx)
+		assert.Nil(t, mdlwr.setRequestHeaders(req, reqCtx))
+		assert.Equal(t, fmt.Sprintf("Bearer %s", token), req.Header.Get("Authorization"))
+
+		kubeCfg.Users[0].User = k8sutils.KubeConfigUserConfig{
+			ClientCertificateData: base64.StdEncoding.EncodeToString([]byte("crt")),
+			ClientKeyData:         base64.StdEncoding.EncodeToString([]byte("key")),
+		}
+		kubeCfgYAML, err = kubeCfg.MarshalToYAML()
+		assert.Nil(t, err)
+		svc.Spec.Config.GetKubernetes().GetKubeconfig().Type = &corev1.Service_Spec_Config_Kubernetes_Kubeconfig_FromSecret{
+			FromSecret: createSecret(string(kubeCfgYAML)),
+		}
+
+		req = newScrubRequest(t, reqCtx)
+		assert.Nil(t, mdlwr.setRequestHeaders(req, reqCtx))
+		assert.Empty(t, req.Header.Get("Authorization"))
+	}
+}
+
+func TestUpstreamCredentialSecretLifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+
+	secretMan, err := secretman.New(ctx, fakeC.OcteliumC, vCache)
+	assert.Nil(t, err)
+
+	celEngine, err := celengine.New(ctx, nil)
+	assert.Nil(t, err)
+
+	secretName := utilrand.GetRandomStringCanonical(8)
+
+	createSecret := func() *corev1.Secret {
+		sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
+			Metadata: &metav1.Metadata{
+				Name: secretName,
+			},
+			Spec:   &corev1.Secret_Spec{},
+			Status: &corev1.Secret_Status{},
+			Data: &corev1.Secret_Data{
+				Type: &corev1.Secret_Data_Value{
+					Value: utilrand.GetRandomString(32),
+				},
+			},
+		})
+		assert.Nil(t, err)
+		return sec
+	}
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
+		},
+		Spec: &corev1.Service_Spec{
+			IsAnonymous: true,
+			Config: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Auth: &corev1.Service_Spec_Config_HTTP_Auth{
+							Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_{
+								Bearer: &corev1.Service_Spec_Config_HTTP_Auth_Bearer{
+									Type: &corev1.Service_Spec_Config_HTTP_Auth_Bearer_FromSecret{
+										FromSecret: secretName,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: &corev1.Service_Status{},
+	}
+	vCache.SetService(svc)
+
+	var upstreamAuth string
+	isCalled := false
+	mdlwr, err := New(ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isCalled = true
+		upstreamAuth = r.Header.Get("Authorization")
+	}), celEngine, secretMan)
+	assert.Nil(t, err)
+
+	doRequest := func() *httptest.ResponseRecorder {
+		isCalled = false
+		upstreamAuth = ""
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/path", nil)
+		req.Header.Set("Authorization", "Bearer downstream")
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+				ReqCtxMap:     map[string]any{},
+			}))
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+		return rw
+	}
+
+	sec := createSecret()
+	assert.Nil(t, secretMan.ApplyService(ctx))
+
+	rw := doRequest()
+	assert.Equal(t, http.StatusOK, rw.Code)
+	assert.True(t, isCalled)
+	assert.Equal(t, fmt.Sprintf("Bearer %s", sec.Data.GetValue()), upstreamAuth)
+
+	_, err = fakeC.OcteliumC.CoreC().DeleteSecret(ctx, &rmetav1.DeleteOptions{
+		Uid: sec.Metadata.Uid,
+	})
+	assert.Nil(t, err)
+	secretMan.Delete(sec)
+
+	rw = doRequest()
+	assert.Equal(t, http.StatusBadGateway, rw.Code)
+	assert.False(t, isCalled)
+
+	sec = createSecret()
+
+	rw = doRequest()
+	assert.Equal(t, http.StatusOK, rw.Code)
+	assert.True(t, isCalled)
+	assert.Equal(t, fmt.Sprintf("Bearer %s", sec.Data.GetValue()), upstreamAuth)
 }

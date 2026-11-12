@@ -320,12 +320,18 @@ func testVigilSecretLifecycle(t *testing.T, h *harness.H) {
 		}
 		status := http.StatusOK
 		if want == "" {
-			status = http.StatusUnauthorized
+			status = http.StatusBadGateway
 		}
 		if res.StatusCode() != status {
 			return errUnexpectedStatus(res.StatusCode(), status)
 		}
 		got := v.seen.Load()
+		if want == "" {
+			if got != nil {
+				return errors.Errorf("the request has reached the upstream")
+			}
+			return nil
+		}
 		if got == nil {
 			return errors.Errorf("the request has not reached the upstream")
 		}

@@ -28,6 +28,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	sigv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -49,6 +51,8 @@ const (
 	upstreamReadBufferSize      = 32 * 1024
 	upstreamWriteBufferSize     = 32 * 1024
 )
+
+var errUpstreamCredentials = errors.New("Could not set the upstream credentials")
 
 type transportMode int
 
@@ -91,6 +95,14 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	reqCtx := middlewares.GetCtxRequestContext(req.Context())
+
+	if sigv4Cfg := ucorev1.ToServiceConfig(reqCtx.ServiceConfig).GetHTTPAuth().GetSigv4(); sigv4Cfg != nil {
+		req, err = r.signSigV4(req, sigv4Cfg, reqCtx.GetUpstreamBody())
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	trace := &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
 			reqCtx.SetUpstreamConnection(info.Conn)
@@ -98,6 +110,40 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	return rt.RoundTrip(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
+}
+
+func (r *roundTripper) signSigV4(req *http.Request,
+	cfg *corev1.Service_Spec_Config_HTTP_Auth_Sigv4, body []byte) (*http.Request, error) {
+	ctx := req.Context()
+
+	secret, err := r.secretMan.GetByName(ctx, cfg.GetSecretAccessKey().GetFromSecret())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errUpstreamCredentials, err)
+	}
+
+	payloadHash := fmt.Sprintf("%x", sha256.Sum256(body))
+
+	ret := req.Clone(ctx)
+	ret.Header.Set("X-Amz-Content-Sha256", payloadHash)
+
+	signer := sigv4.NewSigner(func(o *sigv4.SignerOptions) {
+		o.DisableURIPathEscaping = cfg.Service == "s3"
+	})
+
+	if err := signer.SignHTTP(ctx,
+		aws.Credentials{
+			AccessKeyID:     cfg.AccessKeyID,
+			SecretAccessKey: ucorev1.ToSecret(secret).GetValueStr(),
+		},
+		ret,
+		payloadHash,
+		cfg.Service,
+		cfg.Region,
+		time.Now()); err != nil {
+		return nil, fmt.Errorf("%w: %w", errUpstreamCredentials, err)
+	}
+
+	return ret, nil
 }
 
 func (r *roundTripper) getRoundTripper(req *http.Request) (http.RoundTripper, error) {

@@ -18,7 +18,6 @@ package httpg
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -29,8 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	sigv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
@@ -119,7 +116,6 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 	cfg := reqCtx.ServiceConfig
 	httpCfg := cfg.GetHttp()
 	headerCfg := ucorev1.ToServiceConfig(cfg).GetHTTPHeader()
-	authCfg := ucorev1.ToServiceConfig(cfg).GetHTTPAuth()
 
 	if httpCfg != nil && httpCfg.Response != nil && httpCfg.Response.GetDirect() != nil {
 		return &directResponseHandler{
@@ -243,50 +239,6 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				s.domain,
 				s.forwardedObfuscatedID,
 			)
-
-			if authCfg.GetSigv4() != nil {
-
-				sigv4Opts := authCfg.GetSigv4()
-
-				secret, err := s.secretMan.GetByName(inReq.Context(),
-					sigv4Opts.GetSecretAccessKey().GetFromSecret())
-				if err != nil {
-					zap.L().Warn("Could not get sigv4 Secret", zap.Error(err))
-					return
-				}
-
-				signer := sigv4.NewSigner(func(o *sigv4.SignerOptions) {
-					o.DisableURIPathEscaping = sigv4Opts.Service == "s3"
-				})
-
-				payloadHash := fmt.Sprintf(
-					"%x",
-					sha256.Sum256(reqCtx.GetUpstreamBody()),
-				)
-				outReq.Header.Set(
-					"X-Amz-Content-Sha256",
-					payloadHash,
-				)
-
-				if err := signer.SignHTTP(
-					inReq.Context(),
-					aws.Credentials{
-						AccessKeyID:     sigv4Opts.AccessKeyID,
-						SecretAccessKey: ucorev1.ToSecret(secret).GetValueStr(),
-					},
-					outReq,
-					payloadHash,
-					sigv4Opts.Service,
-					sigv4Opts.Region,
-					time.Now(),
-				); err != nil {
-					zap.L().Warn(
-						"Could not signHTTP for sigv4",
-						zap.Error(err),
-					)
-					return
-				}
-			}
 		},
 
 		FlushInterval: time.Duration(100 * time.Millisecond),
@@ -309,6 +261,9 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				statusCode = http.StatusBadGateway
 			case errors.Is(err, context.Canceled):
 				statusCode = 499
+			case errors.Is(err, errUpstreamCredentials):
+				zap.L().Warn("Could not set the upstream credentials", zap.Error(err))
+				statusCode = http.StatusBadGateway
 			default:
 				zap.L().Warn("Could not proxy request to upstream", zap.Error(err))
 				var netErr net.Error
