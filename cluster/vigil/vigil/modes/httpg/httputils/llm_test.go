@@ -773,8 +773,24 @@ func TestParseLLMRequestBounds(t *testing.T) {
 		llmReq := ParseLLMRequest(req,
 			corev1.Service_Spec_Config_LLM_OPENAI, []byte(body))
 
+		assert.True(t, llmReq.IsBodyValid)
+		assert.True(t, llmReq.HasInvalidMembers)
 		assert.Equal(t, uint32(2), llmReq.ToolCount)
-		assert.Equal(t, []string{"ok"}, llmReq.ToolNames)
+	}
+
+	{
+		name := strings.Repeat("b", maxLLMStringLen)
+		body := fmt.Sprintf(
+			`{"model":"gpt-4o","messages":[],"tools":[{"name":%q},{"name":"ok"}]}`, name)
+
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com/v1/chat/completions", strings.NewReader(body))
+
+		llmReq := ParseLLMRequest(req,
+			corev1.Service_Spec_Config_LLM_OPENAI, []byte(body))
+
+		assert.False(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, []string{name, "ok"}, llmReq.ToolNames)
 	}
 
 	{
@@ -786,6 +802,94 @@ func TestParseLLMRequestBounds(t *testing.T) {
 
 		assert.Equal(t, corev1.RequestContext_Request_LLM_MODELS_GET, llmReq.Route)
 		assert.Empty(t, llmReq.Model)
+	}
+}
+
+func TestParseLLMRequestToolsBounds(t *testing.T) {
+	getTools := func(n int, format string) string {
+		var ret []string
+		for i := range n {
+			ret = append(ret, fmt.Sprintf(format, i))
+		}
+		return strings.Join(ret, ",")
+	}
+
+	{
+		body := fmt.Sprintf(`{"model":"gpt-4o","messages":[],"tools":[%s]}`,
+			getTools(maxLLMTools, `{"type":"function","function":{"name":"tool_%03d"}}`))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com/v1/chat/completions", strings.NewReader(body))
+
+		llmReq := ParseLLMRequest(req,
+			corev1.Service_Spec_Config_LLM_OPENAI, []byte(body))
+
+		assert.False(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, uint32(maxLLMTools), llmReq.ToolCount)
+		assert.Equal(t, maxLLMTools, len(llmReq.ToolNames))
+		assert.Equal(t, "tool_000", llmReq.ToolNames[0])
+		assert.Equal(t, fmt.Sprintf("tool_%03d", maxLLMTools-1),
+			llmReq.ToolNames[maxLLMTools-1])
+	}
+
+	{
+		body := fmt.Sprintf(`{"model":"gpt-4o","messages":[],"tools":[%s,%s]}`,
+			getTools(maxLLMToolNames, `{"type":"function","function":{"name":"aaa_%d"}}`),
+			`{"type":"function","function":{"name":"shell"}}`)
+
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com/v1/chat/completions", strings.NewReader(body))
+
+		llmReq := ParseLLMRequest(req,
+			corev1.Service_Spec_Config_LLM_OPENAI, []byte(body))
+
+		assert.False(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, maxLLMToolNames+1, len(llmReq.ToolNames))
+		assert.Contains(t, llmReq.ToolNames, "shell")
+	}
+
+	{
+		body := fmt.Sprintf(`{"model":"gpt-4o","messages":[],"tools":[%s]}`,
+			getTools(maxLLMTools+1, `{"type":"function","function":{"name":"tool_%d"}}`))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com/v1/chat/completions", strings.NewReader(body))
+
+		llmReq := ParseLLMRequest(req,
+			corev1.Service_Spec_Config_LLM_OPENAI, []byte(body))
+
+		assert.True(t, llmReq.IsBodyValid)
+		assert.True(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, uint32(maxLLMTools+1), llmReq.ToolCount)
+		assert.Empty(t, llmReq.ToolNames)
+	}
+
+	{
+		body := fmt.Sprintf(`{"model":"claude-sonnet-4-5","messages":[],"tools":[%s]}`,
+			getTools(maxLLMTools+1, `{"name":"tool_%d","input_schema":{"type":"object"}}`))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com/v1/messages", strings.NewReader(body))
+
+		llmReq := ParseLLMRequest(req,
+			corev1.Service_Spec_Config_LLM_ANTHROPIC, []byte(body))
+
+		assert.True(t, llmReq.HasInvalidMembers)
+	}
+
+	{
+		body := fmt.Sprintf(`{"contents":[],"tools":[{"functionDeclarations":[%s]}]}`,
+			getTools(maxLLMTools+1, `{"name":"tool_%d"}`))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"http://my-llm.example.com/v1beta/models/gemini-2.5-pro:generateContent",
+			strings.NewReader(body))
+
+		llmReq := ParseLLMRequest(req,
+			corev1.Service_Spec_Config_LLM_GEMINI, []byte(body))
+
+		assert.True(t, llmReq.HasInvalidMembers)
+		assert.Equal(t, uint32(maxLLMTools+1), llmReq.ToolCount)
 	}
 }
 

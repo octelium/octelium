@@ -34,6 +34,7 @@ import (
 
 const (
 	maxLLMToolNames = 64
+	maxLLMTools     = 256
 	maxLLMStringLen = 256
 	maxLLMWalkDepth = 24
 	maxLLMWalkNodes = 200000
@@ -916,6 +917,10 @@ func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) erro
 	r.HasTools = true
 	r.ToolCount = uint32(len(tools))
 
+	if len(tools) > maxLLMTools {
+		return errors.Errorf("Too many LLM tools: %d", len(tools))
+	}
+
 	for _, rawTool := range tools {
 		tool := &llmTool{}
 		if err := unmarshalLLMObject(rawTool, tool); err != nil {
@@ -926,8 +931,10 @@ func (r *LLMRequest) parseTools(raw json.RawMessage, walker *llmTextWalker) erro
 		if err != nil {
 			return err
 		}
-		if name != "" && len(name) <= maxLLMStringLen &&
-			len(r.ToolNames) < maxLLMToolNames {
+		if len(name) > maxLLMStringLen {
+			return errors.Errorf("LLM tool name is too long")
+		}
+		if name != "" {
 			r.ToolNames = append(r.ToolNames, name)
 		}
 

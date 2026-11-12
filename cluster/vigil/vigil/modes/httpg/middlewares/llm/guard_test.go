@@ -19,6 +19,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -459,6 +460,70 @@ func TestRebuildGeminiMemberAliases(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rw.Code, body)
 		assert.Contains(t, rw.Body.String(), "INVALID_ARGUMENT", body)
 	}
+}
+
+func getToolsBody(n int) string {
+	var tools []string
+	for i := range n {
+		tools = append(tools, fmt.Sprintf(`{"type":"function","function":{"name":"tool_%d"}}`, i))
+	}
+	return fmt.Sprintf(`{"model":"gpt-4o","messages":[],"tools":[%s]}`,
+		strings.Join(tools, ","))
+}
+
+func TestGuardToolsBounds(t *testing.T) {
+	cfg := &corev1.Service_Spec_Config_LLM{}
+
+	assert.True(t, serveGuard(t, http.MethodPost, "/v1/chat/completions",
+		getToolsBody(256), nil, cfg).isNext)
+
+	for _, body := range []string{
+		getToolsBody(257),
+		`{"model":"gpt-4o","messages":[],"tools":[{"type":"function","function":{"name":"` +
+			strings.Repeat("a", 257) + `"}}]}`,
+	} {
+		res := serveGuard(t, http.MethodPost, "/v1/chat/completions", body, nil, cfg)
+		assert.False(t, res.isNext)
+		assert.Equal(t, http.StatusBadRequest, res.code)
+		assert.Equal(t, ErrCodeInvalidRequest, res.errCode)
+	}
+}
+
+func TestRebuildTooManyTools(t *testing.T) {
+	ctx := context.Background()
+	body := `{"model":"gpt-4o","messages":[]}`
+
+	req := httptest.NewRequest(http.MethodPost,
+		"http://my-llm.example.com/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	reqCtx := &middlewares.RequestContext{
+		CreatedAt: time.Now(),
+		Service:   newService(),
+		ServiceConfig: &corev1.Service_Spec_Config{
+			Type: &corev1.Service_Spec_Config_Llm{Llm: &corev1.Service_Spec_Config_LLM{}},
+		},
+		Body: []byte(body),
+		LLM:  httputils.ParseLLMRequest(req, corev1.Service_Spec_Config_LLM_OPENAI, []byte(body)),
+	}
+	reqCtx.SetBodyDigest()
+
+	req = req.WithContext(context.WithValue(ctx, middlewares.CtxRequestContext, reqCtx))
+
+	reqCtx.Body = []byte(getToolsBody(257))
+
+	var isNext bool
+	mdlwr, err := NewRebuild(ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isNext = true
+	}))
+	assert.Nil(t, err)
+
+	rw := httptest.NewRecorder()
+	mdlwr.ServeHTTP(rw, req)
+
+	assert.False(t, isNext)
+	assert.True(t, reqCtx.LLM.HasInvalidMembers)
+	assert.Equal(t, http.StatusBadRequest, rw.Code)
 }
 
 func TestGuardModelTooLong(t *testing.T) {
