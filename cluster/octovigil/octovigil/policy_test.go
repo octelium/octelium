@@ -2768,39 +2768,9 @@ func TestEnforcementRuleEdges(t *testing.T) {
 	}
 }
 
-func TestIsBodyCondition(t *testing.T) {
+func TestIsBodyPreCondition(t *testing.T) {
 	match := func(arg string) *corev1.Condition {
 		return &corev1.Condition{Type: &corev1.Condition_Match{Match: arg}}
-	}
-	matchAny := &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}}
-	opa := func(arg string) *corev1.Condition {
-		return &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{Type: &corev1.Condition_OPA_Inline{Inline: arg}}}}
-	}
-
-	for _, tc := range []struct {
-		condition *corev1.Condition
-		want      bool
-	}{
-		{match(`ctx.request.http.bodyMap.amount > 100`), true},
-		{match(`ctx.request.mcp.http.bodyMap.params.arguments.amount > 100`), true},
-		{match(`string(ctx.request.http.body).contains("delete")`), true},
-		{match(`ctx.request.http["bodyMap"].amount > 100`), true},
-		{&corev1.Condition{Type: &corev1.Condition_Not{Not: `has(ctx.request.llm.http.bodyMap)`}}, true},
-		{&corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{matchAny, match(`ctx.request.http.bodyMap.x == 1`)}}}}, true},
-		{&corev1.Condition{Type: &corev1.Condition_Any_{Any: &corev1.Condition_Any{Of: []*corev1.Condition{
-			{Type: &corev1.Condition_None_{None: &corev1.Condition_None{Of: []*corev1.Condition{match(`ctx.request.http.body == b""`)}}}},
-		}}}}, true},
-		{opa("package octelium.condition\n\nmatch if {\n\tinput.ctx.request.http.bodyMap.amount > 100\n}\n"), true},
-
-		{match(`ctx.request.http.path == "/admin"`), false},
-		{match(`ctx.user.metadata.name == "nobody"`), false},
-		{match(`ctx.request.mcp.name == "delete" && ctx.request.http.size > 100`), false},
-		{&corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{matchAny, match(`ctx.request.http.path == "/"`)}}}}, false},
-		{opa("package octelium.condition\n\nmatch if {\n\tinput.ctx.request.http.path == \"/\"\n}\n"), false},
-		{matchAny, false},
-		{nil, false},
-	} {
-		assert.Equal(t, tc.want, isBodyCondition(tc.condition), "%v", tc.condition)
 	}
 
 	bodyPreCondition := &corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_Condition{Condition: match(`ctx.request.http.bodyMap.x == 1`)}}

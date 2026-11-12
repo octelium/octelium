@@ -569,49 +569,54 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 	}
 
 	for _, rule := range svc.Spec.DynamicConfig.Rules {
+		if isBodyOmitted(reqCtx) && celengine.IsBodyCondition(rule.Condition) {
+			return errors.Errorf("Cannot evaluate the DynamicConfig rule condition without the request body")
+		}
+
 		isMatch, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
 			zap.L().Warn("Could not evalCondition for dynamicConfig rule",
 				zap.Any("cond", rule.Condition), zap.Error(err))
-			continue
+			return err
 		}
 		if isMatch {
+			if isBodyOmitted(reqCtx) && (celengine.IsBodyExpression(rule.GetEval()) ||
+				celengine.IsBodyExpression(rule.GetOpa())) {
+				return errors.Errorf("Cannot evaluate the DynamicConfig rule without the request body")
+			}
+
 			switch rule.Type.(type) {
 			case *corev1.Service_Spec_DynamicConfig_Rule_ConfigName:
 				resp.ServiceConfigName = rule.GetConfigName()
 				return nil
 			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
-				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
-					cfg := &corev1.Service_Spec_Config{}
-					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
-							return err
-						}
-						resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
-						return nil
-					} else {
-						zap.L().Warn("Could not unmarshal eval Service config from map",
-							zap.Error(err), zap.Any("cfg", cfgMap))
-					}
-				} else {
-					zap.L().Warn("Could not evalPolicyMapStrAny", zap.Error(err))
+				cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap)
+				if err != nil {
+					return err
 				}
+				cfg := &corev1.Service_Spec_Config{}
+				if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err != nil {
+					return err
+				}
+				if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
+					return err
+				}
+				resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
+				return nil
 			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
-				if cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap); err == nil {
-					cfg := &corev1.Service_Spec_Config{}
-					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
-							return err
-						}
-						resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
-						return nil
-					} else {
-						zap.L().Warn("Could not unmarshal eval Service config from map",
-							zap.Error(err), zap.Any("cfg", cfgMap))
-					}
-				} else {
-					zap.L().Warn("Could not opaEvalPolicyMapStrAny", zap.Error(err))
+				cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap)
+				if err != nil {
+					return err
 				}
+				cfg := &corev1.Service_Spec_Config{}
+				if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err != nil {
+					return err
+				}
+				if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
+					return err
+				}
+				resp.Config = rscutils.GetMergedServiceConfig(cfg, svc)
+				return nil
 			}
 		}
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
@@ -497,7 +498,7 @@ func (s *Server) getDecisionRule(ctx context.Context, req *getDecisionRuleReq) (
 
 	if rule.Condition != nil {
 		var isMatched bool
-		if req.isBodyOmitted && isBodyCondition(rule.Condition) {
+		if req.isBodyOmitted && celengine.IsBodyCondition(rule.Condition) {
 			isMatched = rule.Effect == corev1.Policy_Spec_Rule_DENY
 		} else {
 			var err error
@@ -579,7 +580,7 @@ func (s *Server) shouldEnforcePolicy(ctx context.Context, req *shouldEnforcePoli
 
 	if req.isBodyOmitted && slices.ContainsFunc(req.spec.EnforcementRules,
 		func(rule *corev1.Policy_Spec_EnforcementRule) bool {
-			return isBodyCondition(rule.GetCondition())
+			return celengine.IsBodyCondition(rule.GetCondition())
 		}) {
 		return false, errors.Errorf("Cannot evaluate the Policy enforcement rules without the request body")
 	}

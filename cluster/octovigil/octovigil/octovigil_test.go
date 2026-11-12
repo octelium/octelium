@@ -52,6 +52,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -2468,19 +2469,19 @@ func TestAuthorizationAnonymousIdentity(t *testing.T) {
 
 func TestDynamicServiceConfigErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		rule  *corev1.Service_Spec_DynamicConfig_Rule
-		isErr bool
+		name string
+		rule *corev1.Service_Spec_DynamicConfig_Rule
 	}{
-		{"ConditionError", &corev1.Service_Spec_DynamicConfig_Rule{Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: "ctx.service =="}}}, false},
-		{"EvalError", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: "ctx.service =="}}, false},
-		{"EvalWrongType", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `42`}}, false},
-		{"EvalUnmarshal", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"upstream": 42}`}}, false},
-		{"EvalInvalidConfig", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"upstream": {"url": "invalid"}}`}}, true},
-		{"OPAError", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "not valid rego"}}, false},
-		{"OPAWrongType", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := 42"}}, false},
-		{"OPAUnmarshal", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := {\"upstream\": 42}"}}, false},
-		{"OPAInvalidConfig", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := {\"upstream\": {\"url\": \"invalid\"}}"}}, true},
+		{"ConditionError", &corev1.Service_Spec_DynamicConfig_Rule{Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: "ctx.service =="}}}},
+		{"ConditionRuntimeError", &corev1.Service_Spec_DynamicConfig_Rule{Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: "ctx.service.metadata.name > 5"}}}},
+		{"EvalError", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: "ctx.service =="}}},
+		{"EvalWrongType", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `42`}}},
+		{"EvalUnmarshal", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"upstream": 42}`}}},
+		{"EvalInvalidConfig", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"upstream": {"url": "invalid"}}`}}},
+		{"OPAError", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "not valid rego"}}},
+		{"OPAWrongType", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := 42"}}},
+		{"OPAUnmarshal", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := {\"upstream\": 42}"}}},
+		{"OPAInvalidConfig", &corev1.Service_Spec_DynamicConfig_Rule{Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: "package octelium.eval\nresult := {\"upstream\": {\"url\": \"invalid\"}}"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, coreC := newAuthorizationService(t)
@@ -2494,13 +2495,9 @@ func TestDynamicServiceConfigErrors(t *testing.T) {
 			}}
 			resp := &coctovigilv1.AuthenticateAndAuthorizeResponse{RequestContext: &corev1.RequestContext{Service: coreC.service}}
 			err := srv.s.setServiceConfig(t.Context(), resp)
-			assert.Equal(t, tc.isErr, err != nil)
+			assert.NotNil(t, err)
 			assert.Nil(t, resp.Config)
-			if tc.isErr {
-				assert.Empty(t, resp.ServiceConfigName)
-			} else {
-				assert.Equal(t, "fallback", resp.ServiceConfigName)
-			}
+			assert.Empty(t, resp.ServiceConfigName)
 		})
 	}
 	for _, expression := range []string{`{"parent": "missing"}`, `{"upstream": {"url": "http://example.com"}}`} {
@@ -2517,6 +2514,75 @@ func TestDynamicServiceConfigErrors(t *testing.T) {
 		} else {
 			assert.NotNil(t, err)
 		}
+	}
+}
+
+func TestDynamicServiceConfigBodyOmitted(t *testing.T) {
+	bodyMap, err := structpb.NewStruct(map[string]any{"tier": "premium"})
+	assert.Nil(t, err)
+
+	match := func(arg string) *corev1.Condition {
+		return &corev1.Condition{Type: &corev1.Condition_Match{Match: arg}}
+	}
+	configName := func(condition, arg string) *corev1.Service_Spec_DynamicConfig_Rule {
+		return &corev1.Service_Spec_DynamicConfig_Rule{Condition: match(condition),
+			Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: arg}}
+	}
+	opa := func(condition string) *corev1.Service_Spec_DynamicConfig_Rule {
+		return &corev1.Service_Spec_DynamicConfig_Rule{Condition: match(condition),
+			Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{Opa: `package octelium.eval
+default result := {"upstream": {"url": "http://default.example.com"}}
+result := {"upstream": {"url": "http://premium.example.com"}} if {
+	input.ctx.request.http.bodyMap.tier == "premium"
+}`}}
+	}
+	fallback := configName("true", "fallback")
+
+	for _, tc := range []struct {
+		name       string
+		rules      []*corev1.Service_Spec_DynamicConfig_Rule
+		configName string
+		url        string
+		isErr      bool
+	}{
+		{"BodyCondition", []*corev1.Service_Spec_DynamicConfig_Rule{
+			configName(`ctx.request.http.bodyMap.tier == "premium"`, "premium"), fallback}, "premium", "", true},
+		{"BodyExpression", []*corev1.Service_Spec_DynamicConfig_Rule{
+			opa("true"), fallback}, "", "http://premium.example.com", true},
+		{"NonBodyCondition", []*corev1.Service_Spec_DynamicConfig_Rule{
+			configName(`ctx.request.http.path == "/premium"`, "premium"), fallback}, "premium", "", false},
+		{"UnmatchedBodyExpression", []*corev1.Service_Spec_DynamicConfig_Rule{
+			opa(`ctx.request.http.path == "/other"`), fallback}, "fallback", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			coreC.service.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Rules: tc.rules}
+			httpC := &corev1.RequestContext_Request_HTTP{Path: "/premium", BodyMap: bodyMap}
+			resp := &coctovigilv1.AuthenticateAndAuthorizeResponse{RequestContext: &corev1.RequestContext{
+				Service: coreC.service,
+				Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{Http: httpC}},
+			}}
+
+			err := srv.s.setServiceConfig(t.Context(), resp)
+			assert.Nil(t, err)
+			assert.Equal(t, tc.configName, resp.ServiceConfigName)
+			assert.Equal(t, tc.url, resp.Config.GetUpstream().GetUrl())
+
+			httpC.BodyMap = nil
+			httpC.IsBodyOmitted = true
+			resp.ServiceConfigName = ""
+			resp.Config = nil
+
+			err = srv.s.setServiceConfig(t.Context(), resp)
+			assert.Equal(t, tc.isErr, err != nil)
+			if tc.isErr {
+				assert.Empty(t, resp.ServiceConfigName)
+				assert.Nil(t, resp.Config)
+			} else {
+				assert.Equal(t, tc.configName, resp.ServiceConfigName)
+				assert.Equal(t, tc.url, resp.Config.GetUpstream().GetUrl())
+			}
+		})
 	}
 }
 

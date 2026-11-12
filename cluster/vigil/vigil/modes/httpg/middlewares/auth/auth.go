@@ -29,8 +29,10 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vigilutils"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -84,7 +86,11 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			reqCtx.AuthResponse.IsAuthorized = true
 			reqCtx.IsAuthorized = true
-			m.setServiceConfig(ctx, reqCtx)
+			if err := m.setServiceConfig(ctx, reqCtx); err != nil {
+				zap.L().Warn("Could not setServiceConfig", zap.Error(err))
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 
 			m.next.ServeHTTP(w, req)
 			return
@@ -129,57 +135,78 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	m.next.ServeHTTP(w, req)
 }
 
-func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.RequestContext) {
+func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.RequestContext) error {
 
 	reqCtx := req.DownstreamInfo
 	svc := reqCtx.Service
 	if svc.Spec.DynamicConfig == nil || len(svc.Spec.DynamicConfig.Rules) < 1 {
-		return
+		return nil
 	}
 
 	reqCtxMap, err := pbutils.ConvertToMap(reqCtx)
 	if err != nil {
-		return
+		return err
 	}
 
 	inputMap := map[string]any{
 		"ctx": reqCtxMap,
 	}
 
+	isBodyOmitted := ucorev1.GetRequestHTTP(reqCtx.GetRequest()).GetIsBodyOmitted()
+
 	for _, rule := range svc.Spec.DynamicConfig.Rules {
+		if isBodyOmitted && celengine.IsBodyCondition(rule.Condition) {
+			return errors.Errorf("Cannot evaluate the DynamicConfig rule condition without the request body")
+		}
+
 		isMatch, err := s.celEngine.EvalCondition(ctx, rule.Condition, inputMap)
 		if err != nil {
-			continue
+			return err
 		}
 		if isMatch {
+			if isBodyOmitted && (celengine.IsBodyExpression(rule.GetEval()) ||
+				celengine.IsBodyExpression(rule.GetOpa())) {
+				return errors.Errorf("Cannot evaluate the DynamicConfig rule without the request body")
+			}
+
 			switch rule.Type.(type) {
 			case *corev1.Service_Spec_DynamicConfig_Rule_ConfigName:
 				req.AuthResponse.ServiceConfigName = rule.GetConfigName()
 				req.ServiceConfig = vigilutils.GetServiceConfig(ctx, req.AuthResponse)
-				return
+				return nil
 			case *corev1.Service_Spec_DynamicConfig_Rule_Eval:
-				if cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap); err == nil {
-					cfg := &corev1.Service_Spec_Config{}
-					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err == nil {
-							req.AuthResponse.Config = rscutils.GetMergedServiceConfig(cfg, svc)
-							req.ServiceConfig = req.AuthResponse.Config
-							return
-						}
-					}
+				cfgMap, err := s.celEngine.EvalPolicyMapStrAny(ctx, rule.GetEval(), inputMap)
+				if err != nil {
+					return err
 				}
+				cfg := &corev1.Service_Spec_Config{}
+				if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err != nil {
+					return err
+				}
+				if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
+					return err
+				}
+				req.AuthResponse.Config = rscutils.GetMergedServiceConfig(cfg, svc)
+				req.ServiceConfig = req.AuthResponse.Config
+				return nil
 			case *corev1.Service_Spec_DynamicConfig_Rule_Opa:
-				if cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap); err == nil {
-					cfg := &corev1.Service_Spec_Config{}
-					if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err == nil {
-						if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err == nil {
-							req.AuthResponse.Config = rscutils.GetMergedServiceConfig(cfg, svc)
-							req.ServiceConfig = req.AuthResponse.Config
-							return
-						}
-					}
+				cfgMap, err := s.celEngine.OPAEvalPolicyMapStrAny(ctx, rule.GetOpa(), inputMap)
+				if err != nil {
+					return err
 				}
+				cfg := &corev1.Service_Spec_Config{}
+				if err := pbutils.UnmarshalFromMap(cfgMap, cfg); err != nil {
+					return err
+				}
+				if err := s.coreSrv.ValidateServiceConfig(ctx, cfg, svc, true); err != nil {
+					return err
+				}
+				req.AuthResponse.Config = rscutils.GetMergedServiceConfig(cfg, svc)
+				req.ServiceConfig = req.AuthResponse.Config
+				return nil
 			}
 		}
 	}
+
+	return nil
 }

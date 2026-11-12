@@ -951,6 +951,71 @@ func TestServerLLMBodyOmitted(t *testing.T) {
 	}
 }
 
+func TestServerLLMPluginBodyOmitted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newLLMEnv(t, ctx)
+	env.start(t, ctx, &corev1.Service_Spec_Config_LLM{
+		Plugins: []*corev1.Service_Spec_Config_LLM_Plugin{
+			{
+				Name: "pci",
+				Condition: &corev1.Condition{
+					Type: &corev1.Condition_Match{
+						Match: `ctx.request.llm.http.bodyMap.temperature > 1.0`,
+					},
+				},
+				Type: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_{
+					Guardrail: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail{
+						Leg: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_REQUEST,
+						Patterns: []*corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern{
+							{
+								Match: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Type_{
+									Type: corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_CREDIT_CARD,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}, "")
+
+	for _, tst := range []struct {
+		temperature float64
+		size        int
+		status      int
+	}{
+		{1.5, 0, http.StatusForbidden},
+		{0.5, 0, http.StatusOK},
+		{1.5, 3 * 1024 * 1024, http.StatusInternalServerError},
+		{0.5, 3 * 1024 * 1024, http.StatusInternalServerError},
+	} {
+		cnt := env.upstream.getReqCount()
+
+		body := env.newChatBody("gpt-4o")
+		body["temperature"] = tst.temperature
+		body["messages"] = []any{
+			map[string]any{
+				"role":    "user",
+				"content": "my card is 4111 1111 1111 1111 " + strings.Repeat("x", tst.size),
+			},
+		}
+
+		resp, err := resty.New().R().
+			SetBody(body).
+			Post(env.getURL("/v1/chat/completions"))
+		assert.Nil(t, err, "%+v", err)
+		assert.Equal(t, tst.status, resp.StatusCode(), "%+v", tst)
+
+		if tst.status == http.StatusOK {
+			assert.Equal(t, cnt+1, env.upstream.getReqCount())
+		} else {
+			assert.Equal(t, cnt, env.upstream.getReqCount())
+		}
+	}
+}
+
 func TestServerLLMCORS(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -541,6 +541,51 @@ func TestPluginConditionError(t *testing.T) {
 	}
 }
 
+func TestPluginConditionBodyOmitted(t *testing.T) {
+	var upstreamCalls atomic.Int64
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}), &corev1.Service_Spec_Config_HTTP{
+		EnableRequestBuffering: true,
+		Body:                   &corev1.Service_Spec_Config_HTTP_Body{Mode: corev1.Service_Spec_Config_HTTP_Body_JSON},
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{{
+			Name: "deny-delete",
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{Match: `ctx.request.http.bodyMap.action == "delete"`},
+			},
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
+				Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{StatusCode: http.StatusForbidden},
+			},
+		}},
+	})
+
+	padding := strings.Repeat("x", 3*1024*1024)
+
+	for _, tc := range []struct {
+		body   string
+		status int
+		calls  int64
+	}{
+		{`{"action": "delete"}`, http.StatusForbidden, 0},
+		{`{"action": "read"}`, http.StatusNoContent, 1},
+		{`{"action": "delete", "padding": "` + padding + `"}`, http.StatusInternalServerError, 1},
+		{`{"action": "read", "padding": "` + padding + `"}`, http.StatusInternalServerError, 1},
+	} {
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Post(addr+"/", "application/json", strings.NewReader(tc.body))
+		require.Nil(t, err)
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Nil(t, err)
+
+		assert.Equal(t, tc.status, resp.StatusCode, "%d", len(tc.body))
+		assert.Equal(t, tc.calls, upstreamCalls.Load(), "%d", len(tc.body))
+		if tc.status == http.StatusInternalServerError {
+			assert.Contains(t, string(body), "could not evaluate the Plugins")
+		}
+	}
+}
+
 func TestHTTPJSONBodyDuplicateNames(t *testing.T) {
 	var upstreamCalls atomic.Int64
 	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

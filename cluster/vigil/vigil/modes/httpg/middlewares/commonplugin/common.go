@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -71,6 +72,11 @@ func ShouldEnforcePluginErr(ctx context.Context, o *ShouldEnforcePluginOpts) (bo
 	}
 
 	reqCtx := middlewares.GetCtxRequestContext(ctx)
+
+	if ucorev1.GetRequestHTTP(reqCtx.DownstreamInfo.GetRequest()).GetIsBodyOmitted() &&
+		celengine.IsBodyCondition(cond) {
+		return false, errors.Errorf("Cannot evaluate the Plugin condition without the request body")
+	}
 
 	var reqCtxMap map[string]any
 	if reqCtx.ReqCtxMap == nil {

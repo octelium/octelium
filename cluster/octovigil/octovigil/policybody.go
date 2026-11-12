@@ -17,40 +17,15 @@
 package octovigil
 
 import (
-	"regexp"
 	"slices"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 )
 
-var rgxBodyRef = regexp.MustCompile(`\bbody(Map)?\b`)
-
 func isBodyOmitted(i *corev1.RequestContext) bool {
 	return ucorev1.GetRequestHTTP(i.GetRequest()).GetIsBodyOmitted()
-}
-
-func isBodyCondition(condition *corev1.Condition) bool {
-	if condition == nil {
-		return false
-	}
-
-	switch condition.Type.(type) {
-	case *corev1.Condition_Match:
-		return rgxBodyRef.MatchString(condition.GetMatch())
-	case *corev1.Condition_Not:
-		return rgxBodyRef.MatchString(condition.GetNot())
-	case *corev1.Condition_All_:
-		return slices.ContainsFunc(condition.GetAll().GetOf(), isBodyCondition)
-	case *corev1.Condition_Any_:
-		return slices.ContainsFunc(condition.GetAny().GetOf(), isBodyCondition)
-	case *corev1.Condition_None_:
-		return slices.ContainsFunc(condition.GetNone().GetOf(), isBodyCondition)
-	case *corev1.Condition_Opa:
-		return rgxBodyRef.MatchString(condition.GetOpa().GetInline())
-	default:
-		return false
-	}
 }
 
 func isBodyPreCondition(preCondition *corev1.PolicyTrigger_Status_PreCondition) bool {
@@ -60,7 +35,7 @@ func isBodyPreCondition(preCondition *corev1.PolicyTrigger_Status_PreCondition) 
 
 	switch preCondition.Type.(type) {
 	case *corev1.PolicyTrigger_Status_PreCondition_Condition:
-		return isBodyCondition(preCondition.GetCondition())
+		return celengine.IsBodyCondition(preCondition.GetCondition())
 	case *corev1.PolicyTrigger_Status_PreCondition_All_:
 		return slices.ContainsFunc(preCondition.GetAll().GetOf(), isBodyPreCondition)
 	case *corev1.PolicyTrigger_Status_PreCondition_Any_:

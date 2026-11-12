@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -587,5 +588,118 @@ result := {
 		upstream, err := lbManager.GetUpstream(ctx, reqCtx.AuthResponse)
 		assert.Nil(t, err)
 		assert.Equal(t, tstCase.host, upstream.URL.Host, tstCase.path)
+	}
+}
+
+func TestAnonymousDynamicConfigErrors(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	bodyMap, err := structpb.NewStruct(map[string]any{"tier": "premium"})
+	assert.Nil(t, err)
+
+	newUpstream := func(arg string) *corev1.Service_Spec_Config_Upstream {
+		return &corev1.Service_Spec_Config_Upstream{
+			Type: &corev1.Service_Spec_Config_Upstream_Url{
+				Url: arg,
+			},
+		}
+	}
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic:    true,
+			IsAnonymous: true,
+			Mode:        corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: newUpstream("http://default.example.com"),
+			},
+			DynamicConfig: &corev1.Service_Spec_DynamicConfig{
+				Configs: []*corev1.Service_Spec_Config{
+					{
+						Name:     "premium",
+						Upstream: newUpstream("http://premium.example.com"),
+					},
+				},
+			},
+		},
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})
+
+	mdlwr, err := New(ctx, next, tst.C.OcteliumC, nil, "example.com")
+	assert.Nil(t, err)
+
+	for _, tc := range []struct {
+		condition     string
+		isBodyOmitted bool
+		code          int
+		url           string
+	}{
+		{`ctx.request.http.bodyMap.tier == "premium"`, false, http.StatusOK, "http://premium.example.com"},
+		{`ctx.request.http.bodyMap.tier == "premium"`, true, http.StatusInternalServerError, ""},
+		{`ctx.request.http.path == "/"`, true, http.StatusOK, "http://premium.example.com"},
+		{`ctx.request.http.path == "/other"`, true, http.StatusOK, "http://default.example.com"},
+		{`ctx.request.http.path > 5`, false, http.StatusInternalServerError, ""},
+	} {
+		svc.Spec.DynamicConfig.Rules = []*corev1.Service_Spec_DynamicConfig_Rule{
+			{
+				Condition: &corev1.Condition{
+					Type: &corev1.Condition_Match{
+						Match: tc.condition,
+					},
+				},
+				Type: &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{
+					ConfigName: "premium",
+				},
+			},
+		}
+
+		httpC := &corev1.RequestContext_Request_HTTP{
+			Path:          "/",
+			IsBodyOmitted: tc.isBodyOmitted,
+		}
+		if !tc.isBodyOmitted {
+			httpC.BodyMap = bodyMap
+		}
+		reqC := &corev1.RequestContext_Request{
+			Type: &corev1.RequestContext_Request_Http{
+				Http: httpC,
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext,
+			&middlewares.RequestContext{
+				CreatedAt:     time.Now(),
+				Service:       svc,
+				ServiceConfig: svc.Spec.Config,
+				DownstreamRequest: &coctovigilv1.DownstreamRequest{
+					Request: reqC,
+				},
+				DownstreamInfo: &corev1.RequestContext{
+					Service: svc,
+					Request: reqC,
+				},
+			}))
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+		reqCtx := middlewares.GetCtxRequestContext(req.Context())
+		assert.Equal(t, tc.code, rw.Code, tc.condition)
+		if tc.code == http.StatusOK {
+			assert.Equal(t, tc.url, reqCtx.ServiceConfig.GetUpstream().GetUrl(), tc.condition)
+		}
 	}
 }
