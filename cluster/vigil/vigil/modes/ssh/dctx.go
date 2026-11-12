@@ -43,6 +43,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const upstreamConnectTimeout = 30 * time.Second
+
 type dctx struct {
 	network *corev1.AccessLog_Entry_Common_Network
 
@@ -153,6 +155,9 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	svc *corev1.Service, lbMan *loadbalancer.LBManager,
 	userSginer ssh.Signer, secretMan *secretman.SecretManager) error {
 
+	ctx, cancel := context.WithTimeout(ctx, upstreamConnectTimeout)
+	defer cancel()
+
 	zap.L().Debug("Connecting to upstream", zap.String("id", c.id))
 	var err error
 	var upstream *loadbalancer.Upstream
@@ -207,15 +212,31 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 
 	zap.L().Debug("Dialing remote addr", zap.String("id", c.id), zap.String("addr", upstream.HostPort))
 
-	conn, err := net.DialTimeout("tcp", upstream.HostPort, 20*time.Second)
+	dialer := &net.Dialer{
+		Timeout: 20 * time.Second,
+	}
+
+	conn, err := dialer.DialContext(ctx, "tcp", upstream.HostPort)
 	if err != nil {
 		zap.L().Warn("Error dialing remote addr",
 			zap.String("id", c.id), zap.Error(err), zap.String("addr", upstream.HostPort))
 		return err
 	}
 
+	stop := context.AfterFunc(ctx, func() {
+		conn.Close()
+	})
+
 	zap.L().Debug("Creating sshClientConn", zap.String("id", c.id))
 	clientConn, clientChans, clientReqs, err := ssh.NewClientConn(conn, upstream.HostPort, clientConfig)
+	if !stop() {
+		if err == nil {
+			clientConn.Close()
+		}
+		zap.L().Debug("Upstream ssh handshake did not complete",
+			zap.String("id", c.id), zap.Error(ctx.Err()))
+		return ctx.Err()
+	}
 	if err != nil {
 		conn.Close()
 		zap.L().Debug("Could not create new client conn", zap.String("id", c.id), zap.Error(err))
