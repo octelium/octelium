@@ -1767,6 +1767,165 @@ func TestFunctionCall(t *testing.T) {
 	}
 }
 
+func TestAuthorizationAccessLog(t *testing.T) {
+	ctx := context.Background()
+
+	records := newPostgresLogRecorder(t, func(logE *corev1.AccessLog) bool {
+		switch logE.Entry.Info.GetPostgres().GetType() {
+		case corev1.AccessLog_Entry_Info_Postgres_QUERY,
+			corev1.AccessLog_Entry_Info_Postgres_PARSE,
+			corev1.AccessLog_Entry_Info_Postgres_BIND,
+			corev1.AccessLog_Entry_Info_Postgres_EXECUTE,
+			corev1.AccessLog_Entry_Info_Postgres_FUNCTION_CALL:
+			return true
+		default:
+			return false
+		}
+	})
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err, "%+v", err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.query.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.request.postgres.parse.query.startsWith("UPDATE")`,
+				},
+			},
+			Effect: corev1.Policy_Spec_Rule_DENY,
+		},
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{
+					MatchAny: true,
+				},
+			},
+		},
+	}, &corev1.Service_Spec_Config_Postgres_Authorization{
+		Mode: corev1.Service_Spec_Config_Postgres_Authorization_ALL,
+	})
+
+	fe, c, _ := newTestFrontend(t, ts.port)
+	defer c.Close()
+
+	assertLog := func(typ corev1.AccessLog_Entry_Info_Postgres_Type,
+		status corev1.AccessLog_Entry_Common_Status,
+		reason corev1.AccessLog_Entry_Common_Reason_Type) *corev1.AccessLog_Entry_Info_Postgres {
+		t.Helper()
+		logE := nextPostgresLog(t, records)
+		assert.Equal(t, typ, logE.Entry.Info.GetPostgres().Type)
+		assert.Equal(t, status, logE.Entry.Common.Status)
+		assert.Equal(t, reason, logE.Entry.Common.Reason.GetType())
+		return logE.Entry.Info.GetPostgres()
+	}
+
+	{
+		fe.Send(&pgproto3.Query{String: "UPDATE octelium_nonexistent SET status = 'inactive';"})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, "42501", errorResponseCode(msgs...))
+
+		info := assertLog(corev1.AccessLog_Entry_Info_Postgres_QUERY,
+			corev1.AccessLog_Entry_Common_DENIED, corev1.AccessLog_Entry_Common_Reason_POLICY_MATCH)
+		assert.Equal(t, "UPDATE octelium_nonexistent SET status = 'inactive';", info.GetQuery().Query)
+	}
+
+	{
+		fe.Send(&pgproto3.Query{String: "SELECT 1;"})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
+
+		info := assertLog(corev1.AccessLog_Entry_Info_Postgres_QUERY,
+			corev1.AccessLog_Entry_Common_ALLOWED, corev1.AccessLog_Entry_Common_Reason_POLICY_MATCH)
+		assert.Equal(t, "SELECT 1;", info.GetQuery().Query)
+	}
+
+	{
+		fe.Send(&pgproto3.Parse{Name: "upd", Query: "UPDATE octelium_nonexistent SET status = $1"})
+		fe.Send(&pgproto3.Describe{ObjectType: 'S', Name: "upd"})
+		fe.Send(&pgproto3.Sync{})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+
+		info := assertLog(corev1.AccessLog_Entry_Info_Postgres_PARSE,
+			corev1.AccessLog_Entry_Common_DENIED, corev1.AccessLog_Entry_Common_Reason_POLICY_MATCH)
+		assert.Equal(t, "upd", info.GetParse().Name)
+		assert.Equal(t, "UPDATE octelium_nonexistent SET status = $1", info.GetParse().Query)
+	}
+
+	{
+		fe.Send(&pgproto3.Bind{PreparedStatement: "upd"})
+		fe.Send(&pgproto3.Execute{})
+		fe.Send(&pgproto3.Sync{})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, []string{"42501"}, errorResponseCodes(msgs...))
+
+		assertLog(corev1.AccessLog_Entry_Info_Postgres_BIND,
+			corev1.AccessLog_Entry_Common_DENIED, corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH)
+	}
+
+	{
+		oid := receiveFunctionOID(t, c, fe, "pg_backend_pid")
+		assertLog(corev1.AccessLog_Entry_Info_Postgres_QUERY,
+			corev1.AccessLog_Entry_Common_ALLOWED, corev1.AccessLog_Entry_Common_Reason_POLICY_MATCH)
+
+		fe.Send(&pgproto3.FunctionCall{Function: oid})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Equal(t, "42501", errorResponseCode(msgs...))
+
+		assertLog(corev1.AccessLog_Entry_Info_Postgres_FUNCTION_CALL,
+			corev1.AccessLog_Entry_Common_DENIED, corev1.AccessLog_Entry_Common_Reason_NO_POLICY_MATCH)
+	}
+
+	{
+		fe.Send(&pgproto3.Parse{Query: "SELECT 1"})
+		fe.Send(&pgproto3.Bind{})
+		fe.Send(&pgproto3.Execute{})
+		fe.Send(&pgproto3.Sync{})
+		assert.Nil(t, fe.Flush())
+
+		msgs := receiveUntilReadyForQuery(t, c, fe)
+		assert.Empty(t, errorResponseCode(msgs...))
+
+		for _, typ := range []corev1.AccessLog_Entry_Info_Postgres_Type{
+			corev1.AccessLog_Entry_Info_Postgres_PARSE,
+			corev1.AccessLog_Entry_Info_Postgres_BIND,
+			corev1.AccessLog_Entry_Info_Postgres_EXECUTE,
+		} {
+			assertLog(typ, corev1.AccessLog_Entry_Common_ALLOWED,
+				corev1.AccessLog_Entry_Common_Reason_POLICY_MATCH)
+		}
+	}
+
+	select {
+	case logE := <-records:
+		t.Fatalf("unexpected access log: %+v", logE)
+	default:
+	}
+}
+
 func TestMaxMessageBodyLen(t *testing.T) {
 	ctx := context.Background()
 

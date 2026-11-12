@@ -450,7 +450,7 @@ func (c *dctx) startDownstreamLoop(ctx context.Context) {
 				c.dbMetrics.AddCommand(postgresCommandName(message), state,
 					reason.GetType().String())
 
-				c.setMessageLog(message, reason)
+				c.setMessageLog(message, proceed, reason)
 				if !proceed {
 					pendingSync = isExtendedProtocolMessage(message)
 					message = c.getUnauthorizedMessage(message)
@@ -763,7 +763,8 @@ func (c *dctx) getMessageLogInfo(msg pgproto3.FrontendMessage) *corev1.AccessLog
 	return info
 }
 
-func (c *dctx) setMessageLog(msg pgproto3.FrontendMessage, reason *corev1.AccessLog_Entry_Common_Reason) {
+func (c *dctx) setMessageLog(msg pgproto3.FrontendMessage, isAuthorized bool,
+	reason *corev1.AccessLog_Entry_Common_Reason) {
 	info := c.getMessageLogInfo(msg)
 	if info == nil {
 		return
@@ -772,7 +773,7 @@ func (c *dctx) setMessageLog(msg pgproto3.FrontendMessage, reason *corev1.Access
 	logE := logentry.InitializeLogEntry(&logentry.InitializeLogEntryOpts{
 		StartTime:       time.Now(),
 		IsAuthenticated: true,
-		IsAuthorized:    true,
+		IsAuthorized:    isAuthorized,
 		ReqCtx:          c.reqCtx,
 		ConnectionID:    c.id,
 		Reason:          reason,

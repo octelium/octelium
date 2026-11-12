@@ -35,22 +35,23 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
-type tstPostgresStartLogProcessor struct {
+type tstPostgresLogProcessor struct {
 	records chan *corev1.AccessLog
+	filter  func(*corev1.AccessLog) bool
 }
 
-func (p *tstPostgresStartLogProcessor) Enabled(ctx context.Context, param sdklog.EnabledParameters) bool {
+func (p *tstPostgresLogProcessor) Enabled(ctx context.Context, param sdklog.EnabledParameters) bool {
 	return true
 }
 
-func (p *tstPostgresStartLogProcessor) OnEmit(ctx context.Context, record *sdklog.Record) error {
+func (p *tstPostgresLogProcessor) OnEmit(ctx context.Context, record *sdklog.Record) error {
 	for _, field := range record.Body().AsMap() {
 		if field.Key == "kind" && field.Value.AsString() == "AccessLog" {
 			logE := &corev1.AccessLog{}
 			if err := pbutils.UnmarshalJSONStrict([]byte(record.Body().String()), logE); err != nil {
 				return err
 			}
-			if logE.Entry.Info.GetPostgres().GetType() == corev1.AccessLog_Entry_Info_Postgres_SESSION_START {
+			if p.filter(logE) {
 				p.records <- logE
 			}
 			break
@@ -59,18 +60,18 @@ func (p *tstPostgresStartLogProcessor) OnEmit(ctx context.Context, record *sdklo
 	return nil
 }
 
-func (p *tstPostgresStartLogProcessor) Shutdown(ctx context.Context) error {
+func (p *tstPostgresLogProcessor) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (p *tstPostgresStartLogProcessor) ForceFlush(ctx context.Context) error {
+func (p *tstPostgresLogProcessor) ForceFlush(ctx context.Context) error {
 	return nil
 }
 
-func newPostgresStartLogRecorder(t *testing.T) <-chan *corev1.AccessLog {
+func newPostgresLogRecorder(t *testing.T, filter func(*corev1.AccessLog) bool) <-chan *corev1.AccessLog {
 	t.Helper()
 	previous := otel.GetLoggerProvider()
-	processor := &tstPostgresStartLogProcessor{records: make(chan *corev1.AccessLog, 8)}
+	processor := &tstPostgresLogProcessor{records: make(chan *corev1.AccessLog, 8), filter: filter}
 	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
 	otel.SetLoggerProvider(provider)
 	t.Cleanup(func() {
@@ -80,13 +81,20 @@ func newPostgresStartLogRecorder(t *testing.T) <-chan *corev1.AccessLog {
 	return processor.records
 }
 
-func nextPostgresStartLog(t *testing.T, records <-chan *corev1.AccessLog) *corev1.AccessLog {
+func newPostgresStartLogRecorder(t *testing.T) <-chan *corev1.AccessLog {
+	t.Helper()
+	return newPostgresLogRecorder(t, func(logE *corev1.AccessLog) bool {
+		return logE.Entry.Info.GetPostgres().GetType() == corev1.AccessLog_Entry_Info_Postgres_SESSION_START
+	})
+}
+
+func nextPostgresLog(t *testing.T, records <-chan *corev1.AccessLog) *corev1.AccessLog {
 	t.Helper()
 	select {
 	case logE := <-records:
 		return logE
 	case <-time.After(5 * time.Second):
-		t.Fatal("Timed out waiting for a PostgreSQL session start log")
+		t.Fatal("Timed out waiting for a PostgreSQL access log")
 		return nil
 	}
 }
@@ -111,7 +119,7 @@ func TestSessionStartBackendPID(t *testing.T) {
 	for range 2 {
 		frontend, conn, keyData := newTestFrontend(t, srv.port)
 		defer conn.Close()
-		logE := nextPostgresStartLog(t, records)
+		logE := nextPostgresLog(t, records)
 		require.Equal(t, corev1.AccessLog_Entry_Common_ALLOWED, logE.Entry.Common.Status)
 		start := logE.Entry.Info.GetPostgres().GetStart()
 		require.NotNil(t, start)
@@ -164,7 +172,7 @@ func TestSessionStartBackendPIDDenied(t *testing.T) {
 	})
 	require.Nil(t, frontend.Flush())
 	assertClosedByServer(t, conn)
-	logE := nextPostgresStartLog(t, records)
+	logE := nextPostgresLog(t, records)
 	assert.Equal(t, corev1.AccessLog_Entry_Common_DENIED, logE.Entry.Common.Status)
 	assert.Nil(t, logE.Entry.Info.GetPostgres().GetStart())
 	data, err := pbutils.MarshalJSON(logE, false)
