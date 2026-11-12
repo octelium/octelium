@@ -31,6 +31,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -2025,4 +2026,151 @@ func TestCancelRequest(t *testing.T) {
 		msgs := receiveUntilReadyForQuery(t, c, fe)
 		assert.Empty(t, errorResponseCode(msgs...))
 	}
+}
+
+type failingWriter struct{}
+
+func (w failingWriter) Write(p []byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
+func findSumDataPointByStage(t *testing.T, rm *metricdata.ResourceMetrics, name, stage string) (metricdata.DataPoint[int64], bool) {
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			assert.True(t, ok, name)
+			for _, dp := range sum.DataPoints {
+				stageVal, ok := dp.Attributes.Value("stage")
+				if ok && stageVal.AsString() == stage {
+					return dp, true
+				}
+			}
+		}
+	}
+	return metricdata.DataPoint[int64]{}, false
+}
+
+func TestConnectFailureReleasesUpstream(t *testing.T) {
+	ctx := t.Context()
+
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{MatchAny: true},
+			},
+		},
+	}, nil)
+
+	db, err := sql.Open("postgres", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+	require.Nil(t, err)
+	defer db.Close()
+
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	svc := ts.vCache.GetService()
+	reqCtx := &corev1.RequestContext{
+		Service: svc,
+		Session: &corev1.Session{
+			Metadata: &metav1.Metadata{
+				Uid: utilrand.GetRandomStringCanonical(8),
+			},
+		},
+	}
+
+	cc := newCountingConn(server)
+	dctx := newDctx(ctx, cc, reqCtx, ts.srv.secretMan,
+		pgproto3.NewBackend(cc, failingWriter{}),
+		&pgproto3.StartupMessage{
+			ProtocolVersion: pgproto3.ProtocolVersionNumber,
+			Parameters: map[string]string{
+				"user":     "postgres",
+				"database": "postgres",
+			},
+		},
+		ts.srv.octovigilC, ts.vCache, ts.srv.cancelKeys,
+		cc, ts.srv.metricsStore.CommonMetrics, ts.srv.metricsStore.dbMetrics,
+		&coctovigilv1.AuthenticateAndAuthorizeResponse{
+			RequestContext: reqCtx,
+		}, nil)
+
+	err = dctx.connect(ctx, ts.srv.lbManager, svc, ts.srv.secretMan)
+	require.True(t, errors.Is(err, io.ErrClosedPipe), "%+v", err)
+	require.NotNil(t, dctx.upstreamHijackedConn)
+	require.NotZero(t, dctx.upstreamHijackedConn.PID)
+
+	assert.Nil(t, ts.srv.cancelKeys.get(dctx.cancelKey))
+	assert.Empty(t, ts.srv.cancelKeys.targets)
+
+	dctx.upstreamHijackedConn.Conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_, err = dctx.upstreamHijackedConn.Conn.Read(make([]byte, 1))
+	assert.True(t, errors.Is(err, net.ErrClosed), "%+v", err)
+
+	assert.Eventually(t, func() bool {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_stat_activity WHERE pid = $1",
+			dctx.upstreamHijackedConn.PID).Scan(&count); err != nil {
+			return false
+		}
+		return count == 0
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestStartupClientResetReleasesUpstream(t *testing.T) {
+	ctx := t.Context()
+
+	metricsReader := setTestMeterProvider(t)
+
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() { tst.Destroy() })
+
+	ts := newTestPostgresServer(t, ctx, tst, []*corev1.Policy_Spec_Rule{
+		{
+			Effect: corev1.Policy_Spec_Rule_ALLOW,
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_MatchAny{MatchAny: true},
+			},
+		},
+	}, nil)
+
+	for range 4 {
+		c, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", ts.port))
+		require.Nil(t, err)
+
+		fe := pgproto3.NewFrontend(c, c)
+		fe.Send(&pgproto3.StartupMessage{
+			ProtocolVersion: pgproto3.ProtocolVersionNumber,
+			Parameters: map[string]string{
+				"user":     "postgres",
+				"database": "postgres",
+			},
+		})
+		require.Nil(t, fe.Flush())
+
+		require.Nil(t, c.(*net.TCPConn).SetLinger(0))
+		require.Nil(t, c.Close())
+	}
+
+	require.Eventually(t, func() bool {
+		var rm metricdata.ResourceMetrics
+		if err := metricsReader.Collect(ctx, &rm); err != nil {
+			return false
+		}
+		dp, found := findSumDataPointByStage(t, &rm, "conn.rejected", "UPSTREAM_DIAL")
+		return found && dp.Value == 4
+	}, 10*time.Second, 50*time.Millisecond)
+
+	ts.srv.cancelKeys.mu.Lock()
+	defer ts.srv.cancelKeys.mu.Unlock()
+	assert.Empty(t, ts.srv.cancelKeys.targets)
 }

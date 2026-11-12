@@ -287,7 +287,7 @@ func (c *dctx) setCancelKey() error {
 	return nil
 }
 
-func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) error {
+func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) (retErr error) {
 
 	zap.L().Debug("Starting connecting",
 		zap.String("id", c.id),
@@ -331,9 +331,15 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 
 	c.upstreamHijackedConn, err = c.upstreamConn.Hijack()
 	if err != nil {
+		c.upstreamConn.Close(ctx)
 		return err
 	}
 	c.upstreamConn = nil
+	defer func() {
+		if retErr != nil {
+			c.upstreamHijackedConn.Conn.Close()
+		}
+	}()
 	c.network = logentry.WithUpstream(c.network, c.upstreamHijackedConn.Conn)
 
 	c.pgFrontend = c.upstreamHijackedConn.Frontend
@@ -342,6 +348,11 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 	if err := c.setCancelKey(); err != nil {
 		return err
 	}
+	defer func() {
+		if retErr != nil {
+			c.cancelKeys.delete(c.cancelKey)
+		}
+	}()
 
 	c.pgBackend.Send(&pgproto3.AuthenticationOk{})
 
