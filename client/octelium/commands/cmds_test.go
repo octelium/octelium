@@ -291,10 +291,7 @@ func TestClientCommandE2E(t *testing.T) {
 		require.NoError(t, err, "disconnect must release the local DNS UDP listener")
 		assert.NoError(t, packetConn.Close())
 	})
-	t.Run("CL-009-CancelWithUnavailableAuthProxy", func(t *testing.T) {
-		if os.Getenv("OCTELIUM_TEST_KNOWN_ISSUES") != "true" {
-			t.Skip("set OCTELIUM_TEST_KNOWN_ISSUES=true to reproduce CL-009 in tmp/client-test-report.md")
-		}
+	t.Run("CancelWithUnavailableAuthProxy", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("the authentication proxy transport uses Unix domain sockets")
 		}

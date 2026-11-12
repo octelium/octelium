@@ -15,9 +15,8 @@
 package grpcconn
 
 import (
-	"context"
 	"crypto/tls"
-	"net"
+	"fmt"
 	"os"
 	"time"
 
@@ -97,17 +96,12 @@ func DoGetGRPCClientConn(domain string) (*grpc.ClientConn, error) {
 	var target string
 
 	if isAuthProxy {
-		target = os.Getenv("OCTELIUM_AUTH_PROXY_SOCKET")
+		target = fmt.Sprintf("unix:%s", os.Getenv("OCTELIUM_AUTH_PROXY_SOCKET"))
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		opts = append(opts, grpc.WithBlock())
-		opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", addr)
-		}))
 	} else {
-		target = authc.GetAPIServerAddr(domain)
+		target = fmt.Sprintf("passthrough:///%s", authc.GetAPIServerAddr(domain))
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	}
 
-	return grpc.Dial(target, opts...)
+	return grpc.NewClient(target, opts...)
 }
