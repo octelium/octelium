@@ -174,7 +174,7 @@ func TestClientCommandE2E(t *testing.T) {
 		}
 		socket, dir := newTestCommandSocket(t), t.TempDir()
 		start := func() (*testCommandProcess, daemonv1.MainServiceClient) {
-			p := startTestCommand(t, binary, nil, "daemon", "--listen", socket, "--state-dir", dir, "--homedir", t.TempDir())
+			p := startTestCommand(t, binary, nil, "daemon", "--listen", socket, "--state-dir", dir, "--owner-policy", "first-caller", "--homedir", t.TempDir())
 			conn, err := grpc.NewClient("passthrough:///"+socket,
 				grpc.WithTransportCredentials(ipc.NewTransportCredentials()), grpc.WithContextDialer(ipc.Dial))
 			require.NoError(t, err)

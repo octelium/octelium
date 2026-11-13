@@ -569,7 +569,7 @@ func TestDaemonCrashCleanupE2E(t *testing.T) {
 	startDaemon := func() (*testCommandProcess, daemonv1.MainServiceClient) {
 		socket := newTestCommandSocket(t)
 		p := startTestCommand(t, binary, []string{"OCTELIUM_AUTH_PROXY_SOCKET=" + apiSocket},
-			"daemon", "--listen", socket, "--state-dir", stateDir, "--homedir", t.TempDir())
+			"daemon", "--listen", socket, "--state-dir", stateDir, "--owner-policy", "first-caller", "--homedir", t.TempDir())
 		conn, err := grpc.NewClient("passthrough:///"+socket,
 			grpc.WithTransportCredentials(ipc.NewTransportCredentials()), grpc.WithContextDialer(ipc.Dial))
 		require.NoError(t, err)

@@ -26,6 +26,7 @@ type args struct {
 	ListenAddress string
 	StateDir      string
 	Owner         string
+	OwnerPolicy   string
 }
 
 var cmdArgs args
@@ -40,6 +41,10 @@ octelium daemon --listen /var/run/octelium/daemon.sock --state-dir /var/lib/octe
 
 # Run the daemon for a specific OS user
 octelium daemon --owner 1000
+
+# Run the daemon for the OS user of the first local API caller regardless of
+# whether it has a login session
+octelium daemon --owner-policy first-caller
 `
 
 var Cmd = &cobra.Command{
@@ -51,7 +56,8 @@ and which serves the local client API to the local frontends such as the
 Octelium CLI itself and the Octelium desktop application.
 
 The daemon is owned by a single OS user. The owner is either set via the --owner
-flag or it is the OS user of the first local API caller.`,
+flag or it is the OS user of the first local API caller. By default, only an OS
+user that has a login session can be the first local API caller.`,
 	Example: example,
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -74,6 +80,15 @@ the daemon and the CLI of the owner use separate Cluster Sessions.`)
 		`The ID of the OS user that owns this daemon. This is the UID on Linux and macOS
 and the SID on Windows. The local API calls of every other OS user are rejected.
 By default the daemon is owned by the OS user of the first local API caller.`)
+	Cmd.PersistentFlags().StringVar(&cmdArgs.OwnerPolicy, "owner-policy", server.OwnerPolicyLoginSession,
+		`The policy that chooses the owner of the daemon when the --owner flag is not set.
+Supported values are "login-session" and "first-caller". With "login-session",
+the daemon is owned by the OS user of the first local API caller that has a login
+session. This is a logind session of the "user" class on Linux, the console user
+on macOS and an interactive logon on Windows. The root and SYSTEM users are always
+accepted and so is every OS user when the login sessions cannot be checked, for
+example on Linux without systemd-logind. With "first-caller", the daemon is owned
+by the OS user of the first local API caller.`)
 }
 
 func doCmd(cmd *cobra.Command, args []string) error {
@@ -83,6 +98,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		ListenAddress: cmdArgs.ListenAddress,
 		StateDir:      cmdArgs.StateDir,
 		OwnerID:       cmdArgs.Owner,
+		OwnerPolicy:   cmdArgs.OwnerPolicy,
 	})
 }
 

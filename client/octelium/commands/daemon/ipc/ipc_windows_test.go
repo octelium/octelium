@@ -83,6 +83,18 @@ func TestPeerPrincipal(t *testing.T) {
 	assert.Equal(t, current.Uid, res.principal.ID)
 	assert.Equal(t, int32(os.Getpid()), res.principal.PID)
 	assert.Equal(t, AuthType, NewTransportCredentials().Info().SecurityProtocol)
+
+	hasLoginSession, err := HasLoginSession(context.Background(), res.principal)
+	assert.Nil(t, err)
+	assert.Equal(t, isCurrentProcessInteractive(t), hasLoginSession)
+}
+
+func TestIsSystemPrincipal(t *testing.T) {
+	assert.True(t, IsSystemPrincipal(&Principal{ID: "S-1-5-18"}))
+	assert.False(t, IsSystemPrincipal(&Principal{ID: "S-1-5-19"}))
+	assert.False(t, IsSystemPrincipal(&Principal{ID: "S-1-5-21-1-2-3-1001"}))
+	assert.False(t, IsSystemPrincipal(&Principal{ID: "0"}))
+	assert.False(t, IsSystemPrincipal(&Principal{}))
 }
 
 func TestGetPrincipal(t *testing.T) {

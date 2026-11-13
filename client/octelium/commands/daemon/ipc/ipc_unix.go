@@ -33,6 +33,8 @@ import (
 
 const defaultSocketPath = "/var/run/octelium/daemon.sock"
 
+const systemPrincipalID = "0"
+
 const dialProbeTimeout = 2 * time.Second
 
 func GetDefaultAddress() string {

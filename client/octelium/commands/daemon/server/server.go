@@ -43,10 +43,18 @@ const (
 
 const gracefulStopTimeout = 5 * time.Second
 
+const loginSessionCheckTimeout = 10 * time.Second
+
+const (
+	OwnerPolicyFirstCaller  = "first-caller"
+	OwnerPolicyLoginSession = "login-session"
+)
+
 type Opts struct {
 	ListenAddress string
 	StateDir      string
 	OwnerID       string
+	OwnerPolicy   string
 }
 
 type Server struct {
@@ -65,6 +73,9 @@ type Server struct {
 	mu        sync.Mutex
 	principal *principal
 	isClosed  bool
+
+	ownerPolicyMu   sync.Mutex
+	hasLoginSession func(ctx context.Context, pr *ipc.Principal) (bool, error)
 }
 
 func New(o *Opts) (*Server, error) {
@@ -72,11 +83,18 @@ func New(o *Opts) (*Server, error) {
 		o = &Opts{}
 	}
 
+	switch o.OwnerPolicy {
+	case "", OwnerPolicyFirstCaller, OwnerPolicyLoginSession:
+	default:
+		return nil, errors.Errorf("Invalid owner policy: %s", o.OwnerPolicy)
+	}
+
 	ret := &Server{
-		opts:       o,
-		instanceID: uuid.NewString(),
-		stateDir:   o.StateDir,
-		srvErrC:    make(chan error, 1),
+		opts:            o,
+		instanceID:      uuid.NewString(),
+		stateDir:        o.StateDir,
+		srvErrC:         make(chan error, 1),
+		hasLoginSession: ipc.HasLoginSession,
 	}
 
 	if ret.opts.ListenAddress == "" {
@@ -216,6 +234,10 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) bindPrincipal(pr *ipc.Principal) (*principal, error) {
+	if err := s.checkOwnerPolicy(pr); err != nil {
+		return nil, err
+	}
+
 	s.mu.Lock()
 
 	if s.isClosed {
@@ -258,6 +280,48 @@ func (s *Server) bindPrincipal(pr *ipc.Principal) (*principal, error) {
 	ret.doAutoConnect()
 
 	return ret, nil
+}
+
+func (s *Server) checkOwnerPolicy(pr *ipc.Principal) error {
+	if s.opts.OwnerPolicy != OwnerPolicyLoginSession || s.opts.OwnerID != "" ||
+		ipc.IsSystemPrincipal(pr) {
+		return nil
+	}
+
+	s.ownerPolicyMu.Lock()
+	defer s.ownerPolicyMu.Unlock()
+
+	if s.isBound() {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, loginSessionCheckTimeout)
+	defer cancel()
+
+	hasLoginSession, err := s.hasLoginSession(ctx, pr)
+	switch {
+	case err == nil && hasLoginSession:
+		return nil
+	case err == nil:
+		zap.L().Debug("Rejecting an OS user without a login session as the owner of the daemon",
+			zap.String("principal", pr.ID))
+		return status.Error(codes.PermissionDenied,
+			"This Octelium daemon can only be owned by an OS user that has a login session")
+	case ctx.Err() != nil:
+		return status.Error(codes.Unavailable,
+			"Could not check whether the OS user has a login session")
+	default:
+		zap.L().Warn("Could not check whether the OS user has a login session. Accepting it as the owner of the daemon",
+			zap.String("principal", pr.ID), zap.Error(err))
+		return nil
+	}
+}
+
+func (s *Server) isBound() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.principal != nil
 }
 
 func canonicalizeDomain(domain string) (string, error) {

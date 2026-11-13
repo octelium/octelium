@@ -647,6 +647,60 @@ func TestOwnerBindingFirstCaller(t *testing.T) {
 	assert.Equal(t, p, srv.srv.principal)
 }
 
+func TestOwnerBindingLoginSession(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("This test needs to run as a non-root OS user")
+	}
+
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	srv, err := New(&Opts{
+		ListenAddress: newTestSocketPath(t),
+		StateDir:      path.Join(dir, "state"),
+		OwnerPolicy:   OwnerPolicyLoginSession,
+	})
+	require.NoError(t, err)
+
+	var hasLoginSession atomic.Bool
+	srv.hasLoginSession = func(ctx context.Context, pr *ipc.Principal) (bool, error) {
+		assert.Equal(t, fmt.Sprintf("%d", os.Getuid()), pr.ID)
+		return hasLoginSession.Load(), nil
+	}
+
+	require.NoError(t, srv.Run(ctx))
+	defer srv.Close()
+
+	conn, err := grpc.NewClient(fmt.Sprintf("passthrough:///%s", srv.opts.ListenAddress),
+		grpc.WithTransportCredentials(ipc.NewTransportCredentials()),
+		grpc.WithContextDialer(ipc.Dial))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	c := daemonv1.NewMainServiceClient(conn)
+
+	{
+		_, err := c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+		assert.True(t, grpcerr.IsPermissionDenied(err))
+		assert.False(t, srv.isBound())
+	}
+
+	hasLoginSession.Store(true)
+
+	{
+		resp, err := c.GetInfo(ctx, &daemonv1.GetInfoRequest{})
+		require.NoError(t, err)
+		assert.Equal(t, fmt.Sprintf("%d", os.Getuid()), resp.Principal.Id)
+	}
+
+	hasLoginSession.Store(false)
+
+	{
+		_, err := c.GetStatus(ctx, &daemonv1.GetStatusRequest{})
+		assert.Nil(t, err)
+	}
+}
+
 func TestSingletonDaemon(t *testing.T) {
 	ctx := context.Background()
 	srv := newTestServer(t)

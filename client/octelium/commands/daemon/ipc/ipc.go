@@ -31,6 +31,13 @@ type Principal struct {
 	Name    string
 	HomeDir string
 	PID     int32
+
+	isInteractive    bool
+	isInteractiveErr error
+}
+
+func IsSystemPrincipal(pr *Principal) bool {
+	return pr.ID == systemPrincipalID
 }
 
 type AuthInfo struct {

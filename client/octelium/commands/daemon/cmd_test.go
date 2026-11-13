@@ -97,6 +97,21 @@ func TestRunServerRejectsInvalidStateDirectory(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestRunServerRejectsInvalidOwnerPolicy(t *testing.T) {
+	err := runServer(t.Context(), &server.Opts{
+		ListenAddress: testDaemonAddress(t),
+		StateDir:      t.TempDir(),
+		OwnerPolicy:   "invalid",
+	})
+	assert.Error(t, err)
+}
+
+func TestOwnerPolicyFlag(t *testing.T) {
+	flag := Cmd.PersistentFlags().Lookup("owner-policy")
+	require.NotNil(t, flag)
+	assert.Equal(t, server.OwnerPolicyLoginSession, flag.DefValue)
+}
+
 func TestRunServerAlreadyCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

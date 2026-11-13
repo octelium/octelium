@@ -103,6 +103,14 @@ func TestGetPrincipal(t *testing.T) {
 	}
 }
 
+func TestIsSystemPrincipal(t *testing.T) {
+	assert.True(t, IsSystemPrincipal(&Principal{ID: "0"}))
+	assert.False(t, IsSystemPrincipal(&Principal{ID: "1000"}))
+	assert.False(t, IsSystemPrincipal(&Principal{ID: "00"}))
+	assert.False(t, IsSystemPrincipal(&Principal{ID: "S-1-5-18"}))
+	assert.False(t, IsSystemPrincipal(&Principal{}))
+}
+
 func TestGetPeerPrincipalNonLocal(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	assert.Nil(t, err)

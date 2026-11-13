@@ -27,6 +27,8 @@ import (
 
 const defaultPipeName = `\\.\pipe\octelium-daemon`
 
+const systemPrincipalID = "S-1-5-18"
+
 func GetDefaultAddress() string {
 	if ret := os.Getenv("OCTELIUM_DAEMON_SOCKET"); ret != "" {
 		return ret
@@ -78,6 +80,7 @@ func getPeerPrincipal(conn net.Conn) (*Principal, error) {
 		return nil, err
 	}
 	ret.PID = int32(pid)
+	ret.isInteractive, ret.isInteractiveErr = isInteractiveToken(token)
 
 	return ret, nil
 }
