@@ -87,8 +87,10 @@ func TestRemoteRefIsNotFetched(t *testing.T) {
 	t.Run("loaderIsDenied", func(t *testing.T) {
 		atomic.StoreInt64(&hits, 0)
 
-		_, _ = NewCompiler().Compile([]byte(schema))
+		compiled, err := NewCompiler().Compile([]byte(schema))
 
+		assert.ErrorIs(t, err, errRemoteRefDisabled)
+		assert.Nil(t, compiled)
 		assert.Equal(t, int64(0), atomic.LoadInt64(&hits))
 	})
 
@@ -99,13 +101,6 @@ func TestRemoteRefIsNotFetched(t *testing.T) {
 
 		assert.ErrorContains(t, err, "points outside the schema")
 		assert.Equal(t, int64(0), atomic.LoadInt64(&hits))
-	})
-
-	t.Run("unresolvedRefWouldOtherwiseAcceptAnything", func(t *testing.T) {
-		compiled, err := NewCompiler().Compile([]byte(schema))
-		require.Nil(t, err)
-
-		assert.True(t, compiled.Validate(map[string]any{"a": "not-an-object"}).IsValid())
 	})
 
 	t.Run("upstreamStillFetches", func(t *testing.T) {
