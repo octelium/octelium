@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/client/octeliumctl
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/fatih/color v1.18.0

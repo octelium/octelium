@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/cluster/portal
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect

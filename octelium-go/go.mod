@@ -1,6 +1,6 @@
 module github.com/octelium/octelium/octelium-go
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/octelium/octelium/apis v0.50.0
