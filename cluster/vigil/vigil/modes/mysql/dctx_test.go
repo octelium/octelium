@@ -134,6 +134,21 @@ func (c *tstSecretOcteliumC) GetSecret(ctx context.Context,
 	}, nil
 }
 
+type tstStalledHandshakeConn struct {
+	net.Conn
+	handshakeCh chan struct{}
+}
+
+func (c *tstStalledHandshakeConn) Read(buf []byte) (int, error) {
+	n, err := c.Conn.Read(buf)
+	if n == 0 {
+		return n, err
+	}
+	close(c.handshakeCh)
+	io.Copy(io.Discard, c.Conn)
+	return 0, io.EOF
+}
+
 func TestConnectUpstreamStalled(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -154,7 +169,7 @@ func TestConnectUpstreamStalled(t *testing.T) {
 			require.Nil(t, err)
 			defer lis.Close()
 
-			acceptedCh := make(chan struct{})
+			handshakeCh := make(chan struct{})
 			closedCh := make(chan struct{})
 			go func() {
 				conn, err := lis.Accept()
@@ -162,15 +177,21 @@ func TestConnectUpstreamStalled(t *testing.T) {
 					return
 				}
 				defer conn.Close()
-				close(acceptedCh)
-				io.Copy(io.Discard, conn)
+				if tc.canceled {
+					_, _ = (&Server{}).getDownstreamConn(&tstStalledHandshakeConn{
+						Conn:        conn,
+						handshakeCh: handshakeCh,
+					})
+				} else {
+					io.Copy(io.Discard, conn)
+				}
 				close(closedCh)
 			}()
 
 			if tc.canceled {
 				go func() {
 					select {
-					case <-acceptedCh:
+					case <-handshakeCh:
 						cancel()
 					case <-ctx.Done():
 					}
