@@ -23,6 +23,7 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -44,6 +45,19 @@ func (c *Controller) AddGateway(ctx context.Context, gw *userv1.Gateway) error {
 func (c *Controller) addGateway(ctx context.Context, gw *userv1.Gateway) error {
 	if gw == nil {
 		return errors.Errorf("Cannot add a nil Gateway")
+	}
+
+	if cur := c.getGatewayFromState(gw.Id); cur != nil {
+		if proto.Equal(cur, gw) {
+			zap.L().Debug("The Gateway is already added", zap.String("id", gw.Id))
+			return nil
+		}
+
+		if !c.isQUIC {
+			return c.updateGateway(ctx, gw)
+		}
+
+		c.removeGatewayFromState(gw.Id)
 	}
 
 	c.c.Connection.Gateways = append(c.c.Connection.Gateways, gw)
@@ -142,42 +156,54 @@ func (c *Controller) deleteGateway(ctx context.Context, gwID string) error {
 		return c.quicEngine.deleteGWByID(gwID)
 	}
 
-	for i, gw := range c.c.Connection.Gateways {
-		if gw.Id == gwID {
+	removed := c.removeGatewayFromState(gwID)
+	if len(removed) == 0 {
+		return nil
+	}
 
-			c.c.Connection.Gateways = append(c.c.Connection.Gateways[:i], c.c.Connection.Gateways[i+1:]...)
+	zap.L().Debug("Removing gw", zap.Any("gw", removed))
 
-			zap.L().Debug("Removing gw", zap.Any("gw", gw))
+	if c.isNetstack {
+		if c.dev == nil {
+			return errors.Errorf("The WireGuard device is not initialized")
+		}
+		return c.setWGDev()
+	}
 
-			if c.isNetstack {
-				if c.dev == nil {
-					return errors.Errorf("The WireGuard device is not initialized")
-				}
-				if err := c.setWGDev(); err != nil {
-					return err
-				}
-			} else {
-				if err := c.UnsetGatewayWGPeer(gw); err != nil {
-					return err
-				}
-			}
-
-			return nil
-
+	for _, gw := range removed {
+		if err := c.UnsetGatewayWGPeer(gw); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-func (c *Controller) removeGatewayFromState(gwID string) {
-	for i, gw := range c.c.Connection.Gateways {
+func (c *Controller) getGatewayFromState(gwID string) *userv1.Gateway {
+	for _, gw := range c.c.Connection.Gateways {
 		if gw != nil && gw.Id == gwID {
-			c.c.Connection.Gateways = append(
-				c.c.Connection.Gateways[:i], c.c.Connection.Gateways[i+1:]...)
-			return
+			return gw
 		}
 	}
+
+	return nil
+}
+
+func (c *Controller) removeGatewayFromState(gwID string) []*userv1.Gateway {
+	var kept, removed []*userv1.Gateway
+	for _, gw := range c.c.Connection.Gateways {
+		if gw != nil && gw.Id == gwID {
+			removed = append(removed, gw)
+		} else {
+			kept = append(kept, gw)
+		}
+	}
+
+	if len(removed) > 0 {
+		c.c.Connection.Gateways = kept
+	}
+
+	return removed
 }
 
 func (c *Controller) getGatewayEndpoint(gw *userv1.Gateway) (*net.UDPAddr, error) {

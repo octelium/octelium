@@ -117,6 +117,43 @@ func TestGatewayEventsWithoutQUICEngine(t *testing.T) {
 	assert.Nil(t, c.DeleteGateway(ctx, "gw-1"))
 }
 
+func TestGatewayEventsDeduplicateByID(t *testing.T) {
+	gw := &userv1.Gateway{Id: "gw-1", Addresses: []string{"192.0.2.1"}, Quicv0: &userv1.Gateway_QUICV0{Port: 8443}}
+	other := &userv1.Gateway{Id: "gw-2", Addresses: []string{"192.0.2.2"}, Quicv0: &userv1.Gateway_QUICV0{Port: 8443}}
+
+	t.Run("repeated-add-does-not-reconfigure-netstack", func(t *testing.T) {
+		c := newTestGatewayCtl([]*userv1.Gateway{gw, other})
+		c.isNetstack = true
+		assert.NoError(t, c.AddGateway(t.Context(), proto.Clone(gw).(*userv1.Gateway)))
+		assert.Equal(t, []*userv1.Gateway{gw, other}, c.c.Connection.Gateways)
+	})
+
+	t.Run("repeated-add-does-not-reconfigure-quic", func(t *testing.T) {
+		c := newTestGatewayCtl([]*userv1.Gateway{gw, other})
+		c.isQUIC = true
+		assert.NoError(t, c.AddGateway(t.Context(), proto.Clone(gw).(*userv1.Gateway)))
+		assert.Equal(t, []*userv1.Gateway{gw, other}, c.c.Connection.Gateways)
+	})
+
+	t.Run("changed-add-replaces-quic", func(t *testing.T) {
+		c := newTestGatewayCtl([]*userv1.Gateway{gw, other})
+		c.isQUIC = true
+		updated := proto.Clone(gw).(*userv1.Gateway)
+		updated.Addresses = []string{"192.0.2.3"}
+		assert.ErrorContains(t, c.AddGateway(t.Context(), updated), "QUIC engine is not initialized")
+		assert.Equal(t, []*userv1.Gateway{other, updated}, c.c.Connection.Gateways)
+	})
+
+	t.Run("delete-removes-every-match-quic", func(t *testing.T) {
+		c := newTestGatewayCtl([]*userv1.Gateway{gw, nil, other, proto.Clone(gw).(*userv1.Gateway)})
+		c.isQUIC = true
+		assert.NoError(t, c.DeleteGateway(t.Context(), gw.Id))
+		assert.Equal(t, []*userv1.Gateway{nil, other}, c.c.Connection.Gateways)
+		assert.NoError(t, c.DeleteGateway(t.Context(), gw.Id))
+		assert.Equal(t, []*userv1.Gateway{nil, other}, c.c.Connection.Gateways)
+	})
+}
+
 func TestGetGWFromPktEmpty(t *testing.T) {
 	e := &quicEngine{
 		quicGWMap: quicGWMap{

@@ -30,7 +30,10 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/db"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
+	"golang.zx2c4.com/wireguard/wgctrl"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestLinuxControllerStartCloseNetstackIPModes(t *testing.T) {
@@ -294,4 +297,74 @@ func TestLinuxGatewayEndpointNetns(t *testing.T) {
 			assert.Nil(t, err, string(out))
 		})
 	}
+}
+
+const testKernelGatewayEventsNetnsEnv = "OCTELIUM_TEST_KERNEL_GATEWAY_EVENTS_NETNS"
+
+func TestLinuxKernelGatewayEventsNetnsHelper(t *testing.T) {
+	if os.Getenv(testKernelGatewayEventsNetnsEnv) == "" {
+		t.Skip("Runs only inside TestLinuxKernelGatewayEventsNetns")
+	}
+
+	c := newTestGatewayCtl(nil)
+	c.c.Preferences.DeviceName = "oct-test"
+	if err := netlink.LinkAdd(newWgLink(c.c.Preferences.DeviceName, 1420)); err != nil {
+		t.Skipf("Could not create the WireGuard device: %v", err)
+	}
+	wgC, err := wgctrl.New()
+	require.NoError(t, err)
+	defer wgC.Close()
+	c.wgC = wgC
+
+	getPeerKeys := func() []string {
+		dev, err := wgC.Device(c.c.Preferences.DeviceName)
+		require.NoError(t, err)
+		var ret []string
+		for _, peer := range dev.Peers {
+			ret = append(ret, peer.PublicKey.String())
+		}
+		return ret
+	}
+
+	gw := newTestReliabilityGateway(t, 1)
+	other := newTestReliabilityGateway(t, 2)
+	require.NoError(t, c.AddGateway(t.Context(), gw))
+	require.NoError(t, c.AddGateway(t.Context(), other))
+	require.NoError(t, c.AddGateway(t.Context(), proto.Clone(gw).(*userv1.Gateway)))
+	assert.Equal(t, []*userv1.Gateway{gw, other}, c.c.Connection.Gateways)
+	assert.ElementsMatch(t, []string{gw.Wireguard.PublicKey, other.Wireguard.PublicKey}, getPeerKeys())
+
+	updated := newTestReliabilityGateway(t, 3)
+	updated.Id = gw.Id
+	require.NoError(t, c.AddGateway(t.Context(), updated))
+	assert.Equal(t, []*userv1.Gateway{updated, other}, c.c.Connection.Gateways)
+	assert.ElementsMatch(t, []string{updated.Wireguard.PublicKey, other.Wireguard.PublicKey}, getPeerKeys())
+
+	dup := newTestReliabilityGateway(t, 4)
+	dup.Id = gw.Id
+	c.c.Connection.Gateways = append(c.c.Connection.Gateways, dup)
+	require.NoError(t, c.SetGatewayWGPeer(dup))
+	require.NoError(t, c.DeleteGateway(t.Context(), gw.Id))
+	assert.Equal(t, []*userv1.Gateway{other}, c.c.Connection.Gateways)
+	assert.Equal(t, []string{other.Wireguard.PublicKey}, getPeerKeys())
+}
+
+func TestLinuxKernelGatewayEventsNetns(t *testing.T) {
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.v", "-test.run=^TestLinuxKernelGatewayEventsNetnsHelper$")
+	cmd.Env = append(os.Environ(), testKernelGatewayEventsNetnsEnv+"=true")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET,
+		UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
+		GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
+	}
+
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		t.Skipf("Could not create the network namespace: %v", err)
+	}
+	if strings.Contains(string(out), "--- SKIP") {
+		t.Skipf("Could not set up the WireGuard device: %s", out)
+	}
+	assert.Nil(t, err, string(out))
 }

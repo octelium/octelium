@@ -150,6 +150,47 @@ func TestControllerIncompleteGatewayEventsKeepNetstackDevice(t *testing.T) {
 	assert.Empty(t, getTestReliabilityPeerKeys(t, c))
 }
 
+func TestControllerDuplicateAddGatewayIsRemovedByDelete(t *testing.T) {
+	gw := newTestReliabilityGateway(t, 1)
+	c, err := newTestReliabilityNetstackController(t, "", gw)
+	require.NoError(t, err)
+	require.NoError(t, c.AddGateway(t.Context(), gw))
+	require.NoError(t, c.AddGateway(t.Context(), proto.Clone(gw).(*userv1.Gateway)))
+	assert.Len(t, c.c.Connection.Gateways, 1)
+	assert.Equal(t, []string{gw.Wireguard.PublicKey}, getTestReliabilityPeerKeys(t, c))
+	require.NoError(t, c.DeleteGateway(t.Context(), gw.Id))
+	assert.Empty(t, getTestReliabilityPeerKeys(t, c), "a deleted Gateway remains a WireGuard peer")
+	assert.Empty(t, c.c.Connection.Gateways, "a deleted Gateway remains in the Connection state")
+}
+
+func TestControllerAddGatewayWithKnownIDReplacesIt(t *testing.T) {
+	gw := newTestReliabilityGateway(t, 1)
+	other := newTestReliabilityGateway(t, 2)
+	c, err := newTestReliabilityNetstackController(t, "", gw, other)
+	require.NoError(t, err)
+	updated := newTestReliabilityGateway(t, 3)
+	updated.Id = gw.Id
+	require.NoError(t, c.AddGateway(t.Context(), updated))
+	assert.Len(t, c.c.Connection.Gateways, 2)
+	assert.ElementsMatch(t, []string{updated.Wireguard.PublicKey, other.Wireguard.PublicKey}, getTestReliabilityPeerKeys(t, c))
+	require.NoError(t, c.DeleteGateway(t.Context(), gw.Id))
+	assert.Equal(t, []string{other.Wireguard.PublicKey}, getTestReliabilityPeerKeys(t, c))
+	assert.Equal(t, []*userv1.Gateway{other}, c.c.Connection.Gateways)
+}
+
+func TestControllerDeleteGatewayRemovesEveryMatch(t *testing.T) {
+	gw := newTestReliabilityGateway(t, 1)
+	other := newTestReliabilityGateway(t, 2)
+	dup := newTestReliabilityGateway(t, 3)
+	dup.Id = gw.Id
+	c, err := newTestReliabilityNetstackController(t, "", gw, other, dup)
+	require.NoError(t, err)
+	assert.Len(t, getTestReliabilityPeerKeys(t, c), 3)
+	require.NoError(t, c.DeleteGateway(t.Context(), gw.Id))
+	assert.Equal(t, []string{other.Wireguard.PublicKey}, getTestReliabilityPeerKeys(t, c))
+	assert.Equal(t, []*userv1.Gateway{other}, c.c.Connection.Gateways)
+}
+
 func TestControllerConcurrentGatewayEventsAndClose(t *testing.T) {
 	c, err := newTestReliabilityNetstackController(t, "")
 	require.NoError(t, err)
@@ -723,17 +764,6 @@ func TestControllerReliabilityKnownIssues(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Contains(t, string(b), "@cert-authority",
 			"the Cluster CA is silently skipped for the whole Connection when the lock is briefly held")
-	})
-	t.Run("RL-12-duplicate-add-gateway-survives-delete", func(t *testing.T) {
-		gw := newTestReliabilityGateway(t, 1)
-		c, err := newTestReliabilityNetstackController(t, "", gw)
-		require.NoError(t, err)
-		require.NoError(t, c.AddGateway(t.Context(), gw))
-		require.NoError(t, c.DeleteGateway(t.Context(), gw.Id))
-		assert.Empty(t, getTestReliabilityPeerKeys(t, c), "a deleted Gateway remains a WireGuard peer")
-		for _, cur := range c.c.Connection.Gateways {
-			assert.NotEqual(t, gw.Id, cur.Id, "a deleted Gateway remains in the Connection state")
-		}
 	})
 	t.Run("RL-11-update-unknown-gateway", func(t *testing.T) {
 		c, err := newTestReliabilityNetstackController(t, "")
