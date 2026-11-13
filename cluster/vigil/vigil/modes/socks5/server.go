@@ -53,6 +53,7 @@ import (
 )
 
 const handshakeTimeout = 10 * time.Second
+const upstreamConnectTimeout = 30 * time.Second
 
 type Server struct {
 	octovigilC *octovigilc.Client

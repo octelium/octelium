@@ -115,6 +115,9 @@ func (c *dctx) close() error {
 
 func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) error {
 
+	ctx, cancel := context.WithTimeout(ctx, upstreamConnectTimeout)
+	defer cancel()
+
 	zap.L().Debug("Starting connecting", zap.String("id", c.id))
 	upstream, err := lbManager.GetUpstream(ctx, c.authResp)
 	if err != nil {
@@ -147,9 +150,19 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 		return err
 	}
 
+	var stop func() bool
 	dialer := func(ctx context.Context, network, address string) (net.Conn, error) {
 		var ret net.Dialer
-		return ret.DialContext(ctx, network, address)
+		conn, err := ret.DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+
+		stop = context.AfterFunc(ctx, func() {
+			conn.Close()
+		})
+
+		return conn, nil
 	}
 
 	upstreamConn, err := client.ConnectWithDialer(ctx, "tcp", upstream.HostPort,
@@ -194,6 +207,14 @@ func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, s
 			}
 			return nil
 		})
+	if stop != nil && !stop() {
+		if err == nil {
+			upstreamConn.Close()
+		}
+		zap.L().Debug("Upstream MySQL handshake did not complete",
+			zap.String("id", c.id), zap.Error(ctx.Err()))
+		return ctx.Err()
+	}
 	if err != nil {
 		return errors.Errorf("Could not connect to upstream: %+v", err)
 	}

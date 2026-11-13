@@ -52,6 +52,7 @@ import (
 )
 
 const handshakeTimeout = 10 * time.Second
+const upstreamConnectTimeout = 30 * time.Second
 const maxLoggedQueryLen = 32 * 1024
 
 type Server struct {

@@ -289,6 +289,9 @@ func (c *dctx) setCancelKey() error {
 
 func (c *dctx) connect(ctx context.Context, lbManager *loadbalancer.LBManager, svc *corev1.Service, secretMan *secretman.SecretManager) (retErr error) {
 
+	ctx, cancel := context.WithTimeout(ctx, upstreamConnectTimeout)
+	defer cancel()
+
 	zap.L().Debug("Starting connecting",
 		zap.String("id", c.id),
 		zap.Any("startupMsgParams", c.startupMessage.(*pgproto3.StartupMessage).Parameters))

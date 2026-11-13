@@ -51,6 +51,7 @@ import (
 )
 
 const startupTimeout = 10 * time.Second
+const upstreamConnectTimeout = 30 * time.Second
 const maxMessageBodyLen = 64 * 1024 * 1024
 const maxLoggedQueryLen = 32 * 1024
 const cancelRequestTimeout = 5 * time.Second

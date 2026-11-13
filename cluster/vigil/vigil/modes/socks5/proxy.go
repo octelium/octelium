@@ -95,6 +95,9 @@ func (p *proxy) getUpstreamConn(
 	svc *corev1.Service,
 	secretMan *secretman.SecretManager,
 ) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, upstreamConnectTimeout)
+	defer cancel()
+
 	if isEmbeddedMode(p.dctx.svcConfig) {
 		return p.getEmbeddedUpstreamConn(ctx)
 	}
@@ -174,6 +177,12 @@ func (p *proxy) dialViaSOCKS5(ctx context.Context, socksAddr string, auth *xprox
 	}
 
 	conn, err := dialer.Dial("tcp", p.dctx.target.addr)
+	if forward.stop != nil && !forward.stop() {
+		if err == nil {
+			conn.Close()
+		}
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -236,12 +245,22 @@ func (p *proxy) connCopy(dst io.Writer, src io.Reader, isFromDownstream bool, cl
 type upstreamDialer struct {
 	ctx     context.Context
 	timeout time.Duration
+	stop    func() bool
 }
 
 func (d *upstreamDialer) Dial(network, addr string) (net.Conn, error) {
 	var nd net.Dialer
 	nd.Timeout = d.timeout
-	return nd.DialContext(d.ctx, network, addr)
+	conn, err := nd.DialContext(d.ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	d.stop = context.AfterFunc(d.ctx, func() {
+		conn.Close()
+	})
+
+	return conn, nil
 }
 
 func isExpectedNetErr(err error) bool {

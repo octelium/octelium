@@ -33,11 +33,14 @@ import (
 	"github.com/things-go/go-socks5/statute"
 	xproxy "golang.org/x/net/proxy"
 
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/rsc/rcorev1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
@@ -52,6 +55,7 @@ import (
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"google.golang.org/grpc"
 )
 
 func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
@@ -700,6 +704,194 @@ func TestSOCKS5ProxyCopyFailureClosesBothConnections(t *testing.T) {
 			for _, peer := range []net.Conn{client, backend} {
 				_, err := peer.Read(make([]byte, 1))
 				assert.ErrorIs(t, err, io.EOF)
+			}
+		})
+	}
+}
+
+type tstSecretOcteliumC struct {
+	octeliumc.ClientInterface
+	rcorev1.ResourceServiceClient
+	deadline time.Time
+}
+
+func (c *tstSecretOcteliumC) CoreC() rcorev1.ResourceServiceClient {
+	return c
+}
+
+func (c *tstSecretOcteliumC) GetSecret(ctx context.Context,
+	in *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Secret, error) {
+	c.deadline, _ = ctx.Deadline()
+	return &corev1.Secret{
+		Metadata: &metav1.Metadata{Name: in.Name},
+		Data: &corev1.Secret_Data{
+			Type: &corev1.Secret_Data_Value{Value: "password"},
+		},
+	}, nil
+}
+
+func newTestUpstreamProxy(upstreamAddr, targetAddr string) (*proxy, *corev1.Service) {
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "socks5.default"},
+		Spec: &corev1.Service_Spec{
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: fmt.Sprintf("socks5://%s", upstreamAddr),
+					},
+				},
+				Type: &corev1.Service_Spec_Config_Socks5{
+					Socks5: &corev1.Service_Spec_Config_SOCKS5{
+						Auth: &corev1.Service_Spec_Config_SOCKS5_Auth{
+							Type: &corev1.Service_Spec_Config_SOCKS5_Auth_UsernamePassword_{
+								UsernamePassword: &corev1.Service_Spec_Config_SOCKS5_Auth_UsernamePassword{
+									Username: "octelium",
+									Password: &corev1.Service_Spec_Config_SOCKS5_Auth_UsernamePassword_Password{
+										Type: &corev1.Service_Spec_Config_SOCKS5_Auth_UsernamePassword_Password_FromSecret{
+											FromSecret: "socks5-password",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: &corev1.Service_Status{},
+	}
+
+	return newProxy(&dctx{
+		target:    &target{addr: targetAddr},
+		svcConfig: svc.Spec.Config,
+		authResp: &coctovigilv1.AuthenticateAndAuthorizeResponse{
+			RequestContext: &corev1.RequestContext{Service: svc},
+		},
+	}, loadbalancer.NewLbManager(nil, nil)), svc
+}
+
+func TestGetUpstreamConn(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	targetPort := tests.GetPort()
+	targetSrv := newEchoServer(t, targetPort)
+	defer targetSrv.close()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.Nil(t, err)
+	defer lis.Close()
+
+	upstreamSrv := gosocks5.NewServer(
+		gosocks5.WithAuthMethods([]gosocks5.Authenticator{
+			gosocks5.UserPassAuthenticator{
+				Credentials: gosocks5.StaticCredentials{"octelium": "password"},
+			},
+		}),
+	)
+	go upstreamSrv.Serve(lis)
+
+	secretMan, err := secretman.New(ctx, &tstSecretOcteliumC{}, nil)
+	require.Nil(t, err)
+
+	p, svc := newTestUpstreamProxy(lis.Addr().String(), fmt.Sprintf("127.0.0.1:%d", targetPort))
+
+	conn, err := p.getUpstreamConn(ctx, svc, secretMan)
+	require.Nil(t, err, "%+v", err)
+	defer conn.Close()
+
+	cancel()
+	time.Sleep(500 * time.Millisecond)
+
+	require.Nil(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+
+	msg := utilrand.GetRandomBytesMust(32)
+	_, err = conn.Write(msg)
+	require.Nil(t, err)
+
+	cw, ok := conn.(interface{ CloseWrite() error })
+	require.True(t, ok, "%T", conn)
+	require.Nil(t, cw.CloseWrite())
+
+	ret, err := io.ReadAll(conn)
+	assert.Nil(t, err)
+	assert.Equal(t, msg, ret)
+}
+
+func TestGetUpstreamConnStalled(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		canceled bool
+	}{
+		{"deadline", false},
+		{"canceled", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			timeout := time.Second
+			if tc.canceled {
+				timeout = time.Minute
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
+			defer cancel()
+
+			lis, err := net.Listen("tcp", "127.0.0.1:0")
+			require.Nil(t, err)
+			defer lis.Close()
+
+			acceptedCh := make(chan struct{})
+			closedCh := make(chan struct{})
+			go func() {
+				conn, err := lis.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				close(acceptedCh)
+				io.Copy(io.Discard, conn)
+				close(closedCh)
+			}()
+
+			if tc.canceled {
+				go func() {
+					select {
+					case <-acceptedCh:
+						cancel()
+					case <-ctx.Done():
+					}
+				}()
+			}
+
+			octeliumC := &tstSecretOcteliumC{}
+			secretMan, err := secretman.New(ctx, octeliumC, nil)
+			require.Nil(t, err)
+
+			p, svc := newTestUpstreamProxy(lis.Addr().String(), "127.0.0.1:80")
+
+			startedAt := time.Now()
+			errCh := make(chan error, 1)
+			go func() {
+				conn, err := p.getUpstreamConn(ctx, svc, secretMan)
+				assert.Nil(t, conn)
+				errCh <- err
+			}()
+
+			select {
+			case err := <-errCh:
+				if tc.canceled {
+					assert.ErrorIs(t, err, context.Canceled)
+					assert.WithinRange(t, octeliumC.deadline,
+						startedAt.Add(upstreamConnectTimeout), time.Now().Add(upstreamConnectTimeout))
+				} else {
+					assert.ErrorIs(t, err, context.DeadlineExceeded)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("getUpstreamConn did not return")
+			}
+
+			select {
+			case <-closedCh:
+			case <-time.After(5 * time.Second):
+				t.Fatal("upstream conn was not closed")
 			}
 		})
 	}
