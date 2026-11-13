@@ -40,6 +40,8 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/userctx"
+	"github.com/octelium/octelium/cluster/rscserver/rscserver"
+	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/http2"
@@ -59,9 +61,37 @@ func (s *userCtxStream) Context() context.Context {
 }
 
 func TestStopDisconnectsConnections(t *testing.T) {
+	for _, delay := range []time.Duration{0, 6 * time.Second} {
+		t.Run(delay.String(), func(t *testing.T) {
+			testStopDisconnectsConnections(t, delay)
+		})
+	}
+}
+
+func testStopDisconnectsConnections(t *testing.T, delay time.Duration) {
+	t.Helper()
+
 	ctx := context.Background()
 
-	tst, err := tests.Initialize(nil)
+	tst, err := tests.Initialize(&tests.Opts{
+		RscServerOpts: &rscserver.Opts{
+			PreUpdate: func(ctx context.Context, new, old umetav1.ResourceObjectI,
+				api, version, kind string) error {
+				sess, ok := new.(*corev1.Session)
+				if !ok || sess.GetStatus().GetIsConnected() ||
+					!old.(*corev1.Session).GetStatus().GetIsConnected() {
+					return nil
+				}
+
+				select {
+				case <-time.After(delay):
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+		},
+	})
 	assert.Nil(t, err)
 	t.Cleanup(func() {
 		tst.Destroy()
@@ -106,6 +136,7 @@ func TestStopDisconnectsConnections(t *testing.T) {
 					userCtxs[md.Get("x-test-session-uid")[0]]),
 			})
 		}))
+	t.Cleanup(s.Stop)
 	userv1.RegisterMainServiceServer(s, usrSrv)
 
 	lis := bufconn.Listen(1024 * 1024)

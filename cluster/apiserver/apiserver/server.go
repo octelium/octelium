@@ -39,7 +39,7 @@ import (
 	sesscontroller "github.com/octelium/octelium/cluster/apiserver/apiserver/controllers/sessions"
 )
 
-const shutdownTimeout = 5 * time.Second
+const shutdownTimeout = 15 * time.Second
 
 func Run(ctx context.Context) error {
 

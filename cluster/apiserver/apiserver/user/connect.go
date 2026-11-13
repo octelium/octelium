@@ -102,7 +102,10 @@ func (s *Server) Connect(stream userv1.MainService_ConnectServer) error {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		s.doDisconnectConnection(ctx, i, curConn)
+		if _, err := s.doDisconnectConnection(ctx, i, curConn); err != nil {
+			zap.L().Warn("Could not disconnect the Connection",
+				zap.String("name", i.Session.Metadata.Name), zap.Error(err))
+		}
 	}()
 
 	if err := stream.Send(connState); err != nil {
