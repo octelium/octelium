@@ -41,6 +41,7 @@ import (
 const (
 	pgErrInsufficientPrivilege = "42501"
 	pgErrUndefinedTable        = "42P01"
+	pgErrInFailedTransaction   = "25P02"
 
 	mysqlConnectBudget = 3 * time.Minute
 
@@ -312,10 +313,13 @@ func testVigilPostgres(t *testing.T, h *harness.H) {
 		assert.Equal(t, pgErrInsufficientPrivilege, pgErrorCode(err), "%+v", err)
 
 		var status string
-		require.Nil(t, tx.QueryRowContext(ctx, fmt.Sprintf("SELECT status FROM %s", table)).Scan(&status))
-		assert.Equal(t, "active", status,
-			"the denied prepared UPDATE must not change or abort the upstream transaction")
+		err = tx.QueryRowContext(ctx, fmt.Sprintf("SELECT status FROM %s", table)).Scan(&status)
+		assert.Equal(t, pgErrInFailedTransaction, pgErrorCode(err),
+			"the denied prepared UPDATE must abort the upstream transaction: %+v", err)
 		require.Nil(t, tx.Rollback())
+
+		require.Nil(t, conn.QueryRowContext(ctx, fmt.Sprintf("SELECT status FROM %s", table)).Scan(&status))
+		assert.Equal(t, "active", status, "the denied prepared UPDATE must not change the upstream row")
 
 		svc.Spec.Authorization = nil
 		svc = h.UpdateService(t, svc)

@@ -338,8 +338,8 @@ func requireBlackhole(t *testing.T, h *harness.H) {
 	t.Helper()
 
 	for _, cmd := range []string{
-		"sudo -n iptables -S INPUT",
-		"sudo -n ip6tables -S INPUT",
+		"sudo -n iptables -t mangle -S INPUT",
+		"sudo -n ip6tables -t mangle -S INPUT",
 		"sudo -n ss -Htn",
 	} {
 		if out, err := h.Output(t.Context(), cmd); err != nil {

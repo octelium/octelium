@@ -112,11 +112,11 @@ func (h *H) BlackholeConnections(t *testing.T, c *Conn, remotePort uint16) {
 		rule := fmt.Sprintf("INPUT -p tcp -m conntrack --ctorigsrc %s --ctorigsrcport %d -j DROP",
 			addr.Addr(), addr.Port())
 
-		h.MustRun(t, fmt.Sprintf("sudo %s -I %s", bin, rule))
+		h.MustRun(t, fmt.Sprintf("sudo %s -t mangle -I %s", bin, rule))
 		zap.L().Debug("Blackholed the connection", zap.String("local", addr.String()))
 
 		t.Cleanup(func() {
-			if err := h.Run(context.Background(), fmt.Sprintf("sudo %s -D %s", bin, rule)); err != nil {
+			if err := h.Run(context.Background(), fmt.Sprintf("sudo %s -t mangle -D %s", bin, rule)); err != nil {
 				zap.L().Warn("Could not remove the blackhole rule",
 					zap.String("rule", rule), zap.Error(err))
 			}
