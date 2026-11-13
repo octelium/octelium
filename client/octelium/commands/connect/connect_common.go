@@ -138,8 +138,10 @@ func (c *Connector) sendInitializeRequest(streamC userv1.MainService_ConnectClie
 	return streamC.Send(req)
 }
 
+const initialStateTimeout = 60 * time.Second
+
 func getStateMsg(ctx context.Context, streamC userv1.MainService_ConnectClient) (*userv1.ConnectionState, *timestamppb.Timestamp, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, initialStateTimeout)
 	defer cancel()
 
 	errCh := make(chan error, 10)

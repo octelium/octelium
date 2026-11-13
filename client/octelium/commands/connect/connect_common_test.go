@@ -570,6 +570,44 @@ func TestGetStateMsgPreservesStreamErrors(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 }
 
+func TestGetStateMsgTimeout(t *testing.T) {
+	assert.GreaterOrEqual(t, initialStateTimeout, time.Minute)
+	t.Run("late-state", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			release := make(chan struct{})
+			defer close(release)
+			want := &userv1.ConnectionState{L3Mode: userv1.ConnectionState_V4}
+			started := time.Now()
+			got, _, err := getStateMsg(t.Context(), &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+				select {
+				case <-time.After(initialStateTimeout - time.Nanosecond):
+					return &userv1.ConnectResponse{Event: &userv1.ConnectResponse_State{State: want}}, nil
+				case <-release:
+					return nil, io.EOF
+				}
+			}})
+			require.NoError(t, err)
+			assert.Same(t, want, got)
+			assert.Equal(t, initialStateTimeout-time.Nanosecond, time.Since(started))
+		})
+	})
+	t.Run("no-state", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			release := make(chan struct{})
+			defer close(release)
+			started := time.Now()
+			state, at, err := getStateMsg(t.Context(), &testConnectStream{recvFn: func() (*userv1.ConnectResponse, error) {
+				<-release
+				return nil, io.EOF
+			}})
+			assert.ErrorContains(t, err, "initial state")
+			assert.Nil(t, state)
+			assert.Nil(t, at)
+			assert.Equal(t, initialStateTimeout, time.Since(started))
+		})
+	})
+}
+
 func TestGetConnectionConfigPreferences(t *testing.T) {
 	clearTestConnectEnv(t)
 	t.Setenv("OCTELIUM_KEEPALIVE", "45")
