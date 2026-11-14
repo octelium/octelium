@@ -20,7 +20,7 @@ package rdp
 
 /*
 #cgo CFLAGS: -I${SRCDIR}
-#cgo LDFLAGS: -L${SRCDIR}/.libs -lwebrdp_credssp -ldl -lm -lpthread
+#cgo LDFLAGS: -lwebrdp_credssp -ldl -lm -lpthread
 #include <stdlib.h>
 #include "webrdp_credssp.h"
 */

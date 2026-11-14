@@ -26,9 +26,7 @@ WORKDIR /build
 
 COPY --from=builder-web /build/dist /build/cluster/vigil/vigil/modes/webrdp/web
 
-RUN mkdir -p /build/cluster/vigil/vigil/modes/rdp/.libs
-COPY --from=builder-rust /build/target/release/libwebrdp_credssp.a /build/cluster/vigil/vigil/modes/rdp/.libs/libwebrdp_credssp.a
-RUN test -f /build/cluster/vigil/vigil/modes/rdp/.libs/libwebrdp_credssp.a
+COPY --from=builder-rust /build/target/release/libwebrdp_credssp.a /usr/local/lib/libwebrdp_credssp.a
 
 RUN make build-vigil
 
