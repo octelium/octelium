@@ -217,6 +217,10 @@ type responseWriter struct {
 }
 
 func (w *responseWriter) WriteHeader(statusCode int) {
+	if statusCode >= 100 && statusCode < 200 && statusCode != http.StatusSwitchingProtocols {
+		return
+	}
+
 	w.statusCode = statusCode
 
 	if w.isWritten || w.isRetry {

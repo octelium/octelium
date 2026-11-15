@@ -166,6 +166,53 @@ func TestHTTPRetryReplaysRequestAndIsolatesResponse(t *testing.T) {
 	assert.Equal(t, int32(2), attempts.Load())
 }
 
+func TestHTTPRetryInformationalResponses(t *testing.T) {
+	var attempts atomic.Int32
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Expect") == "" {
+			w.Header().Set("Link", "</style.css>; rel=preload; as=style")
+			w.WriteHeader(http.StatusEarlyHints)
+			w.Header().Del("Link")
+		}
+		body, err := io.ReadAll(r.Body)
+		assert.Nil(t, err)
+		assert.Equal(t, "payload", string(body))
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("forbidden"))
+	}), &corev1.Service_Spec_Config_HTTP{
+		Retry: &corev1.Service_Spec_Config_HTTP_Retry{
+			MaxRetries:      3,
+			InitialInterval: &metav1.Duration{Type: &metav1.Duration_Seconds{Seconds: 1}},
+		},
+	})
+	client := &http.Client{
+		Transport: &http.Transport{ExpectContinueTimeout: 5 * time.Second},
+		Timeout:   10 * time.Second,
+	}
+	defer client.CloseIdleConnections()
+	for _, expect := range []bool{false, true} {
+		attempts.Store(0)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, addr+"/upload", strings.NewReader("payload"))
+		require.Nil(t, err)
+		if expect {
+			req.Header.Set("Expect", "100-continue")
+		}
+		resp, err := client.Do(req)
+		require.Nil(t, err)
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Nil(t, err)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, expect)
+		assert.Equal(t, "forbidden", string(body), expect)
+		assert.Empty(t, resp.Header.Get("Link"), expect)
+		assert.Equal(t, int32(2), attempts.Load(), expect)
+	}
+}
+
 func TestHTTPPathRewritePreservesEscapedSuffix(t *testing.T) {
 	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(r.RequestURI))

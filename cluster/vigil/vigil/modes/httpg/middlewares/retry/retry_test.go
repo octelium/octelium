@@ -22,6 +22,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/http/httputil"
+	"net/textproto"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -310,6 +314,119 @@ func TestRetryBodySizeLimits(t *testing.T) {
 	}{{0, defaultMaxBodySize}, {1, 1}, {maxBodySize, maxBodySize}, {maxBodySize + 1, maxBodySize}, {^uint32(0), maxBodySize}} {
 		cfg.GetHttp().Body.MaxRequestSize = tc.size
 		assert.Equal(t, tc.want, getMaxBodySize(cfg))
+	}
+}
+
+func TestRetryInformationalResponses(t *testing.T) {
+	payload := strings.Repeat("request payload ", 64)
+	for _, tc := range []struct {
+		name     string
+		info     int
+		statuses []int
+	}{
+		{"EarlyHints", http.StatusEarlyHints, []int{http.StatusForbidden}},
+		{"Processing", http.StatusProcessing, []int{http.StatusNotFound}},
+		{"EarlyHintsSuccess", http.StatusEarlyHints, []int{http.StatusOK}},
+		{"EarlyHintsRetried", http.StatusEarlyHints, []int{http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusCreated}},
+		{"EarlyHintsExhausted", http.StatusEarlyHints, []int{http.StatusBadGateway, http.StatusBadGateway, http.StatusBadGateway, http.StatusBadGateway}},
+		{"Continue", http.StatusContinue, []int{http.StatusForbidden}},
+		{"ContinueRetried", http.StatusContinue, []int{http.StatusBadGateway, http.StatusCreated}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := int(attempts.Add(1))
+				if tc.info != http.StatusContinue {
+					w.Header().Set("Link", "</style.css>; rel=preload; as=style")
+					w.WriteHeader(tc.info)
+					w.Header().Del("Link")
+				}
+				body, err := io.ReadAll(r.Body)
+				assert.Nil(t, err)
+				assert.Equal(t, payload, string(body))
+				w.Header().Set("X-Attempt", fmt.Sprint(attempt))
+				w.WriteHeader(tc.statuses[attempt-1])
+				w.Write([]byte(fmt.Sprintf("body-%d", attempt)))
+			}))
+			t.Cleanup(upstream.Close)
+			upstreamURL, err := url.Parse(upstream.URL)
+			require.Nil(t, err)
+			transport := &http.Transport{ExpectContinueTimeout: time.Second}
+			t.Cleanup(transport.CloseIdleConnections)
+			h, err := New(t.Context(), &httputil.ReverseProxy{
+				Transport: transport,
+				Rewrite: func(pr *httputil.ProxyRequest) {
+					pr.SetURL(upstreamURL)
+				},
+			})
+			require.Nil(t, err)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), middlewares.CtxRequestContext, newRetryReqCtx(nil))))
+			}))
+			t.Cleanup(srv.Close)
+			var infos []int
+			ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+				Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+					infos = append(infos, code)
+					return nil
+				},
+			})
+			req, err := http.NewRequestWithContext(ctx, http.MethodPut, srv.URL, strings.NewReader(payload))
+			require.Nil(t, err)
+			if tc.info == http.StatusContinue {
+				req.Header.Set("Expect", "100-continue")
+			}
+			client := &http.Client{
+				Transport: &http.Transport{ExpectContinueTimeout: 5 * time.Second},
+				Timeout:   10 * time.Second,
+			}
+			defer client.CloseIdleConnections()
+			resp, err := client.Do(req)
+			require.Nil(t, err)
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.Nil(t, err)
+			wantAttempts := len(tc.statuses)
+			assert.Equal(t, int32(wantAttempts), attempts.Load())
+			assert.Equal(t, tc.statuses[wantAttempts-1], resp.StatusCode)
+			assert.Equal(t, fmt.Sprintf("body-%d", wantAttempts), string(body))
+			assert.Equal(t, fmt.Sprint(wantAttempts), resp.Header.Get("X-Attempt"))
+			assert.Empty(t, resp.Header.Get("Link"))
+			if tc.info == http.StatusContinue {
+				assert.Equal(t, []int{http.StatusContinue}, infos)
+			} else {
+				assert.Empty(t, infos)
+			}
+		})
+	}
+}
+
+func TestRetryIgnoresInformationalStatus(t *testing.T) {
+	for _, info := range []int{http.StatusContinue, http.StatusProcessing, http.StatusEarlyHints} {
+		t.Run(fmt.Sprint(info), func(t *testing.T) {
+			attempts := 0
+			h, err := New(t.Context(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				w.WriteHeader(info)
+				if attempts == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					w.Write([]byte("discarded"))
+					return
+				}
+				w.Header().Set("X-Final", "true")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte("forbidden"))
+			}))
+			require.Nil(t, err)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = req.WithContext(context.WithValue(t.Context(), middlewares.CtxRequestContext, newRetryReqCtx(nil)))
+			rw := httptest.NewRecorder()
+			h.ServeHTTP(rw, req)
+			assert.Equal(t, 2, attempts)
+			assert.Equal(t, http.StatusForbidden, rw.Code)
+			assert.Equal(t, "true", rw.Result().Header.Get("X-Final"))
+			assert.Equal(t, "forbidden", rw.Body.String())
+		})
 	}
 }
 
