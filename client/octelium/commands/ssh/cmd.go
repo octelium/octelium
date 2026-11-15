@@ -25,10 +25,10 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/pkg/utils/sshcert"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/term"
 )
 
@@ -166,7 +166,7 @@ func DoCommand(ctx context.Context, o *DoCommandOpts) error {
 		}
 		f.Close()
 
-		return knownhosts.New(f.Name())
+		return sshcert.NewKnownHostsCallback(f.Name())
 	}()
 	if err != nil {
 		return err

@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octelium/commands/connect/ccommon"
 	"github.com/octelium/octelium/pkg/utils"
+	"github.com/octelium/octelium/pkg/utils/sshcert"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
@@ -403,14 +404,16 @@ func NewServer(opts *Opts) (*Server, error) {
 		ServerVersion: "SSH-2.0-Octelium",
 
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			checker := &ssh.CertChecker{
-				IsUserAuthority: func(auth ssh.PublicKey) bool {
-					authBytes := auth.Marshal()
-					if len(authBytes) == 0 {
-						return false
-					}
+			checker := &sshcert.CertChecker{
+				CertChecker: ssh.CertChecker{
+					IsUserAuthority: func(auth ssh.PublicKey) bool {
+						authBytes := auth.Marshal()
+						if len(authBytes) == 0 {
+							return false
+						}
 
-					return utils.SecureBytesEqual(authBytes, caPubKeyBytes)
+						return utils.SecureBytesEqual(authBytes, caPubKeyBytes)
+					},
 				},
 			}
 

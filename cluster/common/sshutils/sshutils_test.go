@@ -30,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
+	"github.com/octelium/octelium/pkg/utils/sshcert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/ssh"
@@ -254,6 +255,8 @@ func TestMakeCert(t *testing.T) {
 		assert.Equal(t, caSigner.PublicKey().Marshal(), cert.SignatureKey.Marshal())
 		assert.True(t, cert.ValidBefore > cert.ValidAfter)
 		assert.Equal(t, 0, len(cert.Permissions.Extensions))
+		assert.Empty(t, cert.ValidPrincipals)
+		assert.Nil(t, (&sshcert.CertChecker{}).CheckCert("example.com", cert))
 	}
 
 	{
@@ -273,6 +276,23 @@ func TestMakeCert(t *testing.T) {
 			_, ok := cert.Permissions.Extensions[ext]
 			assert.True(t, ok, ext)
 		}
+
+		assert.Empty(t, cert.ValidPrincipals)
+		assert.Nil(t, (&sshcert.CertChecker{}).CheckCert("root", cert))
+	}
+
+	{
+		cert, err := makeCert(signer, caSigner, ssh.HostCert, "example.com")
+		assert.Nil(t, err, "%+v", err)
+
+		assert.Equal(t, []string{"example.com"}, cert.ValidPrincipals)
+		assert.Nil(t, (&ssh.CertChecker{}).CheckCert("example.com", cert))
+		assert.NotNil(t, (&ssh.CertChecker{}).CheckCert("other.example.com", cert))
+	}
+
+	{
+		_, err := makeCert(signer, caSigner, ssh.HostCert, "")
+		assert.NotNil(t, err)
 	}
 
 	{
@@ -343,5 +363,36 @@ func TestGetHostKeyCACallback(t *testing.T) {
 
 		cb := GetHostKeyCACallback(otherCASigner.PublicKey())
 		assert.NotNil(t, cb("host", addr, certSigner.PublicKey()))
+	}
+
+	{
+		cb := GetHostKeyCACallback(caSigner.PublicKey())
+		for _, hostname := range []string{
+			"host:22",
+			"svc.default.local.example.com:22",
+			"100.64.0.25:22",
+			"[fdee:e61::2e6]:22",
+			"localhost:2022",
+		} {
+			assert.Nil(t, cb(hostname, addr, certSigner.PublicKey()), hostname)
+		}
+		assert.NotNil(t, cb("host", addr, certSigner.PublicKey()))
+	}
+
+	{
+		certSigner, err := makeCertSigner(hostSigner, caSigner, ssh.HostCert, "host.example.com")
+		assert.Nil(t, err, "%+v", err)
+
+		cb := GetHostKeyCACallback(caSigner.PublicKey())
+		assert.Nil(t, cb("host.example.com:22", addr, certSigner.PublicKey()))
+		assert.NotNil(t, cb("other.example.com:22", addr, certSigner.PublicKey()))
+	}
+
+	{
+		userSigner, err := makeCertSigner(hostSigner, caSigner, ssh.UserCert)
+		assert.Nil(t, err, "%+v", err)
+
+		cb := GetHostKeyCACallback(caSigner.PublicKey())
+		assert.NotNil(t, cb("host:22", addr, userSigner.PublicKey()))
 	}
 }

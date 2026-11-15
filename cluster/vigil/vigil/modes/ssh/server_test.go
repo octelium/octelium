@@ -52,6 +52,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
+	"github.com/octelium/octelium/pkg/utils/sshcert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -61,7 +62,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func setTestMeterProvider(t *testing.T) *sdkmetric.ManualReader {
@@ -1082,14 +1082,16 @@ func TestServer(t *testing.T) {
 		tstSrv.sshConfig = &ssh.ServerConfig{
 
 			PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-				checker := &ssh.CertChecker{
-					IsUserAuthority: func(auth ssh.PublicKey) bool {
-						authBytes := auth.Marshal()
-						if len(authBytes) == 0 {
-							return false
-						}
+				checker := &sshcert.CertChecker{
+					CertChecker: ssh.CertChecker{
+						IsUserAuthority: func(auth ssh.PublicKey) bool {
+							authBytes := auth.Marshal()
+							if len(authBytes) == 0 {
+								return false
+							}
 
-						return utils.SecureBytesEqual(authBytes, ca.Marshal())
+							return utils.SecureBytesEqual(authBytes, ca.Marshal())
+						},
 					},
 				}
 
@@ -1195,7 +1197,7 @@ func newTestHostCertificateServer(t *testing.T, legacy bool) (string, string) {
 			ValidAfter:      uint64(time.Now().Add(-time.Minute).Unix()),
 			ValidBefore:     uint64(time.Now().Add(time.Hour).Unix()),
 		}
-		require.Nil(t, cert.SignCert(rand.Reader, ca))
+		require.Nil(t, sshcert.Sign(rand.Reader, cert, ca))
 		signer, err := ssh.NewCertSigner(cert, host)
 		require.Nil(t, err)
 		config := &ssh.ServerConfig{NoClientAuth: true, ServerVersion: "SSH-2.0-Octelium"}
@@ -1261,7 +1263,7 @@ func newTestHostCertificateServer(t *testing.T, legacy bool) (string, string) {
 
 func TestSSHHostCertificateCompatibility(t *testing.T) {
 	addr, knownHosts := newTestHostCertificateServer(t, false)
-	callback, err := knownhosts.New(knownHosts)
+	callback, err := sshcert.NewKnownHostsCallback(knownHosts)
 	require.Nil(t, err)
 
 	for _, tc := range []struct {
@@ -1364,7 +1366,7 @@ func TestSSHHostCertificateOpenSSH(t *testing.T) {
 
 func TestSSHHostCertificateLegacyCluster(t *testing.T) {
 	addr, knownHosts := newTestHostCertificateServer(t, true)
-	callback, err := knownhosts.New(knownHosts)
+	callback, err := sshcert.NewKnownHostsCallback(knownHosts)
 	require.Nil(t, err)
 	for _, host := range []string{"ssh-k8s-2", "100.64.0.25", "fdee:e61::2e6", "localhost", "10.0.0.5", "custom-client-alias"} {
 		t.Run(host, func(t *testing.T) {

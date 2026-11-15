@@ -26,12 +26,12 @@ import (
 	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/client/common/client"
 	"github.com/octelium/octelium/client/common/cliutils"
+	"github.com/octelium/octelium/pkg/utils/sshcert"
 	"github.com/pkg/errors"
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 type args struct {
@@ -173,7 +173,7 @@ func doCmd(cmd *cobra.Command, args []string) error {
 		}
 		f.Close()
 
-		return knownhosts.New(f.Name())
+		return sshcert.NewKnownHostsCallback(f.Name())
 	}()
 	if err != nil {
 		return err

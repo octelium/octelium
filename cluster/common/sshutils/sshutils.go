@@ -35,6 +35,7 @@ import (
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
+	"github.com/octelium/octelium/pkg/utils/sshcert"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/ssh"
@@ -152,7 +153,7 @@ func makeCert(priv ssh.Signer, signer ssh.Signer, typ int, principals ...string)
 		}
 	}
 
-	if err := cert.SignCert(rand.Reader, signer); err != nil {
+	if err := sshcert.Sign(rand.Reader, cert, signer); err != nil {
 		return nil, err
 	}
 
@@ -176,9 +177,11 @@ func GetHostKeyCACallback(caPubKey ssh.PublicKey) ssh.HostKeyCallback {
 		}
 	}
 
-	checker := &ssh.CertChecker{
-		IsHostAuthority: func(auth ssh.PublicKey, address string) bool {
-			return utils.SecureBytesEqual(auth.Marshal(), caPubKey.Marshal())
+	checker := &sshcert.CertChecker{
+		CertChecker: ssh.CertChecker{
+			IsHostAuthority: func(auth ssh.PublicKey, address string) bool {
+				return utils.SecureBytesEqual(auth.Marshal(), caPubKey.Marshal())
+			},
 		},
 	}
 
