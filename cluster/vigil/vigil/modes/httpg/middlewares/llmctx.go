@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 )
@@ -79,6 +80,7 @@ func SetLLMRequestContext(reqCtx *RequestContext, req *http.Request) {
 	}
 
 	updated := GetLLMRequestContext(llmReq, httpC)
+	vutils.ReplaceInvalidUTF8(updated)
 	reqCtx.DownstreamRequest.Request.Type = &corev1.RequestContext_Request_Llm{
 		Llm: updated,
 	}

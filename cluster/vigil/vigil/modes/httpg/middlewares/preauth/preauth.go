@@ -232,6 +232,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	vutils.ReplaceInvalidUTF8(downstreamReq)
+
 	reqCtx.DownstreamRequest = downstreamReq
 
 	if middlewares.IsAnonymousMode(req) {

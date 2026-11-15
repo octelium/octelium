@@ -23,9 +23,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestSetRequestContextBody(t *testing.T) {
@@ -156,4 +159,58 @@ func TestResponseCallbacksRunOnce(t *testing.T) {
 	r.RunOnResponse()
 	r.RunOnResponse()
 	assert.Equal(t, []int{1, 2}, seen)
+}
+
+func TestSetRequestContextInvalidUTF8(t *testing.T) {
+	newReqCtx := func(body string, req *corev1.RequestContext_Request) *RequestContext {
+		return &RequestContext{
+			Body:              []byte(body),
+			DownstreamRequest: &coctovigilv1.DownstreamRequest{Request: req},
+			DownstreamInfo:    &corev1.RequestContext{Request: req},
+		}
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Header.Set("Mcp-Session-Id", "session\xff")
+		reqCtx := newReqCtx(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tool"}}`,
+			&corev1.RequestContext_Request{
+				Type: &corev1.RequestContext_Request_Mcp{
+					Mcp: &corev1.RequestContext_Request_MCP{Http: &corev1.RequestContext_Request_HTTP{}},
+				},
+			})
+
+		SetMCPRequestContext(reqCtx, req)
+
+		mcpC := reqCtx.DownstreamInfo.Request.GetMcp()
+		require.NotNil(t, mcpC)
+		assert.Equal(t, "session\uFFFD", mcpC.SessionID)
+		assert.Equal(t, "tool", mcpC.Name)
+		_, err := proto.Marshal(reqCtx.DownstreamRequest)
+		assert.Nil(t, err)
+		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap)
+		assert.NotNil(t, reqCtx.ReqCtxMap)
+	}
+
+	{
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions/%ff?q=\xff", nil)
+		reqCtx := newReqCtx(`{"model":"gpt"}`,
+			&corev1.RequestContext_Request{
+				Type: &corev1.RequestContext_Request_Llm{
+					Llm: &corev1.RequestContext_Request_LLM{Http: &corev1.RequestContext_Request_HTTP{}},
+				},
+			})
+
+		SetLLMRequestContext(reqCtx, req)
+
+		llmC := reqCtx.DownstreamInfo.Request.GetLlm()
+		require.NotNil(t, llmC)
+		assert.Equal(t, "/v1/chat/completions/\uFFFD", llmC.Http.Path)
+		assert.Equal(t, "/v1/chat/completions/%ff?q=\uFFFD", llmC.Http.Uri)
+		assert.Equal(t, "/v1/chat/completions/\xff", req.URL.Path)
+		_, err := proto.Marshal(reqCtx.DownstreamRequest)
+		assert.Nil(t, err)
+		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap)
+		assert.NotNil(t, reqCtx.ReqCtxMap)
+	}
 }

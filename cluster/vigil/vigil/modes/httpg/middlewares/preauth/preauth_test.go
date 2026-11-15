@@ -32,15 +32,18 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -420,6 +423,94 @@ func TestKubernetesRequestContext(t *testing.T) {
 			assert.True(t, reached)
 		})
 	}
+}
+
+func TestInvalidUTF8RequestContext(t *testing.T) {
+	celEngine, err := celengine.New(t.Context(), &celengine.Opts{})
+	require.Nil(t, err)
+
+	for _, tc := range []struct {
+		target      string
+		header      string
+		path        string
+		queryParams map[string]string
+		headerValue string
+	}{
+		{"/admin/x?q=v", "valid", "/admin/x", map[string]string{"q": "v"}, "valid"},
+		{"/admin/%ff?q=v", "valid", "/admin/\uFFFD", map[string]string{"q": "v"}, "valid"},
+		{"/admin/x?q=%ff", "valid", "/admin/x", map[string]string{"q": "\uFFFD"}, "valid"},
+		{"/admin/x?q%ff=v", "valid", "/admin/x", map[string]string{"q\uFFFD": "v"}, "valid"},
+		{"/admin/x?q=v", "a\xffb", "/admin/x", map[string]string{"q": "v"}, "a\uFFFDb"},
+	} {
+		t.Run(fmt.Sprintf("%s %q", tc.target, tc.header), func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+			req.Header.Set("X-Custom", tc.header)
+			req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+				&middlewares.RequestContext{Service: &corev1.Service{Spec: &corev1.Service_Spec{IsAnonymous: true}}}))
+			upstreamPath := req.URL.Path
+			upstreamQuery := req.URL.RawQuery
+
+			var reached bool
+			m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				reqCtx := middlewares.GetCtxRequestContext(r.Context())
+
+				_, err := proto.Marshal(reqCtx.DownstreamRequest)
+				assert.Nil(t, err)
+
+				httpC := reqCtx.DownstreamInfo.Request.GetHttp()
+				require.NotNil(t, httpC)
+				assert.Equal(t, tc.path, httpC.Path)
+				assert.Equal(t, tc.queryParams, httpC.QueryParams)
+				assert.Equal(t, tc.headerValue, httpC.Headers["x-custom"])
+
+				isEnforced, err := commonplugin.ShouldEnforcePluginErr(r.Context(), &commonplugin.ShouldEnforcePluginOpts{
+					Plugin: &corev1.Service_Spec_Config_HTTP_Plugin{
+						Name: "plugin",
+						Condition: &corev1.Condition{
+							Type: &corev1.Condition_Match{Match: `ctx.request.http.path.startsWith("/admin")`},
+						},
+					},
+					CELEngine: celEngine,
+					Phase:     corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH,
+				})
+				assert.Nil(t, err)
+				assert.True(t, isEnforced)
+
+				assert.Equal(t, upstreamPath, r.URL.Path)
+				assert.Equal(t, upstreamQuery, r.URL.RawQuery)
+				assert.Equal(t, tc.header, r.Header.Get("X-Custom"))
+				w.WriteHeader(http.StatusNoContent)
+			})}
+			w := httptest.NewRecorder()
+			m.ServeHTTP(w, req)
+			assert.True(t, reached)
+			assert.Equal(t, http.StatusNoContent, w.Code)
+		})
+	}
+}
+
+func TestInvalidUTF8KubernetesRequestContext(t *testing.T) {
+	var reached bool
+	m := &middleware{next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		reqCtx := middlewares.GetCtxRequestContext(r.Context())
+
+		_, err := proto.Marshal(reqCtx.DownstreamRequest)
+		assert.Nil(t, err)
+
+		got := reqCtx.DownstreamRequest.Request.GetKubernetes()
+		require.NotNil(t, got)
+		assert.Equal(t, "de\uFFFDfault", got.Namespace)
+		assert.Equal(t, "p\uFFFDd", got.Name)
+		assert.Equal(t, "/api/v1/namespaces/de\uFFFDfault/pods/p\uFFFDd", got.Http.Path)
+		assert.Equal(t, "/api/v1/namespaces/de\xfffault/pods/p\xffd", r.URL.Path)
+	})}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/de%fffault/pods/p%ffd", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middlewares.CtxRequestContext,
+		&middlewares.RequestContext{Service: &corev1.Service{Spec: &corev1.Service_Spec{Mode: corev1.Service_Spec_KUBERNETES}}}))
+	m.ServeHTTP(httptest.NewRecorder(), req)
+	assert.True(t, reached)
 }
 
 func TestRemoveDotSegments(t *testing.T) {

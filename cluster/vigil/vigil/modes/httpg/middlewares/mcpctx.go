@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 )
 
@@ -77,6 +78,7 @@ func SetMCPRequestContext(reqCtx *RequestContext, req *http.Request) {
 	}
 
 	updated := GetMCPRequestContext(mcpReq, httpC)
+	vutils.ReplaceInvalidUTF8(updated)
 	reqCtx.DownstreamRequest.Request.Type = &corev1.RequestContext_Request_Mcp{
 		Mcp: updated,
 	}

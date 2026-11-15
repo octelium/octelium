@@ -33,10 +33,13 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestServiceNamesAndAddresses(t *testing.T) {
@@ -310,4 +313,115 @@ func TestGetClientVersionFromUserAgent(t *testing.T) {
 	} {
 		assert.Equal(t, tc.version, vutils.GetClientVersionFromUserAgent(tc.userAgent), "%q", tc.userAgent)
 	}
+}
+
+func TestReplaceInvalidUTF8(t *testing.T) {
+	for _, itm := range []struct {
+		name string
+		in   proto.Message
+		want proto.Message
+	}{
+		{
+			name: "request context",
+			in: &corev1.RequestContext{
+				Request: &corev1.RequestContext_Request{
+					Ip: "1.2.3.4\xff",
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{
+							Path:        "/admin/\xff",
+							Uri:         "/admin/%FF?q=\xff\xfe",
+							Method:      "GET",
+							Headers:     map[string]string{"x-a": "a\xffb", "x-b": "valid"},
+							QueryParams: map[string]string{"q\xff": "1", "q\xfe": "2", "k": "caf\xe9"},
+							Body:        []byte("\xff"),
+							BodyMap: &structpb.Struct{Fields: map[string]*structpb.Value{
+								"name": {Kind: &structpb.Value_StringValue{StringValue: "caf\xe9"}},
+								"list": structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{
+									{Kind: &structpb.Value_StringValue{StringValue: "\xff"}},
+									structpb.NewNumberValue(1),
+								}}),
+							}},
+						},
+					},
+				},
+			},
+			want: &corev1.RequestContext{
+				Request: &corev1.RequestContext_Request{
+					Ip: "1.2.3.4\uFFFD",
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{
+							Path:        "/admin/\uFFFD",
+							Uri:         "/admin/%FF?q=\uFFFD",
+							Method:      "GET",
+							Headers:     map[string]string{"x-a": "a\uFFFDb", "x-b": "valid"},
+							QueryParams: map[string]string{"q\uFFFD": "2", "k": "caf\uFFFD"},
+							Body:        []byte("\xff"),
+							BodyMap: &structpb.Struct{Fields: map[string]*structpb.Value{
+								"name": structpb.NewStringValue("caf\uFFFD"),
+								"list": structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{
+									structpb.NewStringValue("\uFFFD"),
+									structpb.NewNumberValue(1),
+								}}),
+							}},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "valid map key wins",
+			in: &corev1.RequestContext_Request_HTTP{
+				QueryParams: map[string]string{"q\xff": "1", "q\uFFFD": "2"},
+			},
+			want: &corev1.RequestContext_Request_HTTP{
+				QueryParams: map[string]string{"q\uFFFD": "2"},
+			},
+		},
+		{
+			name: "repeated and nested",
+			in: &corev1.Secret{
+				Kind: "Secret",
+				Metadata: &metav1.Metadata{
+					Name:   "secret\xff",
+					Tags:   []string{"valid", "t\xff"},
+					Labels: map[string]string{"l\xff": "v\xff"},
+				},
+			},
+			want: &corev1.Secret{
+				Kind: "Secret",
+				Metadata: &metav1.Metadata{
+					Name:   "secret\uFFFD",
+					Tags:   []string{"valid", "t\uFFFD"},
+					Labels: map[string]string{"l\uFFFD": "v\uFFFD"},
+				},
+			},
+		},
+		{
+			name: "valid",
+			in: &corev1.Secret{
+				Kind:     "Secret",
+				Metadata: &metav1.Metadata{Name: "caf\u00e9", Tags: []string{"\uFFFD"}},
+			},
+			want: &corev1.Secret{
+				Kind:     "Secret",
+				Metadata: &metav1.Metadata{Name: "caf\u00e9", Tags: []string{"\uFFFD"}},
+			},
+		},
+		{name: "empty", in: &corev1.Secret{}, want: &corev1.Secret{}},
+	} {
+		t.Run(itm.name, func(t *testing.T) {
+			vutils.ReplaceInvalidUTF8(itm.in)
+			assert.True(t, proto.Equal(itm.want, itm.in), "%v", itm.in)
+
+			_, err := proto.Marshal(itm.in)
+			assert.NoError(t, err)
+			_, err = pbutils.ConvertToMap(itm.in)
+			assert.NoError(t, err)
+		})
+	}
+
+	assert.NotPanics(t, func() {
+		vutils.ReplaceInvalidUTF8(nil)
+		vutils.ReplaceInvalidUTF8((*corev1.Secret)(nil))
+	})
 }

@@ -32,6 +32,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -100,7 +101,15 @@ func GetLogger() log.Logger {
 }
 
 func EmitAccessLog(in *corev1.AccessLog) {
-	inMap := pbutils.MustConvertToMap(in)
+	inMap, err := pbutils.ConvertToMap(in)
+	if err != nil {
+		in = pbutils.Clone(in).(*corev1.AccessLog)
+		vutils.ReplaceInvalidUTF8(in)
+		inMap, err = pbutils.ConvertToMap(in)
+		if err != nil {
+			zap.L().Warn("Could not convert AccessLog to map", zap.Error(err))
+		}
+	}
 
 	ret := log.Record{}
 	ret.SetTimestamp((in.GetMetadata().CreatedAt.AsTime()))

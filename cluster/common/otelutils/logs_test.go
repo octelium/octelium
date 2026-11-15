@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -165,4 +168,63 @@ func TestLoggerProviderExportError(t *testing.T) {
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	assert.ErrorIs(t, provider.ForceFlush(canceled), context.Canceled)
+}
+
+func TestEmitAccessLogInvalidUTF8(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	exporter := &testLogExporter{
+		records:    make(chan sdklog.Record, 16),
+		batchSizes: make(chan int, 16),
+	}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(
+		exporter, sdklog.WithExportInterval(time.Hour))))
+	previous := otel.GetLoggerProvider()
+	otel.SetLoggerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetLoggerProvider(previous)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		assert.Nil(t, provider.Shutdown(ctx))
+	})
+
+	newAccessLog := func(path, userAgent string) *corev1.AccessLog {
+		return &corev1.AccessLog{
+			Metadata: &metav1.LogMetadata{
+				CreatedAt: pbutils.Timestamp(time.Unix(1700000000, 0)),
+			},
+			Entry: &corev1.AccessLog_Entry{
+				Info: &corev1.AccessLog_Entry_Info{
+					Type: &corev1.AccessLog_Entry_Info_Http{
+						Http: &corev1.AccessLog_Entry_Info_HTTP{
+							Request: &corev1.AccessLog_Entry_Info_HTTP_Request{
+								Path:      path,
+								UserAgent: userAgent,
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	for _, tc := range []struct {
+		in   *corev1.AccessLog
+		want *corev1.AccessLog
+	}{
+		{newAccessLog("/admin", "agent"), newAccessLog("/admin", "agent")},
+		{newAccessLog("/admin/\xff", "a\xffb"), newAccessLog("/admin/\uFFFD", "a\uFFFDb")},
+	} {
+		original := pbutils.Clone(tc.in)
+
+		EmitAccessLog(tc.in)
+		require.Nil(t, provider.ForceFlush(ctx))
+		require.Len(t, exporter.records, 1)
+
+		record := <-exporter.records
+		assert.NotEmpty(t, record.Body().AsMap())
+		assert.Equal(t, convertValue(pbutils.MustConvertToMap(tc.want)), record.Body())
+		assert.True(t, pbutils.IsEqual(original, tc.in))
+	}
 }

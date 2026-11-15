@@ -183,3 +183,70 @@ func TestShouldEnforcePluginBodyOmitted(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldEnforcePluginInvalidUTF8(t *testing.T) {
+
+	ctx := context.Background()
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+
+	newCtx := func(path string) context.Context {
+		return context.WithValue(ctx, middlewares.CtxRequestContext, &middlewares.RequestContext{
+			CreatedAt: time.Now(),
+			DownstreamInfo: &corev1.RequestContext{
+				Request: &corev1.RequestContext_Request{
+					Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{Path: path},
+					},
+				},
+			},
+		})
+	}
+
+	match := &corev1.Condition{
+		Type: &corev1.Condition_Match{Match: `ctx.request.http.path.startsWith("/admin")`},
+	}
+	not := &corev1.Condition{
+		Type: &corev1.Condition_Not{Not: `ctx.request.http.path.startsWith("/public")`},
+	}
+	matchAny := &corev1.Condition{
+		Type: &corev1.Condition_MatchAny{MatchAny: true},
+	}
+
+	for _, tst := range []struct {
+		path       string
+		condition  *corev1.Condition
+		isEnforced bool
+		ok         bool
+	}{
+		{"/admin/x", match, true, true},
+		{"/admin/x", not, true, true},
+		{"/admin/x", matchAny, true, true},
+		{"/admin/�", match, true, true},
+		{"/admin/\xff", match, false, false},
+		{"/admin/\xff", not, false, false},
+		{"/admin/\xff", matchAny, false, false},
+	} {
+		rw := httptest.NewRecorder()
+
+		isEnforced, ok := ShouldEnforcePlugin(newCtx(tst.path), rw, &ShouldEnforcePluginOpts{
+			Plugin: &corev1.Service_Spec_Config_HTTP_Plugin{
+				Name:      "plugin",
+				Condition: tst.condition,
+			},
+			CELEngine: celEngine,
+			Phase:     corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH,
+		})
+
+		assert.Equal(t, tst.isEnforced, isEnforced, "%q %v", tst.path, tst.condition)
+		assert.Equal(t, tst.ok, ok, "%q %v", tst.path, tst.condition)
+
+		if tst.ok {
+			assert.Equal(t, 0, rw.Body.Len())
+		} else {
+			assert.Equal(t, http.StatusInternalServerError, rw.Code)
+			assert.Contains(t, rw.Body.String(), "could not evaluate the Plugins")
+		}
+	}
+}

@@ -78,15 +78,16 @@ func ShouldEnforcePluginErr(ctx context.Context, o *ShouldEnforcePluginOpts) (bo
 		return false, errors.Errorf("Cannot evaluate the Plugin condition without the request body")
 	}
 
-	var reqCtxMap map[string]any
 	if reqCtx.ReqCtxMap == nil {
-		reqCtx.ReqCtxMap = pbutils.MustConvertToMap(reqCtx.DownstreamInfo)
+		reqCtxMap, err := pbutils.ConvertToMap(reqCtx.DownstreamInfo)
+		if err != nil {
+			return false, err
+		}
+		reqCtx.ReqCtxMap = reqCtxMap
 	}
 
-	reqCtxMap = reqCtx.ReqCtxMap
-
 	inputMap := map[string]any{
-		"ctx": reqCtxMap,
+		"ctx": reqCtx.ReqCtxMap,
 	}
 
 	isMatched, err := o.CELEngine.EvalCondition(ctx, cond, inputMap)

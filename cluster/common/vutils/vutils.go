@@ -23,8 +23,10 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -39,6 +41,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	k8snet "k8s.io/utils/net"
 )
 
@@ -405,6 +408,81 @@ func GetClientVersionFromUserAgent(userAgent string) string {
 	}
 
 	return ""
+}
+
+func ReplaceInvalidUTF8(in proto.Message) {
+	if in == nil {
+		return
+	}
+
+	replaceInvalidUTF8(in.ProtoReflect())
+}
+
+func replaceInvalidUTF8(m protoreflect.Message) {
+	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		switch {
+		case fd.IsList():
+			replaceInvalidUTF8List(fd, v.List())
+		case fd.IsMap():
+			replaceInvalidUTF8Map(fd, v.Map())
+		case fd.Kind() == protoreflect.StringKind:
+			if !utf8.ValidString(v.String()) {
+				m.Set(fd, toValidUTF8Value(v.String()))
+			}
+		case fd.Message() != nil:
+			replaceInvalidUTF8(v.Message())
+		}
+		return true
+	})
+}
+
+func replaceInvalidUTF8List(fd protoreflect.FieldDescriptor, lst protoreflect.List) {
+	for i := range lst.Len() {
+		switch {
+		case fd.Kind() == protoreflect.StringKind:
+			if !utf8.ValidString(lst.Get(i).String()) {
+				lst.Set(i, toValidUTF8Value(lst.Get(i).String()))
+			}
+		case fd.Message() != nil:
+			replaceInvalidUTF8(lst.Get(i).Message())
+		}
+	}
+}
+
+func replaceInvalidUTF8Map(fd protoreflect.FieldDescriptor, mp protoreflect.Map) {
+	var invalidKeys []string
+
+	mp.Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
+		switch {
+		case fd.MapValue().Kind() == protoreflect.StringKind:
+			if !utf8.ValidString(v.String()) {
+				mp.Set(k, toValidUTF8Value(v.String()))
+			}
+		case fd.MapValue().Message() != nil:
+			replaceInvalidUTF8(v.Message())
+		}
+
+		if fd.MapKey().Kind() == protoreflect.StringKind && !utf8.ValidString(k.String()) {
+			invalidKeys = append(invalidKeys, k.String())
+		}
+		return true
+	})
+
+	slices.Sort(invalidKeys)
+
+	for _, key := range invalidKeys {
+		invalidKey := protoreflect.ValueOfString(key).MapKey()
+		validKey := toValidUTF8Value(key).MapKey()
+		v := mp.Get(invalidKey)
+		mp.Clear(invalidKey)
+		if !mp.Has(validKey) {
+			mp.Set(validKey, v)
+		}
+	}
+}
+
+func toValidUTF8Value(in string) protoreflect.Value {
+	return protoreflect.ValueOfString(strings.ToValidUTF8(in, string(utf8.RuneError)))
 }
 
 const UpgradeIDKey = "upgrade-id"
