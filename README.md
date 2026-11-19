@@ -31,6 +31,11 @@ Octelium is a free and open source, self-hosted, unified zero trust secure acces
 Octelium provides a scalable zero trust architecture (ZTA) for identity-based, application-layer (L7) aware secretless secure access via both private client-based access over WireGuard/QUIC tunnels as well as public clientless access, for both humans and workloads, to any private/internal resource behind NAT in any environment as well as to publicly protected resources such as SaaS APIs and databases, via context-aware access control on a per-request basis.
 
 
+> [!TIP]
+> **Try Octelium in your browser**
+>
+> Explore the [interactive demo](https://demo.octelium.com), including the User Portal, Management Console, Cordium Sandbox Portal and CLI Playground.
+
 ![Octelium](https://octelium.com/assets/ztna-CrAF5Ft7.webp)
 
 ## Use Cases
