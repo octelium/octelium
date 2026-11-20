@@ -1574,24 +1574,6 @@ func TestRunDeviceProbe(t *testing.T) {
 	}
 
 	{
-		updateCC(func(cc *corev1.ClusterConfig) {
-			cc.Spec.Device = &corev1.ClusterConfig_Spec_Device{
-				Probing: &corev1.ClusterConfig_Spec_Device_Probing{
-					IsDisabled: true,
-				},
-			}
-		})
-
-		resp := begin()
-		assert.Equal(t, "", resp.AttemptUID)
-		assert.Nil(t, getDevice().Status.ProbeAttempt)
-
-		updateCC(func(cc *corev1.ClusterConfig) {
-			cc.Spec.Device.Probing.IsDisabled = false
-		})
-	}
-
-	{
 		updateDevice(func(dev *corev1.Device) {
 			dev.Status.IsLocked = true
 		})

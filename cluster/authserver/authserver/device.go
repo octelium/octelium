@@ -641,11 +641,6 @@ func (s *server) doRunDeviceProbeBegin(ctx context.Context,
 		return nil, err
 	}
 
-	probing := cc.GetSpec().GetDevice().GetProbing()
-	if probing.GetIsDisabled() {
-		return &authv1.RunDeviceProbeBeginResponse{}, nil
-	}
-
 	now := time.Now()
 
 	if attempt := dev.Status.ProbeAttempt; attempt != nil && !isProbeAttemptExpired(attempt, now) {
