@@ -5,5 +5,8 @@ interface Window {
     cluster?: {
       domain?: string;
     };
+    login?: {
+      icon?: string;
+    };
   };
 }

@@ -29,6 +29,8 @@ import (
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/serr"
 	"github.com/octelium/octelium/cluster/common/apivalidation"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
+	"github.com/octelium/octelium/cluster/common/loginicon"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 )
@@ -598,6 +600,10 @@ func (s *Server) validateAuthentication(ctx context.Context, c *corev1.ClusterCo
 		return nil
 	}
 
+	if err := s.validateLogin(ctx, c.Spec.Authentication.Login); err != nil {
+		return err
+	}
+
 	geo := c.Spec.Authentication.Geolocation
 	if geo == nil {
 		return nil
@@ -630,6 +636,59 @@ func (s *Server) validateAuthentication(ctx context.Context, c *corev1.ClusterCo
 	default:
 		return grpcutils.InvalidArg("MMDB type must be set")
 	}
+}
+
+func (s *Server) validateLogin(ctx context.Context,
+	login *corev1.ClusterConfig_Spec_Authentication_Login) error {
+	if login == nil || login.Icon == nil {
+		return nil
+	}
+
+	icon := login.Icon
+
+	switch icon.Type.(type) {
+	case *corev1.ClusterConfig_Spec_Authentication_Login_Icon_Inline:
+		return validateLoginIconInline([]byte(icon.GetInline()))
+	case *corev1.ClusterConfig_Spec_Authentication_Login_Icon_InlineBytes:
+		return validateLoginIconInline(icon.GetInlineBytes())
+	case *corev1.ClusterConfig_Spec_Authentication_Login_Icon_FromConfig:
+		if err := apivalidation.ValidateName(icon.GetFromConfig(), 0, 0); err != nil {
+			return err
+		}
+
+		cfg, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
+			Name: icon.GetFromConfig(),
+		})
+		if err != nil {
+			if grpcerr.IsNotFound(err) {
+				return grpcutils.InvalidArg("This Config does not exist: %s", icon.GetFromConfig())
+			}
+
+			return grpcutils.InternalWithErr(err)
+		}
+
+		if _, err := loginicon.GetContentType(ucorev1.ToConfig(cfg).GetValueBytes()); err != nil {
+			return grpcutils.InvalidArg("Invalid login icon Config %s: %s", icon.GetFromConfig(), err.Error())
+		}
+
+		return nil
+	default:
+		return grpcutils.InvalidArg("Login icon type must be set")
+	}
+}
+
+func validateLoginIconInline(data []byte) error {
+	if len(data) > loginicon.MaxInlineSize {
+		return grpcutils.InvalidArg(
+			"The inline login icon is too large: %d bytes. The maximum size is %d bytes. Use fromConfig instead",
+			len(data), loginicon.MaxInlineSize)
+	}
+
+	if _, err := loginicon.GetContentType(data); err != nil {
+		return grpcutils.InvalidArg("Invalid login icon: %s", err.Error())
+	}
+
+	return nil
 }
 
 func (s *Server) validateMMDBUpstream(ctx context.Context,

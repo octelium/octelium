@@ -101,7 +101,7 @@ type server struct {
 const shutdownTimeout = 15 * time.Second
 
 func (s *server) onClusterConfigUpdate(ctx context.Context, new, old *corev1.ClusterConfig) error {
-	s.setTemplateGlobals(new)
+	s.setTemplateGlobals(ctx, new)
 
 	if err := s.setIndexPage(); err != nil {
 		zap.L().Warn("Could not set index page", zap.Error(err))
@@ -150,7 +150,7 @@ func initServer(ctx context.Context,
 	}
 	ret.jwkCtl = jwkCtl
 
-	ret.setTemplateGlobals(clusterCfg)
+	ret.setTemplateGlobals(ctx, clusterCfg)
 
 	if err := ret.setIdentityProviders(ctx); err != nil {
 		return nil, err
@@ -181,6 +181,20 @@ func initServer(ctx context.Context,
 		},
 		func(ctx context.Context, item *corev1.Secret) error {
 			return ret.setIdentityProviders(ctx)
+		},
+	); err != nil {
+		return nil, err
+	}
+
+	if err := watcherC.Config(ctx, nil,
+		func(ctx context.Context, item *corev1.Config) error {
+			return ret.onConfigUpdate(ctx, item)
+		},
+		func(ctx context.Context, new, old *corev1.Config) error {
+			return ret.onConfigUpdate(ctx, new)
+		},
+		func(ctx context.Context, item *corev1.Config) error {
+			return ret.onConfigUpdate(ctx, item)
 		},
 	); err != nil {
 		return nil, err
@@ -251,11 +265,17 @@ func initServer(ctx context.Context,
 	return ret, nil
 }
 
-func (s *server) setTemplateGlobals(clusterCfg *corev1.ClusterConfig) {
+func (s *server) setTemplateGlobals(ctx context.Context, clusterCfg *corev1.ClusterConfig) {
 	t := &templateGlobals{
 		Cluster: templateGlobalsCluster{
 			Domain: clusterCfg.Status.Domain,
 		},
+	}
+
+	if icon := s.getLoginIcon(ctx, clusterCfg); icon != "" {
+		t.Login = &templateGlobalsLogin{
+			Icon: icon,
+		}
 	}
 
 	s.genCache.Set("template-globals", t)

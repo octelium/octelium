@@ -214,3 +214,82 @@ test("uses a neutral palette in the dark theme", async ({ page }) => {
     expect(spread).toBeLessThanOrEqual(3);
   }
 });
+
+const iconSVG = (width: number, height: number) =>
+  `data:image/svg+xml;base64,${Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="#e11d48"/></svg>`,
+  ).toString("base64")}`;
+
+const loadWithIcon = async (page: Page, icon: unknown, path = "/login") => {
+  await page.addInitScript((value) => {
+    (window as Window & { __OCTELIUM_GLOBALS__?: unknown }).__OCTELIUM_GLOBALS__ = {
+      cluster: { domain: "example.com" },
+      login: { icon: value },
+    };
+  }, icon);
+  await load(page, undefined, path);
+};
+
+const defaultLogo = (page: Page) => page.locator('main svg[viewBox="0 0 7616 7616"]');
+
+const customIcon = (page: Page) => page.locator("main header img");
+
+test("shows the custom login icon instead of the default logo", async ({ page }) => {
+  const icon = iconSVG(400, 100);
+  await loadWithIcon(page, icon);
+  await expect(customIcon(page)).toHaveAttribute("src", icon);
+  await expect(customIcon(page)).toHaveAttribute("alt", "");
+  await expect(customIcon(page)).toHaveCSS("object-fit", "contain");
+  await expect(defaultLogo(page)).toHaveCount(0);
+  await expect
+    .poll(() =>
+      customIcon(page).evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth),
+    )
+    .toBe(400);
+});
+
+for (const viewport of [
+  { width: 390, height: 500 },
+  { width: 390, height: 780 },
+  { width: 1440, height: 1200 },
+]) {
+  test(`confines the custom login icon to the logo space on a ${viewport.width}x${viewport.height} screen`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await load(page);
+    const logoBox = await defaultLogo(page).boundingBox();
+    const headingBox = await page.getByRole("heading", { name: "Sign in to Octelium" }).boundingBox();
+
+    for (const [width, height] of [[400, 100], [100, 400], [3000, 3000]]) {
+      await loadWithIcon(page, iconSVG(width, height));
+      expect(await customIcon(page).boundingBox()).toEqual(logoBox);
+      expect(await page.getByRole("heading", { name: "Sign in to Octelium" }).boundingBox()).toEqual(headingBox);
+    }
+  });
+}
+
+for (const icon of [
+  undefined,
+  null,
+  123,
+  "",
+  "https://example.com/logo.png",
+  "/logo.png",
+  "javascript:alert(1)",
+  "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+  "data:image/gif;base64,R0lGODlhAQABAAAAACw=",
+  "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>",
+  `${iconSVG(10, 10)}" onerror="alert(1)`,
+  `${iconSVG(10, 10)}\n`,
+]) {
+  test(`ignores the invalid login icon ${JSON.stringify(icon)}`, async ({ page }) => {
+    await loadWithIcon(page, icon);
+    await expect(defaultLogo(page)).toBeVisible();
+    await expect(customIcon(page)).toHaveCount(0);
+  });
+}
+
+test("falls back to the default logo when the login icon cannot be loaded", async ({ page }) => {
+  await loadWithIcon(page, "data:image/png;base64,AAAA");
+  await expect(defaultLogo(page)).toBeVisible();
+  await expect(customIcon(page)).toHaveCount(0);
+});

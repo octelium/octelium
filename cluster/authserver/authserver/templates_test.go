@@ -19,19 +19,25 @@ package authserver
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/apivalidation"
+	"github.com/octelium/octelium/cluster/common/loginicon"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -487,4 +493,254 @@ func TestRenderIndexCache(t *testing.T) {
 		assert.Nil(t, srv.onClusterConfigUpdate(ctx, clusterCfg, clusterCfg))
 		assert.True(t, strings.Contains(doRender(), "spec-display"))
 	}
+}
+
+func TestLoginIcon(t *testing.T) {
+
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+	fakeC := tst.C
+
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 50"><rect width="200" height="50"/></svg>`
+	svgDataURL := "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
+
+	var pngBuf bytes.Buffer
+	assert.Nil(t, png.Encode(&pngBuf, image.NewRGBA(image.Rect(0, 0, 4, 4))))
+	pngIcon := pngBuf.Bytes()
+	pngDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngIcon)
+
+	getLoginIcons := func(srv *server) []string {
+		var ret []string
+		for _, render := range []func(w http.ResponseWriter){srv.renderIndex, srv.renderLoggedIn} {
+			w := httptest.NewRecorder()
+			render(w)
+
+			resp := w.Result()
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			csp := resp.Header.Get("Content-Security-Policy")
+			assert.True(t, strings.Contains(csp, "img-src 'self' data:"))
+
+			match := rgxCSPNonce.FindStringSubmatch(csp)
+			assert.Equal(t, 2, len(match))
+
+			globals := getGlobalsFromBody(t, w.Body.Bytes(), match[1])
+			assert.Equal(t, srv.domain, globals.Cluster.Domain)
+
+			if globals.Login == nil {
+				ret = append(ret, "")
+			} else {
+				assert.NotEmpty(t, globals.Login.Icon)
+				ret = append(ret, globals.Login.Icon)
+			}
+		}
+
+		return ret
+	}
+
+	assertLoginIcon := func(srv *server, icon string) {
+		assert.Eventually(t, func() bool {
+			icons := getLoginIcons(srv)
+			return icons[0] == icon && icons[1] == icon
+		}, 10*time.Second, 50*time.Millisecond)
+	}
+
+	setLoginIcon := func(icon *corev1.ClusterConfig_Spec_Authentication_Login_Icon) *corev1.ClusterConfig {
+		cc, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		if icon == nil {
+			cc.Spec.Authentication = nil
+		} else {
+			cc.Spec.Authentication = &corev1.ClusterConfig_Spec_Authentication{
+				Login: &corev1.ClusterConfig_Spec_Authentication_Login{
+					Icon: icon,
+				},
+			}
+		}
+
+		cc, err = fakeC.OcteliumC.CoreC().UpdateClusterConfig(ctx, cc)
+		assert.Nil(t, err)
+
+		return cc
+	}
+
+	t.Run("inline", func(t *testing.T) {
+		clusterCfg, err := fakeC.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+		assert.Nil(t, err)
+
+		srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+		assert.Nil(t, err)
+
+		assertLoginIcon(srv, "")
+
+		for _, tc := range []struct {
+			icon     *corev1.ClusterConfig_Spec_Authentication_Login_Icon
+			expected string
+		}{
+			{
+				icon: &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+					Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_Inline{
+						Inline: svg,
+					},
+				},
+				expected: svgDataURL,
+			},
+			{
+				icon: &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+					Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_InlineBytes{
+						InlineBytes: pngIcon,
+					},
+				},
+				expected: pngDataURL,
+			},
+			{
+				icon:     nil,
+				expected: "",
+			},
+			{
+				icon: &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+					Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_InlineBytes{
+						InlineBytes: []byte(svg),
+					},
+				},
+				expected: svgDataURL,
+			},
+			{
+				icon:     &corev1.ClusterConfig_Spec_Authentication_Login_Icon{},
+				expected: "",
+			},
+			{
+				icon: &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+					Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_Inline{
+						Inline: "<html><script>alert(1)</script></html>",
+					},
+				},
+				expected: "",
+			},
+			{
+				icon: &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+					Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_InlineBytes{
+						InlineBytes: append(pngIcon, make([]byte, loginicon.MaxSize)...),
+					},
+				},
+				expected: "",
+			},
+		} {
+			cc := setLoginIcon(tc.icon)
+			assert.Nil(t, srv.onClusterConfigUpdate(ctx, cc, clusterCfg))
+			assertLoginIcon(srv, tc.expected)
+		}
+	})
+
+	t.Run("fromConfig", func(t *testing.T) {
+		cfg, err := fakeC.OcteliumC.CoreC().CreateConfig(ctx, &corev1.Config{
+			Metadata: &metav1.Metadata{
+				Name: utilrand.GetRandomStringCanonical(8),
+			},
+			Spec:   &corev1.Config_Spec{},
+			Status: &corev1.Config_Status{},
+			Data: &corev1.Config_Data{
+				Type: &corev1.Config_Data_Value{
+					Value: svg,
+				},
+			},
+		})
+		assert.Nil(t, err)
+
+		clusterCfg := setLoginIcon(&corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_FromConfig{
+				FromConfig: cfg.Metadata.Name,
+			},
+		})
+
+		srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+		assert.Nil(t, err)
+
+		assertLoginIcon(srv, svgDataURL)
+
+		{
+			other, err := fakeC.OcteliumC.CoreC().CreateConfig(ctx, &corev1.Config{
+				Metadata: &metav1.Metadata{
+					Name: utilrand.GetRandomStringCanonical(8),
+				},
+				Spec:   &corev1.Config_Spec{},
+				Status: &corev1.Config_Status{},
+				Data: &corev1.Config_Data{
+					Type: &corev1.Config_Data_ValueBytes{
+						ValueBytes: pngIcon,
+					},
+				},
+			})
+			assert.Nil(t, err)
+
+			assert.Nil(t, srv.onConfigUpdate(ctx, other))
+			assertLoginIcon(srv, svgDataURL)
+		}
+
+		{
+			cfg.Data = &corev1.Config_Data{
+				Type: &corev1.Config_Data_ValueBytes{
+					ValueBytes: pngIcon,
+				},
+			}
+			cfg, err = fakeC.OcteliumC.CoreC().UpdateConfig(ctx, cfg)
+			assert.Nil(t, err)
+
+			assert.Nil(t, srv.onConfigUpdate(ctx, cfg))
+			assertLoginIcon(srv, pngDataURL)
+		}
+
+		{
+			cfg.Data = &corev1.Config_Data{
+				Type: &corev1.Config_Data_Value{
+					Value: "hello world",
+				},
+			}
+			cfg, err = fakeC.OcteliumC.CoreC().UpdateConfig(ctx, cfg)
+			assert.Nil(t, err)
+
+			assert.Nil(t, srv.onConfigUpdate(ctx, cfg))
+			assertLoginIcon(srv, "")
+		}
+
+		{
+			cfg.Data = &corev1.Config_Data{
+				Type: &corev1.Config_Data_Value{
+					Value: svg,
+				},
+			}
+			cfg, err = fakeC.OcteliumC.CoreC().UpdateConfig(ctx, cfg)
+			assert.Nil(t, err)
+
+			assert.Nil(t, srv.onConfigUpdate(ctx, cfg))
+			assertLoginIcon(srv, svgDataURL)
+		}
+
+		{
+			_, err = fakeC.OcteliumC.CoreC().DeleteConfig(ctx, apivalidation.ObjectToRDeleteOptions(cfg))
+			assert.Nil(t, err)
+
+			assert.Nil(t, srv.onConfigUpdate(ctx, cfg))
+			assertLoginIcon(srv, "")
+		}
+	})
+
+	t.Run("fromConfig not found", func(t *testing.T) {
+		clusterCfg := setLoginIcon(&corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+			Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_FromConfig{
+				FromConfig: utilrand.GetRandomStringCanonical(8),
+			},
+		})
+
+		srv, err := initServer(ctx, fakeC.OcteliumC, clusterCfg)
+		assert.Nil(t, err)
+
+		assertLoginIcon(srv, "")
+	})
 }

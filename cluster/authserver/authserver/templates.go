@@ -18,6 +18,7 @@ package authserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -28,6 +29,10 @@ import (
 	"sync"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/loginicon"
+	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -228,10 +233,70 @@ type templateStateProvider struct {
 
 type templateGlobals struct {
 	Cluster templateGlobalsCluster `json:"cluster,omitempty"`
+	Login   *templateGlobalsLogin  `json:"login,omitempty"`
 }
 
 type templateGlobalsCluster struct {
 	Domain string `json:"domain,omitempty"`
+}
+
+type templateGlobalsLogin struct {
+	Icon string `json:"icon,omitempty"`
+}
+
+func (s *server) getLoginIcon(ctx context.Context, cc *corev1.ClusterConfig) string {
+	icon := cc.GetSpec().GetAuthentication().GetLogin().GetIcon()
+	if icon == nil {
+		return ""
+	}
+
+	data, err := s.getLoginIconData(ctx, icon)
+	if err != nil {
+		zap.L().Warn("Could not get the login icon. Falling back to the default icon", zap.Error(err))
+		return ""
+	}
+
+	ret, err := loginicon.GetDataURL(data)
+	if err != nil {
+		zap.L().Warn("Invalid login icon. Falling back to the default icon", zap.Error(err))
+		return ""
+	}
+
+	return ret
+}
+
+func (s *server) getLoginIconData(ctx context.Context,
+	icon *corev1.ClusterConfig_Spec_Authentication_Login_Icon) ([]byte, error) {
+	switch icon.Type.(type) {
+	case *corev1.ClusterConfig_Spec_Authentication_Login_Icon_Inline:
+		return []byte(icon.GetInline()), nil
+	case *corev1.ClusterConfig_Spec_Authentication_Login_Icon_InlineBytes:
+		return icon.GetInlineBytes(), nil
+	case *corev1.ClusterConfig_Spec_Authentication_Login_Icon_FromConfig:
+		cfg, err := s.octeliumC.CoreC().GetConfig(ctx, &rmetav1.GetOptions{
+			Name: icon.GetFromConfig(),
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		return ucorev1.ToConfig(cfg).GetValueBytes(), nil
+	default:
+		return nil, errors.Errorf("The login icon type is not set")
+	}
+}
+
+func (s *server) onConfigUpdate(ctx context.Context, cfg *corev1.Config) error {
+	cc := s.ccCtl.Get()
+
+	name := cc.GetSpec().GetAuthentication().GetLogin().GetIcon().GetFromConfig()
+	if name == "" || name != cfg.GetMetadata().GetName() {
+		return nil
+	}
+
+	s.setTemplateGlobals(ctx, cc)
+
+	return s.setIndexPage()
 }
 
 func (s *server) setHTMLSecurityHeaders(w http.ResponseWriter, nonce string) {

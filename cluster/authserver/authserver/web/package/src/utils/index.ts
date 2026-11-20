@@ -27,6 +27,18 @@ export const getDomain = (): string => {
   return __domain;
 };
 
+const loginIconPattern =
+  /^data:image\/(?:svg\+xml|png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+export const getLoginIcon = (): string | undefined => {
+  const icon = window.__OCTELIUM_GLOBALS__?.login?.icon;
+  if (typeof icon !== "string" || !loginIconPattern.test(icon)) {
+    return undefined;
+  }
+
+  return icon;
+};
+
 export const getPortalURL = (): string => {
   if (isDev()) {
     return import.meta.env.VITE_PORTAL_URL || window.location.origin;

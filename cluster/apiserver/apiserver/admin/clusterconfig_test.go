@@ -17,13 +17,17 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/png"
 	"strings"
 	"testing"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/loginicon"
 	"github.com/octelium/octelium/cluster/common/tests"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -1254,6 +1258,153 @@ func TestValidateClusterConfig(t *testing.T) {
 			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
 		}
 	})
+
+	t.Run("login", func(t *testing.T) {
+		svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>`
+		pngIcon := getTestLoginIconPNG(t)
+
+		createConfig := func(data *corev1.Config_Data) string {
+			cfg, err := srv.CreateConfig(ctx, genTestConfig(data))
+			assert.Nil(t, err, "%+v", err)
+			return cfg.Metadata.Name
+		}
+
+		svgConfig := createConfig(&corev1.Config_Data{
+			Type: &corev1.Config_Data_Value{
+				Value: svg,
+			},
+		})
+		pngConfig := createConfig(&corev1.Config_Data{
+			Type: &corev1.Config_Data_ValueBytes{
+				ValueBytes: pngIcon,
+			},
+		})
+		largeConfig := createConfig(&corev1.Config_Data{
+			Type: &corev1.Config_Data_ValueBytes{
+				ValueBytes: append(pngIcon, make([]byte, loginicon.MaxInlineSize)...),
+			},
+		})
+		tooLargeConfig := createConfig(&corev1.Config_Data{
+			Type: &corev1.Config_Data_ValueBytes{
+				ValueBytes: append(pngIcon, make([]byte, loginicon.MaxSize)...),
+			},
+		})
+		textConfig := createConfig(&corev1.Config_Data{
+			Type: &corev1.Config_Data_Value{
+				Value: "hello world",
+			},
+		})
+		dataMapConfig := createConfig(&corev1.Config_Data{
+			Type: &corev1.Config_Data_DataMap_{
+				DataMap: &corev1.Config_Data_DataMap{
+					Map: map[string][]byte{
+						"icon": pngIcon,
+					},
+				},
+			},
+		})
+
+		for _, tc := range []struct {
+			login *corev1.ClusterConfig_Spec_Authentication_Login
+			valid bool
+		}{
+			{login: nil, valid: true},
+			{login: &corev1.ClusterConfig_Spec_Authentication_Login{}, valid: true},
+			{login: getTestLogin(&corev1.ClusterConfig_Spec_Authentication_Login_Icon{}), valid: false},
+			{login: getTestLogin(getTestLoginIconInline(svg)), valid: true},
+			{login: getTestLogin(getTestLoginIconInline("\n" + svg + "\n")), valid: true},
+			{login: getTestLogin(getTestLoginIconInline("")), valid: false},
+			{login: getTestLogin(getTestLoginIconInline("hello world")), valid: false},
+			{login: getTestLogin(getTestLoginIconInline("<html><svg/></html>")), valid: false},
+			{login: getTestLogin(getTestLoginIconInline(
+				svg[:len(svg)-len("</svg>")] + strings.Repeat(" ", loginicon.MaxInlineSize) + "</svg>")), valid: false},
+			{login: getTestLogin(getTestLoginIconInlineBytes(pngIcon)), valid: true},
+			{login: getTestLogin(getTestLoginIconInlineBytes([]byte(svg))), valid: true},
+			{login: getTestLogin(getTestLoginIconInlineBytes(nil)), valid: false},
+			{login: getTestLogin(getTestLoginIconInlineBytes([]byte("GIF89a"))), valid: false},
+			{login: getTestLogin(getTestLoginIconInlineBytes(
+				append(pngIcon, make([]byte, loginicon.MaxInlineSize-len(pngIcon))...))), valid: true},
+			{login: getTestLogin(getTestLoginIconInlineBytes(
+				append(pngIcon, make([]byte, loginicon.MaxInlineSize-len(pngIcon)+1)...))), valid: false},
+			{login: getTestLogin(getTestLoginIconFromConfig(svgConfig)), valid: true},
+			{login: getTestLogin(getTestLoginIconFromConfig(pngConfig)), valid: true},
+			{login: getTestLogin(getTestLoginIconFromConfig(largeConfig)), valid: true},
+			{login: getTestLogin(getTestLoginIconFromConfig(tooLargeConfig)), valid: false},
+			{login: getTestLogin(getTestLoginIconFromConfig(textConfig)), valid: false},
+			{login: getTestLogin(getTestLoginIconFromConfig(dataMapConfig)), valid: false},
+			{login: getTestLogin(getTestLoginIconFromConfig(genTestConfigName())), valid: false},
+			{login: getTestLogin(getTestLoginIconFromConfig("")), valid: false},
+			{login: getTestLogin(getTestLoginIconFromConfig("invalid config name")), valid: false},
+		} {
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Authentication = &corev1.ClusterConfig_Spec_Authentication{
+				Login: tc.login,
+			}
+
+			if tc.valid {
+				assert.Nil(t, srv.validateClusterConfig(ctx, cc))
+			} else {
+				assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+			}
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Authentication = getTestAuthenticationUpstream("https://example.com/db.mmdb", nil)
+			cc.Spec.Authentication.Login = getTestLogin(getTestLoginIconInline(svg))
+			assert.Nil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Authentication = getTestAuthenticationUpstream("ftp://example.com/db.mmdb", nil)
+			cc.Spec.Authentication.Login = getTestLogin(getTestLoginIconInline(svg))
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+
+		{
+			cc := getTestClusterConfig(ctx, t, srv)
+			cc.Spec.Authentication = getTestAuthenticationUpstream("https://example.com/db.mmdb", nil)
+			cc.Spec.Authentication.Login = getTestLogin(getTestLoginIconInline("hello world"))
+			assert.NotNil(t, srv.validateClusterConfig(ctx, cc))
+		}
+	})
+}
+
+func getTestLoginIconPNG(t *testing.T) []byte {
+	var buf bytes.Buffer
+	assert.Nil(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 4, 4))))
+	return buf.Bytes()
+}
+
+func getTestLogin(icon *corev1.ClusterConfig_Spec_Authentication_Login_Icon) *corev1.ClusterConfig_Spec_Authentication_Login {
+	return &corev1.ClusterConfig_Spec_Authentication_Login{
+		Icon: icon,
+	}
+}
+
+func getTestLoginIconInline(arg string) *corev1.ClusterConfig_Spec_Authentication_Login_Icon {
+	return &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+		Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_Inline{
+			Inline: arg,
+		},
+	}
+}
+
+func getTestLoginIconInlineBytes(arg []byte) *corev1.ClusterConfig_Spec_Authentication_Login_Icon {
+	return &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+		Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_InlineBytes{
+			InlineBytes: arg,
+		},
+	}
+}
+
+func getTestLoginIconFromConfig(name string) *corev1.ClusterConfig_Spec_Authentication_Login_Icon {
+	return &corev1.ClusterConfig_Spec_Authentication_Login_Icon{
+		Type: &corev1.ClusterConfig_Spec_Authentication_Login_Icon_FromConfig{
+			FromConfig: name,
+		},
+	}
 }
 
 func getTestAuthenticationFromConfig(name string) *corev1.ClusterConfig_Spec_Authentication {

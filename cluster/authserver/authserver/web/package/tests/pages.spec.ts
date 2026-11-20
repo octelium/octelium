@@ -58,6 +58,23 @@ test("hides the logo circle in the dark theme on every page", async ({ page }) =
   }
 });
 
+test("shows the custom login icon on every page", async ({ page }) => {
+  const icon = `data:image/svg+xml;base64,${Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 1"><rect width="4" height="1"/></svg>',
+  ).toString("base64")}`;
+  await page.addInitScript((value) => {
+    (window as Window & { __OCTELIUM_GLOBALS__?: unknown }).__OCTELIUM_GLOBALS__ = {
+      login: { icon: value },
+    };
+  }, icon);
+  for (const [path, title] of pages) {
+    await load(page, path);
+    await expect(heading(page, title)).toBeVisible();
+    await expect(page.locator("main header img")).toHaveAttribute("src", icon);
+    await expect(logo(page)).toHaveCount(0);
+  }
+});
+
 test("points a denied User to the Portal", async ({ page }) => {
   await load(page, "/denied");
   await expect(page.getByText("You are not authorized to access this resource.")).toBeVisible();
