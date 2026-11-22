@@ -18,6 +18,7 @@ package sshutils
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/pkg/utils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/sshcert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -325,6 +327,65 @@ func TestMakeCertSigner(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, uint32(ssh.HostCert), cert.CertType)
 	assert.Equal(t, signer.PublicKey().Marshal(), cert.Key.Marshal())
+}
+
+func TestGenerateUserSignerWithPrincipals(t *testing.T) {
+	ctx := context.Background()
+	key, err := utils_cert.GenerateECDSA()
+	assert.Nil(t, err)
+	keyPEM, err := utils_cert.GetPrivateKeyPEM(key.PrivateKey)
+	assert.Nil(t, err)
+	c := &sshCoreC{secrets: map[string]*corev1.Secret{
+		"sys:ssh-ca": {Data: &corev1.Secret_Data{Type: &corev1.Secret_Data_ValueBytes{ValueBytes: keyPEM}}},
+	}}
+	client := &sshOcteliumC{c: c}
+	ca, err := GetCAPublicKey(ctx, client)
+	assert.Nil(t, err)
+
+	signer, err := GenerateSigner()
+	assert.Nil(t, err)
+
+	legacy, err := GenerateUserSigner(ctx, client, signer)
+	assert.Nil(t, err)
+	legacyCert := legacy.PublicKey().(*ssh.Certificate)
+	assert.Empty(t, legacyCert.ValidPrincipals)
+
+	for _, principals := range [][]string{{"ubuntu"}, {"root"}, {"ubuntu", "root"}} {
+		user, err := GenerateUserSignerWithPrincipals(ctx, client, signer, principals...)
+		assert.Nil(t, err)
+
+		cert, ok := user.PublicKey().(*ssh.Certificate)
+		assert.True(t, ok)
+		assert.EqualValues(t, ssh.UserCert, cert.CertType)
+		assert.Equal(t, principals, cert.ValidPrincipals)
+		assert.Equal(t, signer.PublicKey().Marshal(), cert.Key.Marshal())
+		assert.Equal(t, ca.Marshal(), cert.SignatureKey.Marshal())
+		assert.Equal(t, legacyCert.Permissions.Extensions, cert.Permissions.Extensions)
+		assert.NotEqual(t, legacyCert.KeyId, cert.KeyId)
+
+		checker := &ssh.CertChecker{
+			IsUserAuthority: func(auth ssh.PublicKey) bool {
+				return utils.SecureBytesEqual(auth.Marshal(), ca.Marshal())
+			},
+		}
+		for _, principal := range principals {
+			assert.Nil(t, checker.CheckCert(principal, cert))
+		}
+		assert.NotNil(t, checker.CheckCert("other", cert))
+		assert.NotNil(t, (&sshcert.CertChecker{CertChecker: *checker}).CheckCert("other", cert))
+
+		data := utilrand.GetRandomBytesMust(32)
+		sig, err := user.Sign(rand.Reader, data)
+		assert.Nil(t, err)
+		assert.Nil(t, cert.Verify(data, sig))
+	}
+
+	_, err = GenerateUserSignerWithPrincipals(ctx, client, signer, "")
+	assert.NotNil(t, err)
+
+	c.err = fmt.Errorf("secret unavailable")
+	_, err = GenerateUserSignerWithPrincipals(ctx, client, signer, "ubuntu")
+	assert.ErrorIs(t, err, c.err)
 }
 
 func TestGetHostKeyCACallback(t *testing.T) {

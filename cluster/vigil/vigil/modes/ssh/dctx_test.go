@@ -97,7 +97,7 @@ func TestClientHostKey(t *testing.T) {
 			c := &dctx{svcConfig: &corev1.Service_Spec_Config{
 				Type: &corev1.Service_Spec_Config_Ssh{Ssh: &corev1.Service_Spec_Config_SSH{User: "root", UpstreamHostKey: tc.key}},
 			}}
-			cfg, err := c.getClientConfig(ctx, tst.C.OcteliumC, svc, signer, nil, &loadbalancer.Upstream{})
+			cfg, err := c.getClientConfig(ctx, tst.C.OcteliumC, svc, &upstreamSigner{key: signer, cert: signer}, nil, &loadbalancer.Upstream{})
 			if tc.fail {
 				assert.NotNil(t, err)
 				assert.Nil(t, cfg)
@@ -114,7 +114,7 @@ func TestClientHostKey(t *testing.T) {
 		Type: &corev1.Service_Spec_Config_Ssh{Ssh: &corev1.Service_Spec_Config_SSH{User: "root"}},
 	}}
 	for _, key := range [][]byte{{}, {1}, make([]byte, 31), make([]byte, 33), make([]byte, 64*1024)} {
-		cfg, err := c.getClientConfig(context.Background(), tst.C.OcteliumC, svc, signer, nil,
+		cfg, err := c.getClientConfig(context.Background(), tst.C.OcteliumC, svc, &upstreamSigner{key: signer, cert: signer}, nil,
 			&loadbalancer.Upstream{IsESSH: true, Ed25519PublicKey: key})
 		assert.NotNil(t, err)
 		assert.Nil(t, cfg)
@@ -129,6 +129,7 @@ func TestConnectUpstream(t *testing.T) {
 
 	userSigner, err := sshutils.GenerateSigner()
 	require.Nil(t, err)
+	signer := &upstreamSigner{key: userSigner, cert: userSigner}
 	svc := &corev1.Service{Metadata: &metav1.Metadata{Name: "test.default"}, Spec: &corev1.Service_Spec{}}
 
 	upstreamSrv, err := newTestServer(t.Context(), octeliumC, true, nil, nil)
@@ -155,7 +156,7 @@ func TestConnectUpstream(t *testing.T) {
 	defer c.close()
 
 	startedAt := time.Now()
-	require.Nil(t, c.connect(ctx, octeliumC, svc, nil, userSigner, nil))
+	require.Nil(t, c.connect(ctx, octeliumC, svc, nil, signer, nil))
 	assert.WithinRange(t, deadline, startedAt.Add(upstreamConnectTimeout), time.Now().Add(upstreamConnectTimeout))
 	assert.NotNil(t, c.remoteConn.netConn)
 
@@ -175,6 +176,7 @@ func TestConnectUpstreamStalled(t *testing.T) {
 
 	userSigner, err := sshutils.GenerateSigner()
 	require.Nil(t, err)
+	signer := &upstreamSigner{key: userSigner, cert: userSigner}
 	svc := &corev1.Service{Metadata: &metav1.Metadata{Name: "test.default"}, Spec: &corev1.Service_Spec{}}
 
 	for _, tc := range []struct {
@@ -271,7 +273,7 @@ func TestConnectUpstreamStalled(t *testing.T) {
 
 			errCh := make(chan error, 1)
 			go func() {
-				errCh <- c.connect(ctx, octeliumC, svc, nil, userSigner, nil)
+				errCh <- c.connect(ctx, octeliumC, svc, nil, signer, nil)
 			}()
 
 			select {

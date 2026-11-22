@@ -153,7 +153,7 @@ func (c *dctx) close() error {
 
 func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 	svc *corev1.Service, lbMan *loadbalancer.LBManager,
-	userSginer ssh.Signer, secretMan *secretman.SecretManager) error {
+	signer *upstreamSigner, secretMan *secretman.SecretManager) error {
 
 	ctx, cancel := context.WithTimeout(ctx, upstreamConnectTimeout)
 	defer cancel()
@@ -205,7 +205,7 @@ func (c *dctx) connect(ctx context.Context, octeliumC octeliumc.ClientInterface,
 
 	zap.L().Debug("Got upstream", zap.String("id", c.id), zap.Any("upstream", upstream))
 
-	clientConfig, err := c.getClientConfig(ctx, octeliumC, svc, userSginer, secretMan, upstream)
+	clientConfig, err := c.getClientConfig(ctx, octeliumC, svc, signer, secretMan, upstream)
 	if err != nil {
 		return err
 	}
@@ -264,7 +264,7 @@ func (c *dctx) getEffectiveSSHUser() string {
 
 func (c *dctx) getClientConfig(ctx context.Context,
 	octeliumC octeliumc.ClientInterface, svc *corev1.Service,
-	userSigner ssh.Signer, secretMan *secretman.SecretManager, upstream *loadbalancer.Upstream) (*ssh.ClientConfig, error) {
+	signer *upstreamSigner, secretMan *secretman.SecretManager, upstream *loadbalancer.Upstream) (*ssh.ClientConfig, error) {
 
 	zap.L().Debug("Setting remote ssh client", zap.String("id", c.id))
 
@@ -278,7 +278,7 @@ func (c *dctx) getClientConfig(ctx context.Context,
 		Timeout:         10 * time.Second,
 		HostKeyCallback: sshutils.GetHostKeyCACallback(ca),
 		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(userSigner),
+			ssh.PublicKeys(signer.cert),
 		},
 	}
 
@@ -289,6 +289,15 @@ func (c *dctx) getClientConfig(ctx context.Context,
 		}
 		clientConfig.HostKeyCallback = ssh.FixedHostKey(pubKey)
 		return clientConfig, nil
+	}
+
+	if !upstream.IsESSH {
+		user := clientConfig.User
+		clientConfig.Auth = []ssh.AuthMethod{
+			ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
+				return signer.getSigners(ctx, octeliumC, c.id, user), nil
+			}),
+		}
 	}
 
 	if c.svcConfig == nil || c.svcConfig.GetSsh() == nil {

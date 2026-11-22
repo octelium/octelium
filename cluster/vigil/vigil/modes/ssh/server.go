@@ -81,7 +81,7 @@ type Server struct {
 	svcCtl     *controllers.ServiceController
 	sessionCtl *controllers.SessionController
 
-	userSigner ssh.Signer
+	upstreamSigner *upstreamSigner
 
 	opts         *modes.Opts
 	metricsStore *metricsStore
@@ -146,19 +146,9 @@ func New(ctx context.Context, opts *modes.Opts) (*Server, error) {
 		server.sshConfigWildcard.AddHostKey(hostSignerWildcard)
 	}
 
-	{
-		signerUser, err := sshutils.GenerateServiceEd25519UserSigner(ctx, octeliumC, svc)
-		if err != nil {
-			signerUser, err = sshutils.GenerateSigner()
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		server.userSigner, err = sshutils.GenerateUserSigner(ctx, octeliumC, signerUser)
-		if err != nil {
-			return nil, err
-		}
+	server.upstreamSigner, err = newUpstreamSigner(ctx, octeliumC, svc)
+	if err != nil {
+		return nil, err
 	}
 
 	server.metricsStore.CommonMetrics, err = metricutils.NewCommonMetrics(ctx, svc)
@@ -439,7 +429,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		upstreamSession,
 		s.metricsStore.CommonMetrics, s.metricsStore.sshMetrics,
 		authResp, authResp.AuthorizationDecisionReason)
-	if err := dctx.connect(ctx, s.octeliumC, svc, s.lbManager, s.userSigner, s.secretMan); err != nil {
+	if err := dctx.connect(ctx, s.octeliumC, svc, s.lbManager, s.upstreamSigner, s.secretMan); err != nil {
 		zap.L().Warn("Could not connect to upstream", zap.Error(err))
 		s.metricsStore.AddConnRejected("UPSTREAM_DIAL")
 		sshConn.Close()

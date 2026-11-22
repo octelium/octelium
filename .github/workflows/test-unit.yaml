@@ -37,7 +37,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libssl-dev
+          sudo apt-get install --yes libssl-dev openssh-server
       - name: Set up go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:

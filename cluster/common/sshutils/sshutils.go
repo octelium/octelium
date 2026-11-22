@@ -88,11 +88,15 @@ func GenerateHostSignerWithPrincipals(ctx context.Context, octeliumC octeliumc.C
 }
 
 func GenerateUserSigner(ctx context.Context, octeliumC octeliumc.ClientInterface, signer ssh.Signer) (ssh.Signer, error) {
+	return GenerateUserSignerWithPrincipals(ctx, octeliumC, signer)
+}
+
+func GenerateUserSignerWithPrincipals(ctx context.Context, octeliumC octeliumc.ClientInterface, signer ssh.Signer, principals ...string) (ssh.Signer, error) {
 	caSigner, err := getCASigner(ctx, octeliumC)
 	if err != nil {
 		return nil, err
 	}
-	return makeCertSigner(signer, caSigner, ssh.UserCert)
+	return makeCertSigner(signer, caSigner, ssh.UserCert, principals...)
 }
 
 func GetCAPublicKey(ctx context.Context, octeliumC octeliumc.ClientInterface) (ssh.PublicKey, error) {
