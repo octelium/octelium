@@ -58,12 +58,16 @@ import (
 
 type tstCACoreC struct {
 	rcorev1.ResourceServiceClient
+	mu      sync.Mutex
 	secrets map[string]*corev1.Secret
 	calls   int
 	failAt  int
 }
 
 func (c *tstCACoreC) GetSecret(ctx context.Context, req *rmetav1.GetOptions, opts ...grpc.CallOption) (*corev1.Secret, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.calls++
 	if c.failAt > 0 && c.calls >= c.failAt {
 		return nil, errors.Errorf("secret unavailable")
@@ -673,22 +677,31 @@ func startTstOpenSSHServer(t *testing.T, octeliumC octeliumc.ClientInterface,
 	config func(t *testing.T, dir string) string) *tstOpenSSHServer {
 	t.Helper()
 
+	return startTstOpenSSHServerWithConfig(t, func(t *testing.T, dir string) string {
+		_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
+		require.Nil(t, err)
+		hostKey, err := ssh.MarshalPrivateKey(hostPriv, "")
+		require.Nil(t, err)
+		require.Nil(t, os.WriteFile(filepath.Join(dir, "host_key"), pem.EncodeToMemory(hostKey), 0o600))
+
+		hostSigner, err := ssh.NewSignerFromKey(hostPriv)
+		require.Nil(t, err)
+		hostCert, err := sshutils.GenerateHostSigner(t.Context(), octeliumC, hostSigner)
+		require.Nil(t, err)
+		require.Nil(t, os.WriteFile(filepath.Join(dir, "host_key-cert.pub"),
+			ssh.MarshalAuthorizedKey(hostCert.PublicKey()), 0o644))
+
+		return fmt.Sprintf("HostKey %s\nHostCertificate %s\nLogLevel INFO\n%s",
+			filepath.Join(dir, "host_key"), filepath.Join(dir, "host_key-cert.pub"), config(t, dir))
+	})
+}
+
+func startTstOpenSSHServerWithConfig(t *testing.T, config func(t *testing.T, dir string) string) *tstOpenSSHServer {
+	t.Helper()
+
 	sshdPath := getTstSSHDPath(t)
 	dir := t.TempDir()
 	require.Nil(t, os.Chmod(dir, 0o755))
-
-	_, hostPriv, err := ed25519.GenerateKey(rand.Reader)
-	require.Nil(t, err)
-	hostKey, err := ssh.MarshalPrivateKey(hostPriv, "")
-	require.Nil(t, err)
-	require.Nil(t, os.WriteFile(filepath.Join(dir, "host_key"), pem.EncodeToMemory(hostKey), 0o600))
-
-	hostSigner, err := ssh.NewSignerFromKey(hostPriv)
-	require.Nil(t, err)
-	hostCert, err := sshutils.GenerateHostSigner(t.Context(), octeliumC, hostSigner)
-	require.Nil(t, err)
-	require.Nil(t, os.WriteFile(filepath.Join(dir, "host_key-cert.pub"),
-		ssh.MarshalAuthorizedKey(hostCert.PublicKey()), 0o644))
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.Nil(t, err)
@@ -700,17 +713,14 @@ func startTstOpenSSHServer(t *testing.T, octeliumC octeliumc.ClientInterface,
 	configPath := filepath.Join(dir, "sshd_config")
 	require.Nil(t, os.WriteFile(configPath, []byte(fmt.Sprintf(`Port %s
 ListenAddress 127.0.0.1
-HostKey %s
-HostCertificate %s
 PidFile none
 UsePAM no
 StrictModes no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
-LogLevel INFO
 %s
-`, port, filepath.Join(dir, "host_key"), filepath.Join(dir, "host_key-cert.pub"), config(t, dir))), 0o644))
+`, port, config(t, dir))), 0o644))
 
 	ret := &tstOpenSSHServer{
 		addr: addr,

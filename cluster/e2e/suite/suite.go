@@ -80,6 +80,7 @@ func Phases() []Phase {
 		{"VigilDNS", testVigilDNS},
 		{"VigilSSH", testVigilSSH},
 		{"VigilSSHUpstreamCertificate", testVigilSSHUpstreamCertificate},
+		{"VigilSSHUpstreamHostKey", testVigilSSHUpstreamHostKey},
 		{"VigilPostgres", testVigilPostgres},
 		{"VigilHeaderForgery", testVigilHeaderForgery},
 		{"VigilModeSwitch", testVigilModeSwitch},

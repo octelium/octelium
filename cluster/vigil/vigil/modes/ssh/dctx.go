@@ -321,7 +321,7 @@ func (c *dctx) getClientConfig(ctx context.Context,
 				return nil, err
 			}
 			clientConfig.HostKeyCallback = ssh.FixedHostKey(srvHostKey)
-
+			clientConfig.HostKeyAlgorithms = getUpstreamHostKeyAlgorithms(srvHostKey)
 		}
 	}
 
