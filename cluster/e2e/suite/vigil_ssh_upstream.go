@@ -27,14 +27,19 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+	k8scorev1 "k8s.io/api/core/v1"
 )
 
 const sshdPath = "/usr/sbin/sshd"
+
+const plainHostKeyLog = "The upstream SSH server presented a plain host key"
 
 func getManagedSSHCA(home string) (string, error) {
 	content, err := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys"))
@@ -54,7 +59,7 @@ func getManagedSSHCA(home string) (string, error) {
 }
 
 func newUpstreamSSHService(port int, user, hostKey string) *corev1.Service {
-	return &corev1.Service{
+	ret := &corev1.Service{
 		Metadata: &metav1.Metadata{
 			Name: fmt.Sprintf("%s.default", utilrand.GetRandomStringCanonical(8)),
 		},
@@ -70,16 +75,45 @@ func newUpstreamSSHService(port int, user, hostKey string) *corev1.Service {
 				Type: &corev1.Service_Spec_Config_Ssh{
 					Ssh: &corev1.Service_Spec_Config_SSH{
 						User: user,
-						UpstreamHostKey: &corev1.Service_Spec_Config_SSH_UpstreamHostKey{
-							Type: &corev1.Service_Spec_Config_SSH_UpstreamHostKey_Key{
-								Key: hostKey,
-							},
-						},
 					},
 				},
 			},
 		},
 	}
+
+	if hostKey != "" {
+		ret.Spec.Config.GetSsh().UpstreamHostKey = &corev1.Service_Spec_Config_SSH_UpstreamHostKey{
+			Type: &corev1.Service_Spec_Config_SSH_UpstreamHostKey_Key{
+				Key: hostKey,
+			},
+		}
+	}
+
+	return ret
+}
+
+func getVigilLogs(ctx context.Context, h *harness.H, svc string) (string, error) {
+	pods, err := servicePodList(ctx, h, svc)
+	if err != nil {
+		return "", err
+	}
+	if len(pods) == 0 {
+		return "", errors.Errorf("no Vigil pods for the Service %s", svc)
+	}
+
+	var ret strings.Builder
+	for _, pod := range pods {
+		limit := int64(1024 * 1024)
+		logs, err := h.K8sC().CoreV1().Pods(vutils.K8sNS).GetLogs(pod.Name, &k8scorev1.PodLogOptions{
+			Container: "vigil", LimitBytes: &limit,
+		}).DoRaw(ctx)
+		if err != nil {
+			return "", err
+		}
+		ret.Write(logs)
+	}
+
+	return ret.String(), nil
 }
 
 func writeSSHDFile(t *testing.T, name, content string) string {
@@ -234,19 +268,25 @@ func testVigilSSHUpstreamHostKey(t *testing.T, h *harness.H) {
 	ed25519Path, ed25519Key := generateKey("ed25519", "ed25519")
 	_, otherKey := generateKey("other", "ed25519")
 
+	ecdsaPublicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(ecdsaKey))
+	require.Nil(t, err)
+	ecdsaFingerprint := ssh.FingerprintSHA256(ecdsaPublicKey)
+
 	sshdPort := h.Port()
 
 	tcs := []struct {
 		name string
 		key  string
 		algo string
+		fail bool
 		svc  *corev1.Service
 		port int
 	}{
 		{name: "Ed25519", key: ed25519Key, algo: "ssh-ed25519"},
 		{name: "ECDSA", key: ecdsaKey, algo: "ecdsa-sha2-nistp256"},
 		{name: "RSA", key: rsaKey, algo: "rsa-sha2-256"},
-		{name: "OtherKey", key: otherKey},
+		{name: "OtherKey", key: otherKey, algo: "ssh-ed25519", fail: true},
+		{name: "ClusterCA", algo: "ecdsa-sha2-nistp256", fail: true},
 	}
 
 	var names []string
@@ -277,7 +317,7 @@ func testVigilSSHUpstreamHostKey(t *testing.T, h *harness.H) {
 				fmt.Sprintf("HostKey %s\nHostKey %s\nHostKey %s\nLogLevel DEBUG1\nAuthorizedKeysFile %s",
 					rsaPath, ecdsaPath, ed25519Path, filepath.Join(home, ".ssh", "authorized_keys")))
 
-			if tc.algo == "" {
+			if tc.fail {
 				h.MustFailWithin(t, getUpstreamSSHCommand(home, tc.port, usr.Username, "'echo denied'"), sshBudget)
 
 				h.Eventually(t, "the upstream to log the host key exchange", sshBudget,
@@ -286,7 +326,7 @@ func testVigilSSHUpstreamHostKey(t *testing.T, h *harness.H) {
 						if err != nil {
 							return err
 						}
-						if !strings.Contains(string(logs), "kex: host key algorithm: ssh-ed25519") {
+						if !strings.Contains(string(logs), fmt.Sprintf("kex: host key algorithm: %s", tc.algo)) {
 							return errors.Errorf("no host key exchange in the sshd log yet")
 						}
 						return nil
@@ -295,6 +335,27 @@ func testVigilSSHUpstreamHostKey(t *testing.T, h *harness.H) {
 				logs, err := os.ReadFile(logPath)
 				require.Nil(t, err)
 				assert.NotContains(t, string(logs), "Accepted publickey")
+
+				if tc.key != "" {
+					logs, err := getVigilLogs(t.Context(), h, tc.svc.Metadata.Name)
+					require.Nil(t, err)
+					assert.NotContains(t, logs, plainHostKeyLog)
+					return
+				}
+
+				h.Eventually(t, "Vigil to log the plain upstream host key", sshBudget,
+					func(ctx context.Context) error {
+						logs, err := getVigilLogs(ctx, h, tc.svc.Metadata.Name)
+						if err != nil {
+							return err
+						}
+						for line := range strings.Lines(logs) {
+							if strings.Contains(line, plainHostKeyLog) && strings.Contains(line, ecdsaFingerprint) {
+								return nil
+							}
+						}
+						return errors.Errorf("Vigil has not logged the plain upstream host key yet")
+					})
 				return
 			}
 

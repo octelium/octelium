@@ -46,6 +46,8 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -798,6 +800,434 @@ func TestConnectUpstreamOpenSSHHostKey(t *testing.T) {
 			assert.Equal(t, tc.want, res.algo)
 
 			c := newTstUpstreamDctx(&loadbalancer.Upstream{HostPort: srv.addr}, "other", cfg)
+			require.Nil(t, c.connect(t.Context(), octeliumC, svc, nil, signer, nil))
+			defer closeTstUpstream(c)
+
+			session, err := c.remoteConn.sshClient.NewSession()
+			require.Nil(t, err)
+			out, err := session.Output("echo upstream-ok")
+			session.Close()
+			require.Nil(t, err, "%s", srv.logs.String())
+			assert.Equal(t, "upstream-ok\n", string(out))
+		})
+	}
+}
+
+func getTstPlainHostKeyLogs(logs *observer.ObservedLogs) []observer.LoggedEntry {
+	return logs.FilterMessageSnippet("presented a plain host key").All()
+}
+
+func TestGetUpstreamHostKeyCACallback(t *testing.T) {
+	octeliumC, ca := newTstCAOcteliumC(t)
+	otherOcteliumC, _ := newTstCAOcteliumC(t)
+	signer, err := newUpstreamSigner(t.Context(), octeliumC, newTstSSHService())
+	require.Nil(t, err)
+
+	ed25519Key := newTstHostKey(t, octeliumC, ssh.KeyAlgoED25519)
+	otherCAKey := newTstHostKey(t, otherOcteliumC, ssh.KeyAlgoED25519)
+	namedCert, err := sshutils.GenerateHostSignerWithPrincipals(t.Context(), octeliumC, ed25519Key.signer, "host.example.com")
+	require.Nil(t, err)
+
+	type testCase struct {
+		name    string
+		key     ssh.PublicKey
+		addr    string
+		wantErr bool
+		wantLog bool
+	}
+
+	var tcs []testCase
+	for _, typ := range []string{
+		ssh.KeyAlgoED25519,
+		ssh.KeyAlgoECDSA256,
+		ssh.KeyAlgoECDSA384,
+		ssh.KeyAlgoECDSA521,
+		ssh.KeyAlgoRSA,
+		ssh.KeyAlgoMLDSA65,
+	} {
+		key := newTstHostKey(t, octeliumC, typ)
+		tcs = append(tcs,
+			testCase{name: typ, key: key.signer.PublicKey(), wantErr: true, wantLog: true},
+			testCase{name: fmt.Sprintf("%s certificate", typ), key: key.cert.PublicKey()})
+	}
+	tcs = append(tcs,
+		testCase{name: "certificate of another CA", key: otherCAKey.cert.PublicKey(), wantErr: true},
+		testCase{name: "certificate with the dialed principal", key: namedCert.PublicKey(), addr: "host.example.com:22"},
+		testCase{name: "certificate with another principal", key: namedCert.PublicKey(), wantErr: true},
+		testCase{name: "user certificate", key: signer.cert.PublicKey(), wantErr: true})
+
+	c := newTstUpstreamDctx(&loadbalancer.Upstream{}, "root", nil)
+	callback := c.getUpstreamHostKeyCACallback(ca)
+	legacyCallback := sshutils.GetHostKeyCACallback(ca)
+	remote := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := observeLogs(t)
+
+			addr := tc.addr
+			if addr == "" {
+				addr = "upstream.example.com:22"
+			}
+
+			err := callback(addr, remote, tc.key)
+			legacyErr := legacyCallback(addr, remote, tc.key)
+			if tc.wantErr {
+				require.NotNil(t, err)
+				require.NotNil(t, legacyErr)
+				assert.Equal(t, legacyErr.Error(), err.Error())
+			} else {
+				assert.Nil(t, err)
+				assert.Nil(t, legacyErr)
+			}
+
+			if !tc.wantLog {
+				assert.Equal(t, 0, logs.Len())
+				return
+			}
+
+			assert.Contains(t, err.Error(), "non-certificate host key")
+			entries := getTstPlainHostKeyLogs(logs)
+			require.Len(t, entries, 1)
+			assert.Equal(t, 1, logs.Len())
+			assert.Equal(t, zapcore.WarnLevel, entries[0].Level)
+			assert.Equal(t, map[string]any{
+				"id":          c.id,
+				"addr":        addr,
+				"keyType":     tc.key.Type(),
+				"fingerprint": ssh.FingerprintSHA256(tc.key),
+			}, entries[0].ContextMap())
+		})
+	}
+}
+
+func TestClientConfigUpstreamHostKeyCACallback(t *testing.T) {
+	octeliumC, _ := newTstCAOcteliumC(t)
+	svc := newTstSSHService()
+	signer, err := newUpstreamSigner(t.Context(), octeliumC, svc)
+	require.Nil(t, err)
+
+	ed25519Key := newTstHostKey(t, octeliumC, ssh.KeyAlgoED25519)
+	rsaKey := newTstHostKey(t, octeliumC, ssh.KeyAlgoRSA)
+
+	for _, tc := range []struct {
+		name     string
+		cfg      *corev1.Service_Spec_Config
+		upstream *loadbalancer.Upstream
+		wantLog  bool
+	}{
+		{
+			name:    "no config",
+			wantLog: true,
+		},
+		{
+			name:    "no SSH config",
+			cfg:     &corev1.Service_Spec_Config{},
+			wantLog: true,
+		},
+		{
+			name:    "SSH config without a host key",
+			cfg:     getTstSSHConfig("root"),
+			wantLog: true,
+		},
+		{
+			name: "host key without a type",
+			cfg: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Ssh{
+					Ssh: &corev1.Service_Spec_Config_SSH{
+						UpstreamHostKey: &corev1.Service_Spec_Config_SSH_UpstreamHostKey{},
+					},
+				},
+			},
+			wantLog: true,
+		},
+		{
+			name: "password",
+			cfg: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Ssh{
+					Ssh: &corev1.Service_Spec_Config_SSH{
+						Auth: &corev1.Service_Spec_Config_SSH_Auth{
+							Type: &corev1.Service_Spec_Config_SSH_Auth_Password_{
+								Password: &corev1.Service_Spec_Config_SSH_Auth_Password{
+									Type: &corev1.Service_Spec_Config_SSH_Auth_Password_FromSecret{
+										FromSecret: "ssh-password",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantLog: true,
+		},
+		{
+			name: "pinned key",
+			cfg:  getTstHostKeyConfig(getTstAuthorizedKey(ed25519Key.signer.PublicKey())),
+		},
+		{
+			name: "insecure",
+			cfg: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Ssh{
+					Ssh: &corev1.Service_Spec_Config_SSH{
+						UpstreamHostKey: &corev1.Service_Spec_Config_SSH_UpstreamHostKey{
+							Type: &corev1.Service_Spec_Config_SSH_UpstreamHostKey_InsecureIgnoreHostKey{
+								InsecureIgnoreHostKey: true,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:     "embedded SSH",
+			upstream: &loadbalancer.Upstream{IsESSH: true, Ed25519PublicKey: ed25519Key.priv.Public().(ed25519.PublicKey)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := tc.upstream
+			if upstream == nil {
+				upstream = &loadbalancer.Upstream{}
+			}
+
+			c := newTstUpstreamDctx(upstream, "root", tc.cfg)
+			cfg, err := c.getClientConfig(t.Context(), octeliumC, svc, signer, nil, upstream)
+			require.Nil(t, err)
+
+			logs := observeLogs(t)
+			err = cfg.HostKeyCallback("upstream:22", &net.TCPAddr{}, rsaKey.signer.PublicKey())
+			entries := getTstPlainHostKeyLogs(logs)
+			if !tc.wantLog {
+				assert.Len(t, entries, 0)
+				return
+			}
+
+			require.NotNil(t, err)
+			assert.Contains(t, err.Error(), "non-certificate host key")
+			require.Len(t, entries, 1)
+			assert.Equal(t, c.id, entries[0].ContextMap()["id"])
+			assert.Equal(t, ssh.FingerprintSHA256(rsaKey.signer.PublicKey()), entries[0].ContextMap()["fingerprint"])
+
+			assert.Nil(t, cfg.HostKeyCallback("upstream:22", &net.TCPAddr{}, rsaKey.cert.PublicKey()))
+			assert.Len(t, getTstPlainHostKeyLogs(logs), 1)
+		})
+	}
+}
+
+func connectTstUpstreamHostKeyCA(t *testing.T, octeliumC octeliumc.ClientInterface, ca ssh.PublicKey,
+	signer *upstreamSigner, addr string, cfg *corev1.Service_Spec_Config) (*tstHostKeyResult, []observer.LoggedEntry) {
+	t.Helper()
+
+	ret := &tstHostKeyResult{}
+	svc := newTstSSHService()
+	upstream := &loadbalancer.Upstream{HostPort: addr}
+
+	legacyConfig, err := newTstUpstreamDctx(upstream, "root", cfg).getClientConfig(t.Context(), octeliumC, svc, signer, nil, upstream)
+	require.Nil(t, err)
+	legacyConfig.HostKeyCallback = sshutils.GetHostKeyCACallback(ca)
+
+	legacyClient, err := ssh.Dial("tcp", addr, legacyConfig)
+	ret.legacyErr = err
+	if err == nil {
+		ret.legacyAlgo = getTstNegotiatedHostKeyAlgorithm(legacyClient.Conn)
+		legacyClient.Close()
+	}
+
+	logs := observeLogs(t)
+	c := newTstUpstreamDctx(upstream, "root", cfg)
+	ret.err = c.connect(t.Context(), octeliumC, svc, nil, signer, nil)
+	if ret.err == nil {
+		ret.algo = getTstNegotiatedHostKeyAlgorithm(c.remoteConn.sshClient.Conn)
+	}
+	closeTstUpstream(c)
+
+	entries := getTstPlainHostKeyLogs(logs)
+	for _, entry := range entries {
+		assert.Equal(t, c.id, entry.ContextMap()["id"])
+		assert.Equal(t, addr, entry.ContextMap()["addr"])
+	}
+
+	return ret, entries
+}
+
+func assertTstUpstreamHostKeyCA(t *testing.T, res *tstHostKeyResult, entries []observer.LoggedEntry,
+	want string, wantKey ssh.PublicKey, wantErr string) {
+	t.Helper()
+
+	if want != "" {
+		require.Nil(t, res.err)
+		require.Nil(t, res.legacyErr)
+		assert.Equal(t, want, res.algo)
+		assert.Equal(t, want, res.legacyAlgo)
+		assert.Len(t, entries, 0)
+		return
+	}
+
+	require.NotNil(t, res.err)
+	require.NotNil(t, res.legacyErr)
+	assert.Equal(t, res.legacyErr.Error(), res.err.Error())
+	assert.Contains(t, res.err.Error(), wantErr)
+
+	if wantKey == nil {
+		assert.Len(t, entries, 0)
+		return
+	}
+
+	require.Len(t, entries, 1)
+	assert.Equal(t, zapcore.WarnLevel, entries[0].Level)
+	assert.Equal(t, wantKey.Type(), entries[0].ContextMap()["keyType"])
+	assert.Equal(t, ssh.FingerprintSHA256(wantKey), entries[0].ContextMap()["fingerprint"])
+}
+
+func TestConnectUpstreamHostKeyCA(t *testing.T) {
+	octeliumC, ca := newTstCAOcteliumC(t)
+	otherOcteliumC, _ := newTstCAOcteliumC(t)
+	signer, err := newUpstreamSigner(t.Context(), octeliumC, newTstSSHService())
+	require.Nil(t, err)
+
+	ed25519Key := newTstHostKey(t, octeliumC, ssh.KeyAlgoED25519)
+	ecdsaKey := newTstHostKey(t, octeliumC, ssh.KeyAlgoECDSA256)
+	rsaKey := newTstHostKey(t, octeliumC, ssh.KeyAlgoRSA)
+	otherCAKey := newTstHostKey(t, otherOcteliumC, ssh.KeyAlgoED25519)
+
+	for _, tc := range []struct {
+		name     string
+		hostKeys []ssh.Signer
+		cfg      *corev1.Service_Spec_Config
+		want     string
+		wantKey  ssh.PublicKey
+		wantErr  string
+	}{
+		{
+			name:     "default host keys",
+			hostKeys: []ssh.Signer{rsaKey.signer, ecdsaKey.signer, ed25519Key.signer},
+			wantKey:  ecdsaKey.signer.PublicKey(),
+			wantErr:  "non-certificate host key",
+		},
+		{
+			name:     "ed25519",
+			hostKeys: []ssh.Signer{ed25519Key.signer},
+			cfg:      getTstSSHConfig("root"),
+			wantKey:  ed25519Key.signer.PublicKey(),
+			wantErr:  "non-certificate host key",
+		},
+		{
+			name:     "rsa",
+			hostKeys: []ssh.Signer{rsaKey.signer},
+			wantKey:  rsaKey.signer.PublicKey(),
+			wantErr:  "non-certificate host key",
+		},
+		{
+			name:     "host certificates",
+			hostKeys: []ssh.Signer{ecdsaKey.cert, ed25519Key.cert},
+			want:     ssh.CertAlgoECDSA256v01,
+		},
+		{
+			name:     "host certificate and plain host keys",
+			hostKeys: []ssh.Signer{rsaKey.signer, ecdsaKey.signer, ed25519Key.cert},
+			cfg:      getTstSSHConfig("root"),
+			want:     ssh.CertAlgoED25519v01,
+		},
+		{
+			name:     "host certificate of another CA",
+			hostKeys: []ssh.Signer{otherCAKey.cert},
+			wantErr:  "no authorities for hostname",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := newTstHostKeyUpstream(t, tc.hostKeys)
+			res, entries := connectTstUpstreamHostKeyCA(t, octeliumC, ca, signer, addr, tc.cfg)
+			assertTstUpstreamHostKeyCA(t, res, entries, tc.want, tc.wantKey, tc.wantErr)
+		})
+	}
+}
+
+func TestConnectUpstreamOpenSSHHostKeyCA(t *testing.T) {
+	getTstSSHDPath(t)
+
+	octeliumC, ca := newTstCAOcteliumC(t)
+	otherOcteliumC, _ := newTstCAOcteliumC(t)
+	svc := newTstSSHService()
+	signer, err := newUpstreamSigner(t.Context(), octeliumC, svc)
+	require.Nil(t, err)
+
+	usr, err := user.Current()
+	require.Nil(t, err)
+
+	ed25519Key := newTstHostKey(t, octeliumC, ssh.KeyAlgoED25519)
+	ecdsaKey := newTstHostKey(t, octeliumC, ssh.KeyAlgoECDSA256)
+	rsaKey := newTstHostKey(t, octeliumC, ssh.KeyAlgoRSA)
+	otherCAKey := newTstHostKey(t, otherOcteliumC, ssh.KeyAlgoED25519)
+
+	type hostKey struct {
+		name     string
+		key      *tstHostKey
+		withCert bool
+	}
+
+	for _, tc := range []struct {
+		name     string
+		hostKeys []hostKey
+		want     string
+		wantKey  ssh.PublicKey
+		wantErr  string
+	}{
+		{
+			name:     "default host keys",
+			hostKeys: []hostKey{{"rsa", rsaKey, false}, {"ecdsa", ecdsaKey, false}, {"ed25519", ed25519Key, false}},
+			wantKey:  ecdsaKey.signer.PublicKey(),
+			wantErr:  "non-certificate host key",
+		},
+		{
+			name:     "ed25519 only",
+			hostKeys: []hostKey{{"ed25519", ed25519Key, false}},
+			wantKey:  ed25519Key.signer.PublicKey(),
+			wantErr:  "non-certificate host key",
+		},
+		{
+			name:     "rsa only",
+			hostKeys: []hostKey{{"rsa", rsaKey, false}},
+			wantKey:  rsaKey.signer.PublicKey(),
+			wantErr:  "non-certificate host key",
+		},
+		{
+			name:     "host certificates",
+			hostKeys: []hostKey{{"ecdsa", ecdsaKey, true}, {"ed25519", ed25519Key, true}},
+			want:     ssh.CertAlgoECDSA256v01,
+		},
+		{
+			name:     "ed25519 host certificate and plain host keys",
+			hostKeys: []hostKey{{"rsa", rsaKey, false}, {"ecdsa", ecdsaKey, false}, {"ed25519", ed25519Key, true}},
+			want:     ssh.CertAlgoED25519v01,
+		},
+		{
+			name:     "host certificate of another CA",
+			hostKeys: []hostKey{{"ed25519", otherCAKey, true}},
+			wantErr:  "no authorities for hostname",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := startTstOpenSSHServerWithConfig(t, func(t *testing.T, dir string) string {
+				var lines []string
+				for _, hostKey := range tc.hostKeys {
+					lines = append(lines, writeTstOpenSSHHostKey(t, dir, hostKey.name, hostKey.key, hostKey.withCert))
+				}
+				authorizedKeys := filepath.Join(dir, "authorized_keys")
+				require.Nil(t, os.WriteFile(authorizedKeys,
+					[]byte(fmt.Sprintf("%s octelium-managed:example.com\n", getTstCAAuthorizedKeyLine(ca))), 0o644))
+
+				lines = append(lines, "LogLevel INFO", fmt.Sprintf("AuthorizedKeysFile %s", authorizedKeys))
+				return strings.Join(lines, "\n")
+			})
+
+			cfg := getTstSSHConfig(usr.Username)
+			res, entries := connectTstUpstreamHostKeyCA(t, octeliumC, ca, signer, srv.addr, cfg)
+			assertTstUpstreamHostKeyCA(t, res, entries, tc.want, tc.wantKey, tc.wantErr)
+			if tc.want == "" {
+				assert.NotContains(t, srv.logs.String(), "Accepted publickey")
+				return
+			}
+
+			c := newTstUpstreamDctx(&loadbalancer.Upstream{HostPort: srv.addr}, "root", cfg)
 			require.Nil(t, c.connect(t.Context(), octeliumC, svc, nil, signer, nil))
 			defer closeTstUpstream(c)
 

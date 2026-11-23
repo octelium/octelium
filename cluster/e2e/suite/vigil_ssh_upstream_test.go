@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,4 +47,16 @@ func TestGetManagedSSHCA(t *testing.T) {
 	ca, err := getManagedSSHCA(home)
 	require.Nil(t, err)
 	assert.Equal(t, "ecdsa-sha2-nistp256 AAAAE2VjZHNh", ca)
+}
+
+func TestNewUpstreamSSHService(t *testing.T) {
+	svc := newUpstreamSSHService(2222, "alice", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA")
+	assert.Equal(t, corev1.Service_Spec_SSH, svc.Spec.Mode)
+	assert.Equal(t, "ssh://localhost:2222", svc.Spec.Config.GetUpstream().GetUrl())
+	assert.Equal(t, "alice", svc.Spec.Config.GetSsh().User)
+	assert.Equal(t, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA", svc.Spec.Config.GetSsh().GetUpstreamHostKey().GetKey())
+
+	svc = newUpstreamSSHService(2222, "alice", "")
+	assert.Equal(t, "alice", svc.Spec.Config.GetSsh().User)
+	assert.Nil(t, svc.Spec.Config.GetSsh().UpstreamHostKey)
 }

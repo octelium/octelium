@@ -17,8 +17,11 @@
 package ssh
 
 import (
+	"net"
 	"slices"
 
+	"github.com/octelium/octelium/cluster/common/sshutils"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -41,5 +44,24 @@ func getHostKeyAlgorithmFormat(algo string) string {
 		return ssh.CertAlgoRSAv01
 	default:
 		return algo
+	}
+}
+
+func (c *dctx) getUpstreamHostKeyCACallback(ca ssh.PublicKey) ssh.HostKeyCallback {
+	callback := sshutils.GetHostKeyCACallback(ca)
+
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		if err := callback(hostname, remote, key); err != nil {
+			if _, ok := key.(*ssh.Certificate); !ok {
+				zap.L().Warn("The upstream SSH server presented a plain host key instead of a host certificate signed by the Cluster SSH CA. Set upstreamHostKey in the SSH config of the Service to verify the server with its host key",
+					zap.String("id", c.id),
+					zap.String("addr", hostname),
+					zap.String("keyType", key.Type()),
+					zap.String("fingerprint", ssh.FingerprintSHA256(key)))
+			}
+			return err
+		}
+
+		return nil
 	}
 }

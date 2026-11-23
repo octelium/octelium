@@ -276,7 +276,7 @@ func (c *dctx) getClientConfig(ctx context.Context,
 	clientConfig := &ssh.ClientConfig{
 		User:            c.getEffectiveSSHUser(),
 		Timeout:         10 * time.Second,
-		HostKeyCallback: sshutils.GetHostKeyCACallback(ca),
+		HostKeyCallback: c.getUpstreamHostKeyCACallback(ca),
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer.cert),
 		},
