@@ -99,12 +99,31 @@ func (c *Controller) getManagedMarker() (string, error) {
 		return "", errors.Errorf("The Connection does not have Cluster info")
 	}
 
-	domain := c.c.Info.Cluster.Domain
+	return getManagedMarkerFromDomain(c.c.Info.Cluster.Domain)
+}
+
+func getManagedMarkerFromDomain(domain string) (string, error) {
 	if domain == "" || strings.ContainsAny(domain, " \t\r\n") {
 		return "", errors.Errorf("Invalid Cluster domain: %q", domain)
 	}
 
 	return fmt.Sprintf("%s%s", managedMarkerPrefix, domain), nil
+}
+
+func SetManagedSSHConfig(domain, filePath string, lines []string) error {
+	marker, err := getManagedMarkerFromDomain(domain)
+	if err != nil {
+		return err
+	}
+
+	lock := waitFileLock(sshConfigLockName)
+	defer releaseFileLock(lock)
+
+	return doSSHConfigOp(&sshConfigOp{
+		FilePath: filePath,
+		Marker:   marker,
+		Lines:    lines,
+	})
 }
 
 func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceConfig_SSH) error {

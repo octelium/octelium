@@ -264,3 +264,48 @@ func TestServiceConfigSSHAsOtherUser(t *testing.T) {
 	assertOwner(dotKnownHosts, 0640)
 	assertOwner(authorizedKeys, 0600)
 }
+
+func TestSetManagedSSHConfigAsOtherUser(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("This test requires root to manage the SSH config of another OS user")
+	}
+
+	const domain = "example.com"
+	marker := managedMarkerPrefix + domain
+	homeDir := newTestSSHUserHome(t, testCleanupNobodyID, testCleanupNobodyID)
+	t.Setenv("OCTELIUM_USER_HOME", homeDir)
+	sshDir := filepath.Join(homeDir, ".ssh")
+	knownHosts := filepath.Join(sshDir, "known_hosts")
+	authorizedKeys := filepath.Join(sshDir, "authorized_keys")
+	expectedGID := getSSHConfigUserCredential(testCleanupNobodyID, testCleanupNobodyID).Gid
+
+	assert.NoError(t, SetManagedSSHConfig(domain, knownHosts, []string{testKnownHostLine(testCAKey)}))
+	assert.NoError(t, SetManagedSSHConfig(domain, authorizedKeys, []string{testAuthorizedKeyLine(testCAKey)}))
+
+	for _, filePath := range []string{knownHosts, authorizedKeys} {
+		assert.Equal(t, 1, countLinesContaining(t, filePath, marker), filePath)
+		fi, err := os.Lstat(filePath)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0600), fi.Mode().Perm(), filePath)
+		uid, gid := getFileOwner(t, filePath)
+		assert.Equal(t, uint32(testCleanupNobodyID), uid, filePath)
+		assert.Equal(t, expectedGID, gid, filePath)
+	}
+
+	rootDir := t.TempDir()
+	require.NoError(t, os.Chmod(rootDir, 0700))
+	victim := filepath.Join(rootDir, "victim")
+	require.NoError(t, os.WriteFile(victim, []byte("root\n"), 0644))
+	require.NoError(t, os.Remove(authorizedKeys))
+	require.NoError(t, os.Symlink(victim, authorizedKeys))
+	require.NoError(t, os.Lchown(authorizedKeys, testCleanupNobodyID, testCleanupNobodyID))
+
+	assert.Error(t, SetManagedSSHConfig(domain, authorizedKeys, []string{testAuthorizedKeyLine(testCAKey)}))
+	b, err := os.ReadFile(victim)
+	require.NoError(t, err)
+	assert.Equal(t, "root\n", string(b), "root must not modify files through the SSH directory of another user")
+
+	c := newTestSSHCtlForDomain(domain)
+	assert.Error(t, c.unsetServiceConfigs())
+	assert.Empty(t, readLines(t, knownHosts))
+}

@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/octelium/octelium/apis/client/cliconfigv1"
 	"github.com/octelium/octelium/apis/main/userv1"
@@ -336,4 +337,135 @@ func TestDoSSHConfigOpWithoutSSHDir(t *testing.T) {
 	}))
 	_, err := os.Stat(filepath.Dir(filePath))
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestSetManagedSSHConfig(t *testing.T) {
+	c, sshDir := newTestSSHCtl(t, "example.com", true)
+	authorizedKeysPath := path.Join(sshDir, "authorized_keys")
+	knownHostsPath := path.Join(sshDir, "known_hosts")
+	marker := "octelium-managed:example.com"
+
+	userKey := "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQtest user@laptop"
+	otherClusterLine := fmt.Sprintf("%s octelium-managed:other.example.net",
+		testAuthorizedKeyLine(testOtherCAKey))
+	assert.Nil(t, os.WriteFile(authorizedKeysPath,
+		[]byte(fmt.Sprintf("%s\n%s\n", userKey, otherClusterLine)), 0600))
+
+	for i := 0; i < 3; i++ {
+		assert.Nil(t, SetManagedSSHConfig("example.com", authorizedKeysPath,
+			[]string{testAuthorizedKeyLine(testCAKey)}))
+		assert.Nil(t, SetManagedSSHConfig("example.com", knownHostsPath,
+			[]string{testKnownHostLine(testCAKey)}))
+	}
+
+	assert.Equal(t, []string{
+		userKey,
+		otherClusterLine,
+		fmt.Sprintf("%s %s", testAuthorizedKeyLine(testCAKey), marker),
+	}, readLines(t, authorizedKeysPath))
+	assert.Equal(t, []string{
+		fmt.Sprintf("%s %s", testKnownHostLine(testCAKey), marker),
+	}, readLines(t, knownHostsPath))
+
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(knownHostsPath)
+		assert.Nil(t, err)
+		assert.Equal(t, os.FileMode(0600), fi.Mode().Perm())
+	}
+
+	assert.Nil(t, c.setServiceConfigs())
+	for _, filePath := range []string{authorizedKeysPath, knownHostsPath} {
+		assert.Equal(t, 1, countLinesContaining(t, filePath, testCAKey), filePath)
+	}
+
+	assert.Nil(t, c.unsetServiceConfigs())
+	assert.Equal(t, []string{userKey, otherClusterLine}, readLines(t, authorizedKeysPath))
+	assert.Empty(t, readLines(t, knownHostsPath))
+
+	assert.Nil(t, c.setServiceConfigs())
+	assert.Nil(t, SetManagedSSHConfig("example.com", authorizedKeysPath,
+		[]string{testAuthorizedKeyLine(testCAKey), testAuthorizedKeyLine(testOtherCAKey)}))
+	assert.Equal(t, 1, countLinesContaining(t, authorizedKeysPath, testCAKey))
+	assert.Equal(t, 1, countLinesContaining(t, authorizedKeysPath, testOtherCAKey))
+
+	assert.Nil(t, reconcileSSHCleanup(&cliconfigv1.ConnectionCleanup_SSH{
+		Marker:    marker,
+		FilePaths: []string{knownHostsPath, authorizedKeysPath},
+	}))
+	assert.Equal(t, []string{userKey, otherClusterLine}, readLines(t, authorizedKeysPath))
+	assert.Empty(t, readLines(t, knownHostsPath))
+}
+
+func TestSetManagedSSHConfigInvalid(t *testing.T) {
+	_, sshDir := newTestSSHCtl(t, "example.com", true)
+	authorizedKeysPath := path.Join(sshDir, "authorized_keys")
+
+	for _, domain := range []string{"", "example .com", "example.com\n", "\texample.com", "example.com\r"} {
+		assert.Error(t, SetManagedSSHConfig(domain, authorizedKeysPath,
+			[]string{testAuthorizedKeyLine(testCAKey)}), "%q", domain)
+	}
+
+	assert.Error(t, SetManagedSSHConfig("example.com", authorizedKeysPath,
+		[]string{fmt.Sprintf("%s\n%s", testAuthorizedKeyLine(testCAKey), testAuthorizedKeyLine(testOtherCAKey))}))
+	assert.Error(t, SetManagedSSHConfig("example.com",
+		filepath.Join(t.TempDir(), "missing", ".ssh", "authorized_keys"),
+		[]string{testAuthorizedKeyLine(testCAKey)}))
+
+	_, err := os.Stat(authorizedKeysPath)
+	assert.True(t, os.IsNotExist(err))
+
+	assert.Nil(t, SetManagedSSHConfig("example.com", authorizedKeysPath, nil))
+	assert.Nil(t, SetManagedSSHConfig("example.com", authorizedKeysPath, []string{"", " "}))
+	_, err = os.Stat(authorizedKeysPath)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestGetManagedMarker(t *testing.T) {
+	marker, err := newTestSSHCtlForDomain("example.com").getManagedMarker()
+	assert.Nil(t, err)
+	assert.Equal(t, "octelium-managed:example.com", marker)
+
+	marker, err = getManagedMarkerFromDomain("example.com")
+	assert.Nil(t, err)
+	assert.Equal(t, "octelium-managed:example.com", marker)
+
+	for _, domain := range []string{"", "example .com", "example.com\n"} {
+		_, err := newTestSSHCtlForDomain(domain).getManagedMarker()
+		assert.Error(t, err, "%q", domain)
+		_, err = getManagedMarkerFromDomain(domain)
+		assert.Error(t, err, "%q", domain)
+	}
+
+	_, err = (&Controller{c: &cliconfigv1.Connection{}}).getManagedMarker()
+	assert.Error(t, err)
+}
+
+func TestSetManagedSSHConfigWaitsForLock(t *testing.T) {
+	_, sshDir := newTestSSHCtl(t, "example.com", true)
+	authorizedKeysPath := path.Join(sshDir, "authorized_keys")
+
+	lock, err := acquireFileLock(sshConfigLockName)
+	require.NoError(t, err)
+	if lock == nil {
+		t.Skip("There is no usable lock directory")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- SetManagedSSHConfig("example.com", authorizedKeysPath, []string{testAuthorizedKeyLine(testCAKey)})
+	}()
+
+	select {
+	case err := <-done:
+		releaseFileLock(lock)
+		t.Fatalf("SetManagedSSHConfig did not wait for the lock: %+v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	_, err = os.Stat(authorizedKeysPath)
+	assert.True(t, os.IsNotExist(err))
+
+	releaseFileLock(lock)
+	require.NoError(t, <-done)
+	assert.Equal(t, 1, countLinesContaining(t, authorizedKeysPath, testCAKey))
 }

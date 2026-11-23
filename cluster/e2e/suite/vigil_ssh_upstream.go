@@ -27,6 +27,7 @@ import (
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/apis/main/userv1"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/e2e/harness"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
@@ -240,6 +241,44 @@ func testVigilSSHUpstreamCertificate(t *testing.T, h *harness.H) {
 			writeSSHDFile(t, "user_ca.pub", ca), writeSSHDFile(t, "principals", "someone-else")))
 
 		h.MustFailWithin(t, getUpstreamSSHCommand(home, port, usr.Username, "'echo denied'"), sshBudget)
+	})
+
+	t.Run("ServiceConfig", func(t *testing.T) {
+		getServiceConfig := func(t *testing.T, args string) string {
+			t.Helper()
+
+			return strings.TrimSpace(string(h.MustOutput(t,
+				fmt.Sprintf("octelium cfg %s %s", svc.Metadata.Name, args))))
+		}
+
+		assert.Equal(t, ca, getServiceConfig(t, "--ssh-format ca-public-key"))
+		assert.Equal(t, fmt.Sprintf("cert-authority %s", ca), getServiceConfig(t, "--ssh-format authorized-keys"))
+		assert.Equal(t, fmt.Sprintf("@cert-authority * %s", ca), getServiceConfig(t, "--ssh-format known-hosts"))
+		assert.Equal(t, fmt.Sprintf("# known_hosts\n@cert-authority * %s\n# authorized_keys\ncert-authority %s", ca, ca),
+			getServiceConfig(t, "--print"))
+
+		resp := &userv1.SetServiceConfigsResponse{}
+		h.MustOutputProto(t, fmt.Sprintf("octelium cfg %s -o json", svc.Metadata.Name), resp)
+		require.Len(t, resp.Configs, 1)
+		assert.Equal(t, []string{fmt.Sprintf("@cert-authority * %s", ca)}, resp.Configs[0].GetSsh().GetKnownHosts())
+		assert.Equal(t, []string{fmt.Sprintf("cert-authority %s", ca)}, resp.Configs[0].GetSsh().GetAuthorizedKeys())
+
+		h.MustRun(t, fmt.Sprintf("OCTELIUM_USER_HOME=%s octelium cfg %s", home, svc.Metadata.Name))
+		for _, name := range []string{"known_hosts", "authorized_keys"} {
+			content, err := os.ReadFile(filepath.Join(home, ".ssh", name))
+			require.Nil(t, err)
+			assert.Equal(t, 1, strings.Count(string(content), "octelium-managed:"), name)
+		}
+
+		t.Run("AuthorizedKeys", func(t *testing.T) {
+			mustLogin(t, startSSHD(t, fmt.Sprintf("AuthorizedKeysFile %s",
+				writeSSHDFile(t, "authorized_keys", getServiceConfig(t, "--ssh-format authorized-keys")))))
+		})
+
+		t.Run("TrustedUserCAKeys", func(t *testing.T) {
+			mustLogin(t, startSSHD(t, fmt.Sprintf("AuthorizedKeysFile none\nTrustedUserCAKeys %s",
+				writeSSHDFile(t, "user_ca.pub", getServiceConfig(t, "--ssh-format ca-public-key")))))
+		})
 	})
 }
 
