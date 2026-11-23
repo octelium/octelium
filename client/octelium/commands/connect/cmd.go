@@ -25,6 +25,7 @@ import (
 	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/octelium/commands/connect/controller"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -57,6 +58,8 @@ type args struct {
 	UseFullDNS         bool
 
 	TunnelMode string
+
+	SSHTrustUsers []string
 }
 
 var example = `
@@ -81,6 +84,9 @@ octelium connect --serve svc1
 octelium connect --serve svc1 --serve svc2 --serve svc3.ns1
 # Serve all available Services for the User
 octelium connect --serve-all
+
+# Serve the SSH Service ssh1 and trust the Cluster SSH CA for the root user of the host
+octelium connect --serve ssh1 --ssh-trust-user root
 
 # Serve embedded SSH Services
 octelium connect --essh
@@ -160,6 +166,13 @@ This mode implicitly enables the local DNS server.`)
 
 	Cmd.PersistentFlags().BoolVar(&cmdArgs.UseESOCKS5, "esocks5", false, "Run embedded SOCKS5 server")
 
+	Cmd.PersistentFlags().StringSliceVar(&cmdArgs.SSHTrustUsers, "ssh-trust-user", nil,
+		`Trust the Cluster SSH CA in the authorized_keys file of the given host OS user while serving Services.
+This lets the served SSH Services log in as that user (e.g. "root") to an SSH server running on this host.
+You can use this flag multiple times to trust the CA for multiple users. This only works if Octelium is running as root
+or as that user. By default, only the user who ran Octelium via sudo, pkexec or --detach, otherwise the user running Octelium,
+trusts the CA. The CA is removed from the authorized_keys files once Octelium disconnects`)
+
 	Cmd.MarkFlagsMutuallyExclusive("auth-token", "auth-token-file")
 	Cmd.MarkFlagsMutuallyExclusive("auth-token-file", "assertion")
 }
@@ -179,6 +192,15 @@ func (a *args) toOpts() (*Opts, error) {
 		UseFullDNS:         a.UseFullDNS,
 		TunnelMode:         a.TunnelMode,
 	}
+
+	sshTrustUsers, err := controller.ValidateSSHTrustUsers(a.SSHTrustUsers)
+	if err != nil {
+		return nil, err
+	}
+	if len(sshTrustUsers) > 0 && !a.ServeAll && len(a.ServeServices) == 0 {
+		return nil, errors.Errorf("The --ssh-trust-user flag can only be used while serving Services via the --serve or --serve-all flags")
+	}
+	ret.SSHTrustUsers = sshTrustUsers
 
 	for _, arg := range a.PublishServices {
 		res, err := parsePublishedService(arg)
@@ -203,6 +225,11 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	domain := i.Domain
+
+	opts, err := cmdArgs.toOpts()
+	if err != nil {
+		return err
+	}
 
 	ctx := cmd.Context()
 	if !cmdArgs.Detached {
@@ -238,11 +265,6 @@ func doCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	authenticator.StartGetAccessToken(ctx, domain)
-
-	opts, err := cmdArgs.toOpts()
-	if err != nil {
-		return err
-	}
 
 	c, err := NewConnector(domain, opts)
 	if err != nil {

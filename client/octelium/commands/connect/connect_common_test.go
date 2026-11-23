@@ -462,6 +462,129 @@ func TestArgsToOptsPreservesPublishedServiceOrder(t *testing.T) {
 	}
 }
 
+func TestArgsToOptsSSHTrustUsers(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args *args
+		want []string
+	}{
+		{
+			name: "Serve",
+			args: &args{ServeServices: []string{"ssh1"}, SSHTrustUsers: []string{"root"}},
+			want: []string{"root"},
+		},
+		{
+			name: "ServeAll",
+			args: &args{ServeAll: true, SSHTrustUsers: []string{"root", " ubuntu", "root"}},
+			want: []string{"root", "ubuntu"},
+		},
+		{
+			name: "None",
+			args: &args{ServeAll: true},
+		},
+		{
+			name: "NoneWithoutServe",
+			args: &args{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := tc.args.toOpts()
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, o.SSHTrustUsers)
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		args *args
+		err  string
+	}{
+		{
+			name: "WithoutServe",
+			args: &args{SSHTrustUsers: []string{"root"}},
+			err:  "The --ssh-trust-user flag can only be used while serving Services",
+		},
+		{
+			name: "WithPublishOnly",
+			args: &args{SSHTrustUsers: []string{"root"}, PublishServices: []string{"web:8080"}},
+			err:  "The --ssh-trust-user flag can only be used while serving Services",
+		},
+		{
+			name: "WithESSHOnly",
+			args: &args{SSHTrustUsers: []string{"root"}, UseESSH: true},
+			err:  "The --ssh-trust-user flag can only be used while serving Services",
+		},
+		{
+			name: "InvalidUser",
+			args: &args{ServeAll: true, SSHTrustUsers: []string{"root", "../root"}},
+			err:  "Invalid SSH trust user",
+		},
+		{
+			name: "EmptyUser",
+			args: &args{ServeServices: []string{"ssh1"}, SSHTrustUsers: []string{""}},
+			err:  "Invalid SSH trust user",
+		},
+		{
+			name: "TooManyUsers",
+			args: &args{ServeAll: true, SSHTrustUsers: func() []string {
+				var ret []string
+				for i := 0; i < 33; i++ {
+					ret = append(ret, fmt.Sprintf("usr%d", i))
+				}
+				return ret
+			}()},
+			err: "Too many SSH trust users",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := tc.args.toOpts()
+			assert.ErrorContains(t, err, tc.err)
+			assert.Nil(t, o)
+		})
+	}
+}
+
+func TestGetConnectionConfigSSHTrustUsers(t *testing.T) {
+	clearTestConnectEnv(t)
+	for _, tc := range []struct {
+		name string
+		opts *Opts
+		want []string
+	}{
+		{
+			name: "Serve",
+			opts: &Opts{ServeServices: []string{"ssh1"}, SSHTrustUsers: []string{"root", "ubuntu"}},
+			want: []string{"root", "ubuntu"},
+		},
+		{
+			name: "ServeAll",
+			opts: &Opts{ServeAll: true, SSHTrustUsers: []string{"root"}},
+			want: []string{"root"},
+		},
+		{
+			name: "NotServing",
+			opts: &Opts{SSHTrustUsers: []string{"root"}},
+		},
+		{
+			name: "NoTrustUsers",
+			opts: &Opts{ServeAll: true},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := NewConnector("example.com", tc.opts)
+			require.NoError(t, err)
+			cfg, _, err := c.getConnectionConfig(t.Context(), testStateStream(&userv1.ConnectionState{}), nil)
+			require.NoError(t, err)
+			if tc.want == nil || runtime.GOOS == "windows" {
+				assert.Nil(t, cfg.Preferences.ServeOpts.Ssh)
+				return
+			}
+			assert.True(t, cfg.Preferences.ServeOpts.IsEnabled)
+			assert.Equal(t, tc.want, cfg.Preferences.ServeOpts.GetSsh().GetTrustUsers())
+		})
+	}
+}
+
 func TestSendInitializeRequestNegotiation(t *testing.T) {
 	clearTestConnectEnv(t)
 	for _, tt := range []struct {
@@ -3504,6 +3627,25 @@ func TestAuthTokenFile(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(authenticator.WithNonInteractive(cliutils.WithDB(context.Background(), d)))
 	assert.ErrorContains(t, doCmd(cmd, nil), "Could not get the authentication Token")
+
+	for _, detached := range []bool{false, true} {
+		cmdArgs = args{TokenFile: filepath.Join(t.TempDir(), "missing"), Detached: detached, SSHTrustUsers: []string{"root"}}
+		assert.ErrorContains(t, doCmd(cmd, nil), "The --ssh-trust-user flag can only be used while serving Services")
+		cmdArgs = args{TokenFile: filepath.Join(t.TempDir(), "missing"), Detached: detached, ServeAll: true, SSHTrustUsers: []string{"a b"}}
+		assert.ErrorContains(t, doCmd(cmd, nil), "Invalid SSH trust user")
+	}
+	cmdArgs = args{TokenFile: filepath.Join(t.TempDir(), "missing"), ServeAll: true, SSHTrustUsers: []string{"root"}}
+	assert.ErrorContains(t, doCmd(cmd, nil), "Could not get the authentication Token")
+
+	sshTrustUser := Cmd.Flags().Lookup("ssh-trust-user")
+	require.NotNil(t, sshTrustUser)
+	require.NoError(t, Cmd.Flags().Set("ssh-trust-user", "root,ubuntu"))
+	require.NoError(t, Cmd.Flags().Set("ssh-trust-user", "ec2-user"))
+	sv, ok := sshTrustUser.Value.(pflag.SliceValue)
+	require.True(t, ok)
+	assert.Equal(t, []string{"root", "ubuntu", "ec2-user"}, sv.GetSlice())
+	assert.Equal(t, []string{"root", "ubuntu", "ec2-user"}, cmdArgs.SSHTrustUsers)
+	require.NoError(t, sv.Replace(nil))
 
 	require.NoError(t, Cmd.Flags().Set("auth-token-file", "/path/to/token"))
 	assert.Equal(t, "/path/to/token", cmdArgs.TokenFile)

@@ -252,6 +252,14 @@ func (c *Connector) getConnectionConfig(ctx context.Context,
 					return false
 				}(),
 				ProxyMode: cliconfigv1.Connection_Preferences_ServeOpts_USERSPACE,
+				Ssh: func() *cliconfigv1.Connection_Preferences_ServeOpts_SSH {
+					if len(c.opts.SSHTrustUsers) == 0 || (!c.opts.ServeAll && len(c.opts.ServeServices) == 0) {
+						return nil
+					}
+					return &cliconfigv1.Connection_Preferences_ServeOpts_SSH{
+						TrustUsers: c.opts.SSHTrustUsers,
+					}
+				}(),
 			},
 			ESSH: &cliconfigv1.Connection_Preferences_ESSH{
 				IsEnabled: c.isESSH(),
@@ -366,6 +374,11 @@ func (c *Connector) getConnectionConfig(ctx context.Context,
 	if connCfg.Preferences.ESSH.IsEnabled && cliutils.IsWindows() {
 		cliutils.LineWarn("eSSH is not current supported on Windows. Ignoring using eSSH\n")
 		connCfg.Preferences.ESSH.IsEnabled = false
+	}
+
+	if connCfg.Preferences.ServeOpts.Ssh != nil && cliutils.IsWindows() {
+		cliutils.LineWarn("Trusting the Cluster SSH CA for other OS users is not currently supported on Windows. Ignoring the SSH trust users\n")
+		connCfg.Preferences.ServeOpts.Ssh = nil
 	}
 
 	return connCfg, initAt, nil

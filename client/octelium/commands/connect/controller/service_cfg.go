@@ -22,10 +22,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/octelium/octelium/apis/main/userv1"
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/common/cliutils/vhome"
 	"github.com/octelium/octelium/client/octelium/internal/userexec"
 	"github.com/pkg/errors"
@@ -39,6 +43,10 @@ const sshConfigLockName = "sshconfig.lock"
 const sshConfigCmdName = "ssh-config"
 
 const sshConfigCmdMaxInput = 1024 * 1024
+
+const maxSSHTrustUsers = 32
+
+var sshTrustUserRegex = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,255}$`)
 
 func init() {
 	userexec.Register(sshConfigCmdName, func(args []string) error {
@@ -79,14 +87,22 @@ func runSSHConfigCmd(r io.Reader) error {
 }
 
 func (c *Controller) setServiceConfigs() error {
+	var hasSSH bool
 	for _, svcCfg := range c.c.Connection.ServiceConfigs {
 		switch svcCfg.Type.(type) {
 		case *userv1.ConnectionState_ServiceConfig_Ssh:
+			hasSSH = true
 			if err := c.setServiceConfigSSH(svcCfg.GetSsh()); err != nil {
 				return err
 			}
 		}
 	}
+
+	if !hasSSH && len(c.getSSHTrustUsers()) > 0 {
+		cliutils.LineWarn("The Cluster did not provide its SSH CA. Could not trust it for the OS users: %s\n",
+			strings.Join(c.getSSHTrustUsers(), ", "))
+	}
+
 	return nil
 }
 
@@ -141,37 +157,181 @@ func (c *Controller) setServiceConfigSSH(svcCfg *userv1.ConnectionState_ServiceC
 	if err != nil {
 		return err
 	}
-	if sshDir == "" {
+
+	var filePaths []string
+	if sshDir != "" {
+		filePaths = append(filePaths, filepath.Join(sshDir, "known_hosts"), filepath.Join(sshDir, "authorized_keys"))
+	}
+
+	var trustUserFiles []*sshTrustUserFile
+	if len(svcCfg.AuthorizedKeys) > 0 {
+		trustUserFiles = c.getSSHTrustUserFiles(filePaths)
+	}
+
+	c.sshTrustFilePaths = nil
+	if len(filePaths) == 0 && len(trustUserFiles) == 0 {
 		return nil
 	}
 
 	lock := waitFileLock(sshConfigLockName)
 	defer releaseFileLock(lock)
 
-	zap.L().Debug("Setting SSH service configs", zap.String("sshDir", sshDir))
+	for _, itm := range trustUserFiles {
+		c.sshTrustFilePaths = append(c.sshTrustFilePaths, itm.filePath)
+	}
+	c.setCleanupSSH(marker, slices.Concat(filePaths, c.sshTrustFilePaths))
 
-	knownHostsPath := filepath.Join(sshDir, "known_hosts")
-	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
-	c.setCleanupSSH(marker, []string{knownHostsPath, authorizedKeysPath})
-	if err := doSSHConfigOp(&sshConfigOp{
-		FilePath: knownHostsPath,
-		Marker:   marker,
-		Lines:    svcCfg.KnownHosts,
-	}); err != nil {
-		zap.L().Warn("Could not set the Cluster CA in the known_hosts file",
-			zap.String("filePath", knownHostsPath), zap.Error(err))
+	if sshDir != "" {
+		zap.L().Debug("Setting SSH service configs", zap.String("sshDir", sshDir))
+
+		knownHostsPath := filepath.Join(sshDir, "known_hosts")
+		authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
+		if err := doSSHConfigOp(&sshConfigOp{
+			FilePath: knownHostsPath,
+			Marker:   marker,
+			Lines:    svcCfg.KnownHosts,
+		}); err != nil {
+			zap.L().Warn("Could not set the Cluster CA in the known_hosts file",
+				zap.String("filePath", knownHostsPath), zap.Error(err))
+		}
+
+		if err := doSSHConfigOp(&sshConfigOp{
+			FilePath: authorizedKeysPath,
+			Marker:   marker,
+			Lines:    svcCfg.AuthorizedKeys,
+		}); err != nil {
+			zap.L().Warn("Could not set the Cluster CA in the authorized keys file",
+				zap.String("filePath", authorizedKeysPath), zap.Error(err))
+		}
 	}
 
-	if err := doSSHConfigOp(&sshConfigOp{
-		FilePath: authorizedKeysPath,
-		Marker:   marker,
-		Lines:    svcCfg.AuthorizedKeys,
-	}); err != nil {
-		zap.L().Warn("Could not set the Cluster CA in the authorized keys file",
-			zap.String("filePath", authorizedKeysPath), zap.Error(err))
+	var failed bool
+	for _, itm := range trustUserFiles {
+		if err := doSSHConfigOp(&sshConfigOp{
+			FilePath: itm.filePath,
+			Marker:   marker,
+			Lines:    svcCfg.AuthorizedKeys,
+		}); err != nil {
+			cliutils.LineWarn("Could not trust the Cluster SSH CA for the OS user %s in %s: %s\n",
+				itm.user, itm.filePath, err)
+			zap.L().Warn("Could not set the Cluster CA in the authorized keys file of an SSH trust user",
+				zap.String("user", itm.user), zap.String("filePath", itm.filePath), zap.Error(err))
+			c.sshTrustFilePaths = slices.DeleteFunc(c.sshTrustFilePaths, func(filePath string) bool {
+				return filePath == itm.filePath
+			})
+			failed = true
+			continue
+		}
+
+		cliutils.LineInfo("Trusted the Cluster SSH CA for the OS user %s in %s while connected\n",
+			itm.user, itm.filePath)
+	}
+
+	if failed {
+		c.setCleanupSSH(marker, slices.Concat(filePaths, c.sshTrustFilePaths))
 	}
 
 	return nil
+}
+
+type sshTrustUserFile struct {
+	user     string
+	filePath string
+}
+
+func (c *Controller) getSSHTrustUsers() []string {
+	if !c.c.GetPreferences().GetServeOpts().GetIsEnabled() {
+		return nil
+	}
+
+	return c.c.GetPreferences().GetServeOpts().GetSsh().GetTrustUsers()
+}
+
+func (c *Controller) getSSHTrustUserFiles(exclude []string) []*sshTrustUserFile {
+	var ret []*sshTrustUserFile
+	for _, name := range c.getSSHTrustUsers() {
+		filePath, err := c.getSSHTrustUserFile(name)
+		if err != nil {
+			cliutils.LineWarn("Could not trust the Cluster SSH CA for the OS user %s: %s\n", name, err)
+			zap.L().Warn("Could not find the authorized keys file of an SSH trust user",
+				zap.String("user", name), zap.Error(err))
+			continue
+		}
+
+		if slices.Contains(exclude, filePath) || slices.ContainsFunc(ret, func(itm *sshTrustUserFile) bool {
+			return itm.filePath == filePath
+		}) {
+			zap.L().Debug("The authorized keys file of the SSH trust user is already managed",
+				zap.String("user", name), zap.String("filePath", filePath))
+			continue
+		}
+
+		ret = append(ret, &sshTrustUserFile{
+			user:     name,
+			filePath: filePath,
+		})
+	}
+
+	return ret
+}
+
+func (c *Controller) getSSHTrustUserFile(name string) (string, error) {
+	if !sshTrustUserRegex.MatchString(name) {
+		return "", errors.Errorf("Invalid OS user name")
+	}
+
+	usr, err := c.lookupSSHTrustUser(name)
+	if err != nil {
+		if stderrors.As(err, new(user.UnknownUserError)) {
+			return "", errors.Errorf("The OS user does not exist")
+		}
+		return "", errors.Errorf("Could not find the OS user: %+v", err)
+	}
+
+	if usr.HomeDir == "" || !filepath.IsAbs(usr.HomeDir) {
+		return "", errors.Errorf("The OS user does not have a valid home directory: %q", usr.HomeDir)
+	}
+
+	sshDir := filepath.Join(usr.HomeDir, ".ssh")
+	fi, err := os.Stat(sshDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", errors.Errorf("The SSH directory %s does not exist", sshDir)
+		}
+		return "", errors.Errorf("Could not access the SSH directory %s: %+v", sshDir, err)
+	}
+	if !fi.IsDir() {
+		return "", errors.Errorf("The SSH directory %s is not a directory", sshDir)
+	}
+
+	return filepath.Join(sshDir, "authorized_keys"), nil
+}
+
+func (c *Controller) lookupSSHTrustUser(name string) (*user.User, error) {
+	if c.lookupUser != nil {
+		return c.lookupUser(name)
+	}
+
+	return user.Lookup(name)
+}
+
+func ValidateSSHTrustUsers(users []string) ([]string, error) {
+	var ret []string
+	for _, name := range users {
+		name = strings.TrimSpace(name)
+		if !sshTrustUserRegex.MatchString(name) {
+			return nil, errors.Errorf("Invalid SSH trust user: %q", name)
+		}
+		if !slices.Contains(ret, name) {
+			ret = append(ret, name)
+		}
+	}
+
+	if len(ret) > maxSSHTrustUsers {
+		return nil, errors.Errorf("Too many SSH trust users. The maximum is %d", maxSSHTrustUsers)
+	}
+
+	return ret, nil
 }
 
 func (c *Controller) unsetServiceConfigSSH() error {
@@ -181,24 +341,25 @@ func (c *Controller) unsetServiceConfigSSH() error {
 		return err
 	}
 
+	var retErr error
+	var filePaths []string
 	sshDir, err := c.getSSHDir()
 	if err != nil {
-		return err
+		retErr = err
+	} else if sshDir != "" {
+		zap.L().Debug("Unsetting SSH service configs", zap.String("sshDir", sshDir))
+		filePaths = append(filePaths, filepath.Join(sshDir, "known_hosts"), filepath.Join(sshDir, "authorized_keys"))
 	}
-	if sshDir == "" {
-		return nil
+	filePaths = append(filePaths, c.sshTrustFilePaths...)
+
+	if len(filePaths) == 0 {
+		return retErr
 	}
 
 	lock := waitFileLock(sshConfigLockName)
 	defer releaseFileLock(lock)
 
-	zap.L().Debug("Unsetting SSH service configs", zap.String("sshDir", sshDir))
-
-	var retErr error
-	for _, filePath := range []string{
-		filepath.Join(sshDir, "known_hosts"),
-		filepath.Join(sshDir, "authorized_keys"),
-	} {
+	for _, filePath := range filePaths {
 		if err := doSSHConfigOp(&sshConfigOp{
 			FilePath: filePath,
 			Marker:   marker,

@@ -19,6 +19,7 @@ import (
 	stderrors "errors"
 	"net"
 	"net/netip"
+	"os/user"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,6 +92,9 @@ type Controller struct {
 	localDNSRetryDoneCh chan struct{}
 
 	checkGatewayRoute func(netip.Addr) bool
+
+	sshTrustFilePaths []string
+	lookupUser        func(string) (*user.User, error)
 }
 
 func NewController(c *cliconfigv1.Connection) (*Controller, error) {

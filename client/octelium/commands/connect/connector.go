@@ -41,6 +41,8 @@ type Opts struct {
 
 	UserHome string
 
+	SSHTrustUsers []string
+
 	TunnelMode string
 
 	MTU int32

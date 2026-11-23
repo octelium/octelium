@@ -127,6 +127,7 @@ func TestGetConnectOpts(t *testing.T) {
 
 		assert.Equal(t, "usr1000", opts.ESSHUser)
 		assert.Equal(t, "/home/usr1000", opts.UserHome)
+		assert.Nil(t, opts.SSHTrustUsers)
 	}
 
 	{
