@@ -105,6 +105,14 @@ func IsEqual(x proto.Message, y proto.Message) bool {
 }
 
 func ConvertToMap(in proto.Message) (map[string]any, error) {
+	if ret, ok := convertToMap(in); ok {
+		return ret, nil
+	}
+
+	return convertToMapJSON(in)
+}
+
+func convertToMapJSON(in proto.Message) (map[string]any, error) {
 	ret := make(map[string]any)
 	jsonBytes, err := MarshalJSON(in, false)
 	if err != nil {
