@@ -19,8 +19,11 @@ package acache
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
@@ -33,6 +36,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestCache(t *testing.T) {
@@ -374,4 +378,384 @@ func TestCacheConcurrentResources(t *testing.T) {
 			assert.ErrorIs(t, err, ErrNotFound)
 		}
 	}
+}
+
+func isSameMap(a, b map[string]any) bool {
+	return reflect.ValueOf(a).UnsafePointer() == reflect.ValueOf(b).UnsafePointer()
+}
+
+type testResourceMapOpts[T proto.Message] struct {
+	original T
+	updated  T
+	invalid  T
+	set      func(T) error
+	del      func(T) error
+	getMap   func(T) (map[string]any, error)
+	convert  func(T) proto.Message
+	mutate   func(T)
+}
+
+func testResourceMap[T proto.Message](t *testing.T, c *Cache, o *testResourceMapOpts[T]) {
+	t.Helper()
+
+	getMap := func(val T) map[string]any {
+		t.Helper()
+		exp, err := pbutils.ConvertToMap(o.convert(val))
+		assert.Nil(t, err)
+		ret, err := o.getMap(val)
+		assert.Nil(t, err)
+		assert.Equal(t, exp, ret)
+		return ret
+	}
+
+	first := getMap(o.original)
+	assert.False(t, isSameMap(first, getMap(o.original)))
+	assert.Equal(t, 0, c.maps.Len())
+
+	assert.Nil(t, o.set(o.original))
+	first = getMap(o.original)
+	assert.True(t, isSameMap(first, getMap(o.original)))
+	assert.Equal(t, 1, c.maps.Len())
+
+	clone := proto.Clone(o.original).(T)
+	assert.False(t, isSameMap(first, getMap(clone)))
+	assert.Equal(t, 1, c.maps.Len())
+
+	assert.Nil(t, o.set(o.updated))
+	assert.Equal(t, 0, c.maps.Len())
+	assert.False(t, isSameMap(first, getMap(o.original)))
+	second := getMap(o.updated)
+	assert.NotEqual(t, first, second)
+	assert.True(t, isSameMap(second, getMap(o.updated)))
+	assert.Equal(t, 1, c.maps.Len())
+
+	o.mutate(o.updated)
+	assert.Nil(t, o.set(o.updated))
+	assert.Equal(t, 0, c.maps.Len())
+	third := getMap(o.updated)
+	assert.NotEqual(t, second, third)
+	assert.True(t, isSameMap(third, getMap(o.updated)))
+
+	assert.Nil(t, o.del(proto.Clone(o.updated).(T)))
+	assert.Equal(t, 0, c.maps.Len())
+	assert.False(t, isSameMap(third, getMap(o.updated)))
+	assert.Equal(t, 0, c.maps.Len())
+
+	assert.Nil(t, o.set(o.updated))
+	third = getMap(o.updated)
+	assert.Nil(t, o.del(o.updated))
+	assert.Equal(t, 0, c.maps.Len())
+	assert.False(t, isSameMap(third, getMap(o.updated)))
+
+	var zero T
+	getMap(zero)
+	assert.Nil(t, o.set(o.original))
+	getMap(zero)
+	assert.Equal(t, 0, c.maps.Len())
+	assert.Nil(t, o.del(o.original))
+
+	_, expErr := pbutils.ConvertToMap(o.convert(o.invalid))
+	assert.NotNil(t, expErr)
+	assert.Nil(t, o.set(o.invalid))
+	for range 2 {
+		ret, err := o.getMap(o.invalid)
+		assert.Nil(t, ret)
+		assert.Equal(t, expErr.Error(), err.Error())
+	}
+	assert.Equal(t, 0, c.maps.Len())
+	assert.Nil(t, o.del(o.invalid))
+}
+
+func TestResourceMaps(t *testing.T) {
+	md := func(displayName string) *metav1.Metadata {
+		return &metav1.Metadata{Uid: "uid", Name: "name", DisplayName: displayName}
+	}
+	identity := func(val proto.Message) proto.Message {
+		return val
+	}
+	invalid := "invalid-\xff"
+
+	t.Run("User", func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		t.Cleanup(func() { c.Close() })
+		testResourceMap(t, c, &testResourceMapOpts[*corev1.User]{
+			original: &corev1.User{Metadata: md("original"), Spec: &corev1.User_Spec{Groups: []string{"group"}}},
+			updated:  &corev1.User{Metadata: md("updated"), Status: &corev1.User_Status{IsLocked: true}},
+			invalid:  &corev1.User{Metadata: md(invalid)},
+			set:      c.SetUser,
+			del:      c.DeleteUser,
+			getMap:   c.GetUserMap,
+			convert:  func(val *corev1.User) proto.Message { return identity(val) },
+			mutate:   func(val *corev1.User) { val.Metadata.DisplayName = "mutated" },
+		})
+	})
+
+	t.Run("Device", func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		t.Cleanup(func() { c.Close() })
+		testResourceMap(t, c, &testResourceMapOpts[*corev1.Device]{
+			original: &corev1.Device{Metadata: md("original"), Spec: &corev1.Device_Spec{State: corev1.Device_Spec_ACTIVE}},
+			updated:  &corev1.Device{Metadata: md("updated"), Status: &corev1.Device_Status{SerialNumber: "serial"}},
+			invalid:  &corev1.Device{Metadata: md("invalid"), Status: &corev1.Device_Status{SerialNumber: invalid}},
+			set:      c.SetDevice,
+			del:      c.DeleteDevice,
+			getMap:   c.GetDeviceMap,
+			convert:  func(val *corev1.Device) proto.Message { return identity(val) },
+			mutate:   func(val *corev1.Device) { val.Status.SerialNumber = "mutated" },
+		})
+	})
+
+	t.Run("Service", func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		t.Cleanup(func() { c.Close() })
+		testResourceMap(t, c, &testResourceMapOpts[*corev1.Service]{
+			original: &corev1.Service{Metadata: md("original"), Spec: &corev1.Service_Spec{Port: 8080}},
+			updated:  &corev1.Service{Metadata: md("updated"), Spec: &corev1.Service_Spec{IsPublic: true}},
+			invalid:  &corev1.Service{Metadata: md(invalid)},
+			set:      c.SetService,
+			del:      c.DeleteService,
+			getMap:   c.GetServiceMap,
+			convert:  func(val *corev1.Service) proto.Message { return identity(val) },
+			mutate:   func(val *corev1.Service) { val.Spec.IsAnonymous = true },
+		})
+	})
+
+	t.Run("Group", func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		t.Cleanup(func() { c.Close() })
+		testResourceMap(t, c, &testResourceMapOpts[*corev1.Group]{
+			original: &corev1.Group{Metadata: md("original"), Spec: &corev1.Group_Spec{}},
+			updated:  &corev1.Group{Metadata: md("updated"), Spec: &corev1.Group_Spec{Authorization: &corev1.Group_Spec_Authorization{Policies: []string{"policy"}}}},
+			invalid:  &corev1.Group{Metadata: md(invalid)},
+			set:      c.SetGroup,
+			del:      c.DeleteGroup,
+			getMap:   c.GetGroupMap,
+			convert:  func(val *corev1.Group) proto.Message { return identity(val) },
+			mutate: func(val *corev1.Group) {
+				val.Spec.Authorization.Policies = append(val.Spec.Authorization.Policies, "mutated")
+			},
+		})
+	})
+
+	t.Run("Namespace", func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		t.Cleanup(func() { c.Close() })
+		testResourceMap(t, c, &testResourceMapOpts[*corev1.Namespace]{
+			original: &corev1.Namespace{Metadata: md("original"), Spec: &corev1.Namespace_Spec{}},
+			updated:  &corev1.Namespace{Metadata: md("updated"), Status: &corev1.Namespace_Status{}},
+			invalid:  &corev1.Namespace{Metadata: md(invalid)},
+			set:      c.SetNamespace,
+			del:      c.DeleteNamespace,
+			getMap:   c.GetNamespaceMap,
+			convert:  func(val *corev1.Namespace) proto.Message { return identity(val) },
+			mutate:   func(val *corev1.Namespace) { val.Metadata.Description = "mutated" },
+		})
+	})
+
+	t.Run("Session", func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		t.Cleanup(func() { c.Close() })
+		testResourceMap(t, c, &testResourceMapOpts[*corev1.Session]{
+			original: &corev1.Session{Metadata: md("original"), Status: &corev1.Session_Status{
+				Connection: &corev1.Session_Status_Connection{
+					Addresses: []*metav1.DualStackNetwork{{V4: "100.64.0.2/32", V6: "fd00::2/128"}},
+				},
+			}},
+			updated: &corev1.Session{Metadata: md("updated"), Spec: &corev1.Session_Spec{State: corev1.Session_Spec_ACTIVE},
+				Status: &corev1.Session_Status{Type: corev1.Session_Status_CLIENTLESS}},
+			invalid: &corev1.Session{Metadata: md(invalid), Status: &corev1.Session_Status{}},
+			set:     c.SetSession,
+			del:     c.DeleteSession,
+			getMap:  c.GetSessionMap,
+			convert: func(val *corev1.Session) proto.Message { return identity(val) },
+			mutate:  func(val *corev1.Session) { val.Status.IsLocked = true },
+		})
+	})
+
+	t.Run("PolicyAttrs", func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		t.Cleanup(func() { c.Close() })
+		testResourceMap(t, c, &testResourceMapOpts[*corev1.Policy]{
+			original: &corev1.Policy{Metadata: md("original"), Spec: &corev1.Policy_Spec{}},
+			updated: &corev1.Policy{Metadata: md("updated"), Spec: &corev1.Policy_Spec{
+				Attrs: &structpb.Struct{Fields: map[string]*structpb.Value{
+					"key":  structpb.NewStringValue("value"),
+					"list": structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{structpb.NewNumberValue(1)}}),
+				}},
+			}},
+			invalid: &corev1.Policy{Metadata: md("invalid"), Spec: &corev1.Policy_Spec{
+				Attrs: &structpb.Struct{Fields: map[string]*structpb.Value{"key": structpb.NewStringValue(invalid)}},
+			}},
+			set:     c.SetPolicy,
+			del:     c.DeletePolicy,
+			getMap:  c.GetPolicyAttrsMap,
+			convert: func(val *corev1.Policy) proto.Message { return val.GetSpec().GetAttrs() },
+			mutate:  func(val *corev1.Policy) { val.Spec.Attrs.Fields["key"] = structpb.NewBoolValue(true) },
+		})
+	})
+}
+
+func TestResourceMapsCacheKeys(t *testing.T) {
+	c, err := NewCache()
+	assert.Nil(t, err)
+	t.Cleanup(func() { c.Close() })
+
+	grp := &corev1.Group{Metadata: &metav1.Metadata{Uid: "uid", Name: "name"}}
+	renamed := &corev1.Group{Metadata: &metav1.Metadata{Uid: "uid", Name: "renamed"}}
+	other := &corev1.Group{Metadata: &metav1.Metadata{Uid: "other", Name: "name"}}
+
+	assert.Nil(t, c.SetGroup(grp))
+	grpMap, err := c.GetGroupMap(grp)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, c.maps.Len())
+
+	assert.Nil(t, c.SetGroup(other))
+	assert.Equal(t, 0, c.maps.Len())
+	ret, err := c.GetGroupMap(grp)
+	assert.Nil(t, err)
+	assert.False(t, isSameMap(grpMap, ret))
+	assert.Equal(t, grpMap, ret)
+	assert.Equal(t, 1, c.maps.Len())
+
+	assert.Nil(t, c.SetGroup(renamed))
+	assert.Equal(t, 0, c.maps.Len())
+	ret, err = c.GetGroupMap(grp)
+	assert.Nil(t, err)
+	assert.Equal(t, grpMap, ret)
+	assert.Equal(t, 0, c.maps.Len())
+	renamedMap, err := c.GetGroupMap(renamed)
+	assert.Nil(t, err)
+	otherMap, err := c.GetGroupMap(other)
+	assert.Nil(t, err)
+	assert.Equal(t, 2, c.maps.Len())
+
+	assert.Nil(t, c.DeleteGroup(renamed))
+	assert.Equal(t, 1, c.maps.Len())
+	ret, err = c.GetGroupMap(other)
+	assert.Nil(t, err)
+	assert.True(t, isSameMap(otherMap, ret))
+	ret, err = c.GetGroupMap(renamed)
+	assert.Nil(t, err)
+	assert.False(t, isSameMap(renamedMap, ret))
+	assert.Equal(t, renamedMap, ret)
+
+	assert.Nil(t, c.DeleteGroup(other))
+	assert.Equal(t, 0, c.maps.Len())
+
+	sess := &corev1.Session{Metadata: &metav1.Metadata{Uid: "session-uid", Name: "session-name"}, Status: &corev1.Session_Status{}}
+	assert.Nil(t, c.SetSession(sess))
+	sessMap, err := c.GetSessionMap(sess)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, c.maps.Len())
+	ret, err = c.GetSessionMap(sess)
+	assert.Nil(t, err)
+	assert.True(t, isSameMap(sessMap, ret))
+
+	byName := &corev1.Session{Metadata: &metav1.Metadata{Uid: "", Name: "session-name"}, Status: &corev1.Session_Status{}}
+	ret, err = c.GetSessionMap(byName)
+	assert.Nil(t, err)
+	exp, err := pbutils.ConvertToMap(byName)
+	assert.Nil(t, err)
+	assert.Equal(t, exp, ret)
+	assert.Equal(t, 1, c.maps.Len())
+
+	assert.Nil(t, c.DeleteSession(proto.Clone(sess).(*corev1.Session)))
+	assert.Equal(t, 0, c.maps.Len())
+}
+
+func TestResourceMapsExpiration(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, err := NewCache()
+		assert.Nil(t, err)
+		defer c.Close()
+
+		usr := &corev1.User{Metadata: &metav1.Metadata{Uid: "uid", Name: "name"}}
+		assert.Nil(t, c.SetUser(usr))
+
+		first, err := c.GetUserMap(usr)
+		assert.Nil(t, err)
+
+		time.Sleep(mapTTL - time.Second)
+		ret, err := c.GetUserMap(usr)
+		assert.Nil(t, err)
+		assert.True(t, isSameMap(first, ret))
+
+		time.Sleep(2 * time.Second)
+		ret, err = c.GetUserMap(usr)
+		assert.Nil(t, err)
+		assert.False(t, isSameMap(first, ret))
+		assert.Equal(t, first, ret)
+
+		second, err := c.GetUserMap(usr)
+		assert.Nil(t, err)
+		assert.True(t, isSameMap(ret, second))
+		assert.Equal(t, 1, c.maps.Len())
+
+		time.Sleep(3 * mapTTL)
+		synctest.Wait()
+		assert.Equal(t, 0, c.maps.Len())
+	})
+}
+
+func TestResourceMapsConcurrent(t *testing.T) {
+	c, err := NewCache()
+	assert.Nil(t, err)
+	t.Cleanup(func() { c.Close() })
+
+	requireMap := func(val proto.Message, ret map[string]any, err error) {
+		exp, expErr := pbutils.ConvertToMap(val)
+		assert.Nil(t, expErr)
+		assert.Nil(t, err)
+		assert.Equal(t, exp, ret)
+	}
+
+	var wg sync.WaitGroup
+	for idx := range 16 {
+		wg.Go(func() {
+			for itr := range 64 {
+				md := &metav1.Metadata{
+					Uid:         fmt.Sprintf("uid-%d", idx%4),
+					Name:        fmt.Sprintf("name-%d", idx%4),
+					DisplayName: fmt.Sprintf("writer-%d-%d", idx, itr),
+				}
+				usr := &corev1.User{Metadata: md}
+				grp := &corev1.Group{Metadata: md}
+				sess := &corev1.Session{Metadata: md, Status: &corev1.Session_Status{}}
+				policy := &corev1.Policy{Metadata: md, Spec: &corev1.Policy_Spec{
+					Attrs: &structpb.Struct{Fields: map[string]*structpb.Value{"writer": structpb.NewStringValue(md.DisplayName)}},
+				}}
+
+				assert.Nil(t, c.SetUser(usr))
+				assert.Nil(t, c.SetGroup(grp))
+				assert.Nil(t, c.SetSession(sess))
+				assert.Nil(t, c.SetPolicy(policy))
+
+				for range 4 {
+					ret, err := c.GetUserMap(usr)
+					requireMap(usr, ret, err)
+					ret, err = c.GetGroupMap(grp)
+					requireMap(grp, ret, err)
+					ret, err = c.GetSessionMap(sess)
+					requireMap(sess, ret, err)
+					ret, err = c.GetPolicyAttrsMap(policy)
+					requireMap(policy.Spec.Attrs, ret, err)
+				}
+
+				if itr%2 == 0 {
+					assert.Nil(t, c.DeleteUser(usr))
+					assert.Nil(t, c.DeleteGroup(grp))
+					assert.Nil(t, c.DeleteSession(sess))
+					assert.Nil(t, c.DeletePolicy(policy))
+				}
+			}
+		})
+	}
+	wg.Wait()
 }

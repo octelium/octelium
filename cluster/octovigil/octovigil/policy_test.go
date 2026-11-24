@@ -20,6 +20,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"math/rand/v2"
+	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -31,13 +35,17 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestGetDecision(t *testing.T) {
@@ -3227,4 +3235,553 @@ func TestMissingPolicyLookupCompatibility(t *testing.T) {
 			})
 		}
 	}
+}
+
+func isSameMap(a, b any) bool {
+	return reflect.ValueOf(a).UnsafePointer() == reflect.ValueOf(b).UnsafePointer()
+}
+
+func requireSameReqCtxMap(t testing.TB, srv *Server, i *corev1.RequestContext) (map[string]any, error) {
+	t.Helper()
+	exp, expErr := pbutils.ConvertToMap(i)
+	ret, err := srv.getReqCtxMap(i)
+	if expErr != nil {
+		assert.Nil(t, ret)
+		if assert.NotNil(t, err) {
+			assert.Equal(t, expErr.Error(), err.Error())
+		}
+		return nil, err
+	}
+	assert.Nil(t, err)
+	assert.Equal(t, exp, ret)
+	return ret, err
+}
+
+type reqCtxRandom struct {
+	*rand.Rand
+	invalid bool
+}
+
+func (r *reqCtxRandom) string() string {
+	if r.invalid && r.IntN(48) == 0 {
+		return "invalid-\xff"
+	}
+	runes := []rune("aZ09-_./: \u00e9\u754c\U0001f600")
+	ret := make([]rune, r.IntN(6))
+	for i := range ret {
+		ret[i] = runes[r.IntN(len(runes))]
+	}
+	return string(ret)
+}
+
+func (r *reqCtxRandom) value(fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) protoreflect.Value {
+	switch fd.Kind() {
+	case protoreflect.BoolKind:
+		return protoreflect.ValueOfBool(r.IntN(2) == 0)
+	case protoreflect.EnumKind:
+		values := fd.Enum().Values()
+		if r.IntN(8) == 0 {
+			return protoreflect.ValueOfEnum(protoreflect.EnumNumber(r.Int32N(2000) - 1000))
+		}
+		return protoreflect.ValueOfEnum(values.Get(r.IntN(values.Len())).Number())
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		return protoreflect.ValueOfInt32(int32(r.Uint32()))
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		return protoreflect.ValueOfInt64(int64(r.Uint64()))
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		return protoreflect.ValueOfUint32(r.Uint32())
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		return protoreflect.ValueOfUint64(r.Uint64())
+	case protoreflect.FloatKind:
+		return protoreflect.ValueOfFloat32(float32(r.NormFloat64() * 1000))
+	case protoreflect.DoubleKind:
+		return protoreflect.ValueOfFloat64(r.NormFloat64() * 1e9)
+	case protoreflect.StringKind:
+		return protoreflect.ValueOfString(r.string())
+	case protoreflect.BytesKind:
+		return protoreflect.ValueOfBytes([]byte(r.string()))
+	default:
+		r.populate(v.Message(), depth-1)
+		return v
+	}
+}
+
+func (r *reqCtxRandom) populate(m protoreflect.Message, depth int) {
+	md := m.Descriptor()
+	fds := md.Fields()
+
+	switch md.FullName() {
+	case "google.protobuf.Timestamp":
+		secs := r.Int64N(253402300799)
+		if r.invalid && r.IntN(16) == 0 {
+			secs = 253402300800
+		}
+		m.Set(fds.ByNumber(1), protoreflect.ValueOfInt64(secs))
+		m.Set(fds.ByNumber(2), protoreflect.ValueOfInt32(r.Int32N(1000000000)))
+		return
+	case "google.protobuf.Duration":
+		secs, nanos := r.Int64N(315576000000), r.Int32N(1000000000)
+		if r.IntN(2) == 0 {
+			secs, nanos = -secs, -nanos
+		}
+		m.Set(fds.ByNumber(1), protoreflect.ValueOfInt64(secs))
+		m.Set(fds.ByNumber(2), protoreflect.ValueOfInt32(nanos))
+		return
+	case "google.protobuf.Value":
+		kinds := md.Oneofs().ByName("kind").Fields()
+		fd := kinds.Get(r.IntN(kinds.Len()))
+		switch {
+		case fd.Kind() == protoreflect.MessageKind && depth <= 0:
+			m.Set(kinds.ByName("string_value"), protoreflect.ValueOfString(r.string()))
+		case fd.Kind() == protoreflect.DoubleKind && r.invalid && r.IntN(16) == 0:
+			m.Set(fd, protoreflect.ValueOfFloat64(math.NaN()))
+		default:
+			m.Set(fd, r.value(fd, m.NewField(fd), depth))
+		}
+		return
+	}
+
+	for i := range fds.Len() {
+		fd := fds.Get(i)
+		if r.IntN(3) == 0 || (fd.Message() != nil && depth <= 0) {
+			continue
+		}
+		if od := fd.ContainingOneof(); od != nil && m.WhichOneof(od) != nil {
+			continue
+		}
+
+		switch {
+		case fd.IsList():
+			lst := m.Mutable(fd).List()
+			for range r.IntN(3) + 1 {
+				lst.Append(r.value(fd, lst.NewElement(), depth))
+			}
+		case fd.IsMap():
+			mp := m.Mutable(fd).Map()
+			for range r.IntN(3) + 1 {
+				mp.Set(r.value(fd.MapKey(), protoreflect.Value{}, depth).MapKey(),
+					r.value(fd.MapValue(), mp.NewValue(), depth))
+			}
+		default:
+			m.Set(fd, r.value(fd, m.NewField(fd), depth))
+		}
+	}
+}
+
+func (r *reqCtxRandom) newReqCtx(depth int) *corev1.RequestContext {
+	ret := &corev1.RequestContext{}
+	r.populate(ret.ProtoReflect(), depth)
+	if ret.Session.GetStatus() != nil {
+		ret.Session.Status.Connection = nil
+	}
+	return ret
+}
+
+func (r *reqCtxRandom) setCache(t testing.TB, c *acache.Cache, i *corev1.RequestContext) {
+	if i.Session.GetMetadata() != nil && i.Session.Status != nil && r.IntN(4) != 0 {
+		assert.Nil(t, c.SetSession(i.Session))
+	}
+	if i.User.GetMetadata() != nil && r.IntN(4) != 0 {
+		assert.Nil(t, c.SetUser(i.User))
+	}
+	for _, grp := range i.Groups {
+		if grp.GetMetadata() != nil && r.IntN(4) != 0 {
+			assert.Nil(t, c.SetGroup(grp))
+		}
+	}
+	if i.Device.GetMetadata() != nil && r.IntN(4) != 0 {
+		assert.Nil(t, c.SetDevice(i.Device))
+	}
+	if i.Service.GetMetadata() != nil && r.IntN(4) != 0 {
+		assert.Nil(t, c.SetService(i.Service))
+	}
+	if i.Namespace.GetMetadata() != nil && r.IntN(4) != 0 {
+		assert.Nil(t, c.SetNamespace(i.Namespace))
+	}
+}
+
+func (r *reqCtxRandom) mutateCache(t testing.TB, c *acache.Cache, i *corev1.RequestContext) {
+	if i.Session.GetMetadata() != nil && i.Session.Status != nil {
+		i.Session.Metadata.DisplayName = r.string()
+		assert.Nil(t, c.SetSession(i.Session))
+	}
+	if i.User.GetMetadata() != nil {
+		i.User.Metadata.DisplayName = r.string()
+		assert.Nil(t, c.SetUser(i.User))
+	}
+	for _, grp := range i.Groups {
+		if grp.GetMetadata() != nil {
+			grp.Metadata.DisplayName = r.string()
+			assert.Nil(t, c.SetGroup(grp))
+		}
+	}
+	if i.Device.GetMetadata() != nil {
+		i.Device.Metadata.DisplayName = r.string()
+		assert.Nil(t, c.SetDevice(i.Device))
+	}
+	if i.Service.GetMetadata() != nil {
+		i.Service.Metadata.DisplayName = r.string()
+		assert.Nil(t, c.SetService(i.Service))
+	}
+	if i.Namespace.GetMetadata() != nil {
+		i.Namespace.Metadata.DisplayName = r.string()
+		assert.Nil(t, c.SetNamespace(i.Namespace))
+	}
+}
+
+func TestGetReqCtxMapFields(t *testing.T) {
+	fds := (&corev1.RequestContext{}).ProtoReflect().Descriptor().Fields()
+	var names []string
+	for i := range fds.Len() {
+		names = append(names, fds.Get(i).JSONName())
+	}
+	assert.Equal(t, []string{"request", "session", "user", "groups", "device", "service", "namespace"}, names)
+}
+
+func TestGetReqCtxMap(t *testing.T) {
+	srv, coreC := newAuthorizationService(t)
+	downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+	downstream.user.Spec.Attrs = &structpb.Struct{Fields: map[string]*structpb.Value{
+		"number": structpb.NewNumberValue(-0.5),
+		"list":   structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{structpb.NewNullValue()}}),
+	}}
+	downstream.session.Metadata.CreatedAt = timestamppb.New(timestamppb.Now().AsTime().Truncate(1000))
+	assert.Nil(t, srv.s.cache.SetUser(downstream.user))
+	assert.Nil(t, srv.s.cache.SetSession(downstream.session))
+
+	di, err := srv.s.GetDownstreamInfo(t.Context(), "100.64.0.2")
+	assert.Nil(t, err)
+	request := &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+		Http: &corev1.RequestContext_Request_HTTP{
+			Path: "/path", Method: "POST",
+			Headers: map[string]string{"x-custom": "value"},
+			Body:    []byte(`{"key":"value"}`),
+			BodyMap: &structpb.Struct{Fields: map[string]*structpb.Value{"key": structpb.NewStringValue("value")}},
+		},
+	}}
+	full := srv.s.getReqCtx(di, request, coreC.service)
+	assert.NotNil(t, full.Namespace)
+	assert.NotSame(t, downstream.device, full.Device)
+
+	cachedDevice := proto.Clone(downstream.device).(*corev1.Device)
+	cachedDevice.Status.ProbeAttempt = nil
+	cachedDevice.Status.Posture = nil
+	assert.Nil(t, srv.s.cache.SetDevice(cachedDevice))
+	withCachedDevice := proto.Clone(full).(*corev1.RequestContext)
+	withCachedDevice.Session, withCachedDevice.User, withCachedDevice.Groups = full.Session, full.User, full.Groups
+	withCachedDevice.Service, withCachedDevice.Namespace = full.Service, full.Namespace
+	withCachedDevice.Device = getEffectiveDevice(cachedDevice, full.Session, timestamppb.Now().AsTime())
+	assert.Same(t, cachedDevice, withCachedDevice.Device)
+
+	for _, tc := range []struct {
+		name   string
+		reqCtx *corev1.RequestContext
+	}{
+		{"Nil", nil},
+		{"Empty", &corev1.RequestContext{}},
+		{"Request", &corev1.RequestContext{Request: full.Request}},
+		{"EmptyRequest", &corev1.RequestContext{Request: &corev1.RequestContext_Request{}}},
+		{"Session", &corev1.RequestContext{Session: full.Session}},
+		{"User", &corev1.RequestContext{User: full.User}},
+		{"Groups", &corev1.RequestContext{Groups: full.Groups}},
+		{"EmptyGroups", &corev1.RequestContext{Groups: []*corev1.Group{}}},
+		{"NilGroup", &corev1.RequestContext{Groups: []*corev1.Group{nil, full.Groups[0], nil}}},
+		{"Device", &corev1.RequestContext{Device: full.Device}},
+		{"Service", &corev1.RequestContext{Service: full.Service}},
+		{"Namespace", &corev1.RequestContext{Namespace: full.Namespace}},
+		{"EmptyResources", &corev1.RequestContext{
+			Session: &corev1.Session{}, User: &corev1.User{}, Groups: []*corev1.Group{{}},
+			Device: &corev1.Device{}, Service: &corev1.Service{}, Namespace: &corev1.Namespace{},
+		}},
+		{"Anonymous", &corev1.RequestContext{Service: full.Service, Request: full.Request, Namespace: full.Namespace}},
+		{"Full", full},
+		{"CachedDevice", withCachedDevice},
+		{"Uncached", proto.Clone(full).(*corev1.RequestContext)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 3 {
+				requireSameReqCtxMap(t, srv.s, tc.reqCtx)
+			}
+		})
+	}
+
+	first, err := srv.s.getReqCtxMap(full)
+	assert.Nil(t, err)
+	second, err := srv.s.getReqCtxMap(full)
+	assert.Nil(t, err)
+	for _, key := range []string{"session", "user", "service", "namespace"} {
+		assert.True(t, isSameMap(first[key], second[key]), key)
+	}
+	for idx := range full.Groups {
+		assert.True(t, isSameMap(first["groups"].([]any)[idx], second["groups"].([]any)[idx]))
+	}
+	assert.False(t, isSameMap(first, second))
+	assert.False(t, isSameMap(first["groups"], second["groups"]))
+	assert.False(t, isSameMap(first["request"], second["request"]))
+	assert.False(t, isSameMap(first["device"], second["device"]))
+
+	first, err = srv.s.getReqCtxMap(withCachedDevice)
+	assert.Nil(t, err)
+	second, err = srv.s.getReqCtxMap(withCachedDevice)
+	assert.Nil(t, err)
+	assert.True(t, isSameMap(first["device"], second["device"]))
+
+	uncached := proto.Clone(full).(*corev1.RequestContext)
+	first, err = srv.s.getReqCtxMap(uncached)
+	assert.Nil(t, err)
+	second, err = srv.s.getReqCtxMap(uncached)
+	assert.Nil(t, err)
+	for _, key := range []string{"session", "user", "device", "service", "namespace"} {
+		assert.False(t, isSameMap(first[key], second[key]), key)
+	}
+}
+
+func TestGetReqCtxMapErrors(t *testing.T) {
+	invalid := "invalid-\xff"
+	invalidTimestamp := &timestamppb.Timestamp{Seconds: -62135596801}
+
+	for _, cached := range []bool{false, true} {
+		for _, tc := range []struct {
+			name   string
+			mutate func(i *corev1.RequestContext)
+		}{
+			{"Request", func(i *corev1.RequestContext) {
+				i.Request.GetHttp().Headers = map[string]string{"x-invalid": invalid}
+			}},
+			{"Session", func(i *corev1.RequestContext) {
+				i.Session.Metadata.DisplayName = invalid
+			}},
+			{"SessionTimestamp", func(i *corev1.RequestContext) {
+				i.Session.Metadata.CreatedAt = invalidTimestamp
+			}},
+			{"User", func(i *corev1.RequestContext) {
+				i.User.Spec.Attrs = &structpb.Struct{Fields: map[string]*structpb.Value{"nan": structpb.NewNumberValue(math.NaN())}}
+			}},
+			{"UserValue", func(i *corev1.RequestContext) {
+				i.User.Spec.Attrs = &structpb.Struct{Fields: map[string]*structpb.Value{"empty": {}}}
+			}},
+			{"Group", func(i *corev1.RequestContext) {
+				i.Groups[1].Metadata.DisplayName = invalid
+			}},
+			{"Device", func(i *corev1.RequestContext) {
+				i.Device.Metadata.DisplayName = invalid
+			}},
+			{"Service", func(i *corev1.RequestContext) {
+				i.Service.Metadata.CreatedAt = invalidTimestamp
+			}},
+			{"Namespace", func(i *corev1.RequestContext) {
+				i.Namespace.Metadata.DisplayName = invalid
+			}},
+			{"RequestAndNamespace", func(i *corev1.RequestContext) {
+				i.Request.GetHttp().Headers = map[string]string{"x-invalid": invalid}
+				i.Namespace.Metadata.DisplayName = invalid
+			}},
+			{"SessionAndUser", func(i *corev1.RequestContext) {
+				i.Session.Metadata.CreatedAt = invalidTimestamp
+				i.User.Metadata.DisplayName = invalid
+			}},
+			{"GroupsAndDevice", func(i *corev1.RequestContext) {
+				i.Groups[0].Metadata.CreatedAt = invalidTimestamp
+				i.Groups[1].Metadata.DisplayName = invalid
+				i.Device.Metadata.DisplayName = invalid
+			}},
+			{"ServiceAndNamespace", func(i *corev1.RequestContext) {
+				i.Service.Metadata.DisplayName = invalid
+				i.Namespace.Metadata.CreatedAt = invalidTimestamp
+			}},
+		} {
+			t.Run(fmt.Sprintf("%s/Cached%t", tc.name, cached), func(t *testing.T) {
+				srv, coreC := newAuthorizationService(t)
+				downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+				downstream.device.Status.ProbeAttempt = nil
+				downstream.device.Status.Posture = nil
+				di, err := srv.s.GetDownstreamInfo(t.Context(), "100.64.0.2")
+				assert.Nil(t, err)
+				i := proto.Clone(srv.s.getReqCtx(di, &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+					Http: &corev1.RequestContext_Request_HTTP{Path: "/", Headers: map[string]string{"x-custom": "value"}},
+				}}, coreC.service)).(*corev1.RequestContext)
+
+				if cached {
+					assert.Nil(t, srv.s.cache.SetSession(i.Session))
+					assert.Nil(t, srv.s.cache.SetUser(i.User))
+					assert.Nil(t, srv.s.cache.SetGroup(i.Groups[0]))
+					assert.Nil(t, srv.s.cache.SetGroup(i.Groups[1]))
+					assert.Nil(t, srv.s.cache.SetDevice(i.Device))
+					assert.Nil(t, srv.s.cache.SetService(i.Service))
+					assert.Nil(t, srv.s.cache.SetNamespace(i.Namespace))
+					_, err := requireSameReqCtxMap(t, srv.s, i)
+					assert.Nil(t, err)
+				}
+
+				tc.mutate(i)
+				if cached {
+					assert.Nil(t, srv.s.cache.SetSession(i.Session))
+					assert.Nil(t, srv.s.cache.SetUser(i.User))
+					assert.Nil(t, srv.s.cache.SetGroup(i.Groups[0]))
+					assert.Nil(t, srv.s.cache.SetGroup(i.Groups[1]))
+					assert.Nil(t, srv.s.cache.SetDevice(i.Device))
+					assert.Nil(t, srv.s.cache.SetService(i.Service))
+					assert.Nil(t, srv.s.cache.SetNamespace(i.Namespace))
+				}
+
+				for range 2 {
+					_, err := requireSameReqCtxMap(t, srv.s, i)
+					assert.NotNil(t, err)
+				}
+			})
+		}
+	}
+}
+
+func TestGetReqCtxMapRandom(t *testing.T) {
+	c, err := acache.NewCache()
+	assert.Nil(t, err)
+	t.Cleanup(func() { c.Close() })
+	srv := &Server{cache: c}
+	r := &reqCtxRandom{Rand: rand.New(rand.NewPCG(20261124, 2))}
+
+	var nOK, nErr int
+	check := func(i *corev1.RequestContext) {
+		t.Helper()
+		if _, err := requireSameReqCtxMap(t, srv, i); err != nil {
+			nErr++
+		} else {
+			nOK++
+		}
+	}
+
+	for itr := range 400 {
+		r.invalid = itr%4 == 3
+		i := r.newReqCtx(4)
+		check(i)
+		r.setCache(t, c, i)
+		check(i)
+		check(i)
+
+		next := proto.Clone(i).(*corev1.RequestContext)
+		check(next)
+		r.setCache(t, c, next)
+		check(next)
+		check(i)
+
+		r.mutateCache(t, c, next)
+		check(next)
+		check(next)
+	}
+
+	assert.Greater(t, nOK, 2*nErr)
+	assert.Greater(t, nErr, 0)
+}
+
+func TestGetReqCtxMapConcurrent(t *testing.T) {
+	srv, coreC := newAuthorizationService(t)
+	downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+	downstream.device.Status.ProbeAttempt = nil
+	downstream.device.Status.Posture = nil
+	c := srv.s.cache
+	request := &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+		Http: &corev1.RequestContext_Request_HTTP{Path: "/"},
+	}}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	var writer sync.WaitGroup
+	writer.Go(func() {
+		for itr := 0; ctx.Err() == nil; itr++ {
+			displayName := fmt.Sprintf("writer-%d", itr)
+			sess, _ := c.GetSession(downstream.session.Metadata.Uid)
+			sess = proto.Clone(sess).(*corev1.Session)
+			sess.Metadata.DisplayName = displayName
+			assert.Nil(t, c.SetSession(sess))
+			usr, _ := c.GetUser("user")
+			usr = proto.Clone(usr).(*corev1.User)
+			usr.Metadata.DisplayName = displayName
+			assert.Nil(t, c.SetUser(usr))
+			grp, _ := c.GetGroup("group2")
+			grp = proto.Clone(grp).(*corev1.Group)
+			grp.Metadata.DisplayName = displayName
+			assert.Nil(t, c.SetGroup(grp))
+			device, _ := c.GetDevice("device")
+			device = proto.Clone(device).(*corev1.Device)
+			device.Metadata.DisplayName = displayName
+			assert.Nil(t, c.SetDevice(device))
+			svc, _ := c.GetService("service")
+			svc = proto.Clone(svc).(*corev1.Service)
+			svc.Metadata.DisplayName = displayName
+			assert.Nil(t, c.SetService(svc))
+			ns, _ := c.GetNamespace("namespace")
+			ns = proto.Clone(ns).(*corev1.Namespace)
+			ns.Metadata.DisplayName = displayName
+			assert.Nil(t, c.SetNamespace(ns))
+		}
+	})
+
+	var readers sync.WaitGroup
+	for range 8 {
+		readers.Go(func() {
+			for range 200 {
+				di, err := c.GetDownstreamInfoBySessionIdentifier("100.64.0.2")
+				if !assert.Nil(t, err) {
+					return
+				}
+				svc, err := c.GetService("service")
+				if !assert.Nil(t, err) {
+					return
+				}
+				i := srv.s.getReqCtx(di, request, svc)
+				for range 2 {
+					requireSameReqCtxMap(t, srv.s, i)
+				}
+			}
+		})
+	}
+	readers.Wait()
+	cancel()
+	writer.Wait()
+}
+
+func BenchmarkGetReqCtxMap(b *testing.B) {
+	c, err := acache.NewCache()
+	assert.Nil(b, err)
+	b.Cleanup(func() { c.Close() })
+	srv := &Server{cache: c}
+	r := &reqCtxRandom{Rand: rand.New(rand.NewPCG(20261124, 3))}
+
+	var i *corev1.RequestContext
+	for {
+		i = r.newReqCtx(4)
+		if i.Request != nil && i.Session.GetMetadata() != nil && i.Session.GetStatus() != nil && i.User.GetMetadata() != nil &&
+			len(i.Groups) > 0 && i.Service.GetMetadata() != nil {
+			break
+		}
+	}
+	assert.Nil(b, c.SetSession(i.Session))
+	assert.Nil(b, c.SetUser(i.User))
+	for _, grp := range i.Groups {
+		if grp.GetMetadata() != nil {
+			assert.Nil(b, c.SetGroup(grp))
+		}
+	}
+	assert.Nil(b, c.SetService(i.Service))
+	if i.Namespace.GetMetadata() != nil {
+		assert.Nil(b, c.SetNamespace(i.Namespace))
+	}
+	requireSameReqCtxMap(b, srv, i)
+
+	b.Run("ConvertToMap", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := pbutils.ConvertToMap(i); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("getReqCtxMap", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := srv.getReqCtxMap(i); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

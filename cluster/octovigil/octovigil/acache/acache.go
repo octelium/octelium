@@ -18,14 +18,20 @@ package acache
 
 import (
 	"sync"
+	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/cache"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
 )
 
 var ErrNotFound = errors.New("Resource not found")
 var SessionNotFound = errors.New("Session not found")
+
+const mapTTL = 1 * time.Minute
 
 type Cache struct {
 	users      keyedStore[*corev1.User]
@@ -35,6 +41,7 @@ type Cache struct {
 	policies   keyedStore[*corev1.Policy]
 	namespaces keyedStore[*corev1.Namespace]
 	sessions   sessionStore
+	maps       *cache.Cache[proto.Message, map[string]any]
 }
 
 type keyedStore[T any] struct {
@@ -53,20 +60,30 @@ func (s *keyedStore[T]) get(key string) (T, bool) {
 	return v, ok
 }
 
-func (s *keyedStore[T]) set(keys []string, val T) {
+func (s *keyedStore[T]) set(keys []string, val T) []T {
+	ret := []T{val}
 	s.Lock()
 	for _, k := range keys {
+		if old, ok := s.m[k]; ok {
+			ret = append(ret, old)
+		}
 		s.m[k] = val
 	}
 	s.Unlock()
+	return ret
 }
 
-func (s *keyedStore[T]) del(keys []string) {
+func (s *keyedStore[T]) del(keys []string, val T) []T {
+	ret := []T{val}
 	s.Lock()
 	for _, k := range keys {
+		if old, ok := s.m[k]; ok {
+			ret = append(ret, old)
+		}
 		delete(s.m, k)
 	}
 	s.Unlock()
+	return ret
 }
 
 type sessionStore struct {
@@ -87,6 +104,9 @@ func NewCache() (*Cache, error) {
 			m:      make(map[string]*corev1.Session),
 			ipKeys: make(map[string][]string),
 		},
+		maps: cache.New(&cache.Opts[proto.Message, map[string]any]{
+			DefaultTTL: mapTTL,
+		}),
 	}, nil
 }
 
@@ -95,11 +115,12 @@ func (c *Cache) IsErrNotFound(err error) bool {
 }
 
 func (c *Cache) Close() error {
+	c.maps.Close()
 	return nil
 }
 
 func (c *Cache) SetUser(usr *corev1.User) error {
-	c.users.set([]string{usr.Metadata.Uid}, usr)
+	deleteMaps(c, c.users.set([]string{usr.Metadata.Uid}, usr))
 	return nil
 }
 
@@ -112,12 +133,12 @@ func (c *Cache) GetUser(uid string) (*corev1.User, error) {
 }
 
 func (c *Cache) DeleteUser(usr *corev1.User) error {
-	c.users.del([]string{usr.Metadata.Uid})
+	deleteMaps(c, c.users.del([]string{usr.Metadata.Uid}, usr))
 	return nil
 }
 
 func (c *Cache) SetDevice(device *corev1.Device) error {
-	c.devices.set([]string{device.Metadata.Uid}, device)
+	deleteMaps(c, c.devices.set([]string{device.Metadata.Uid}, device))
 	return nil
 }
 
@@ -130,12 +151,12 @@ func (c *Cache) GetDevice(uid string) (*corev1.Device, error) {
 }
 
 func (c *Cache) DeleteDevice(device *corev1.Device) error {
-	c.devices.del([]string{device.Metadata.Uid})
+	deleteMaps(c, c.devices.del([]string{device.Metadata.Uid}, device))
 	return nil
 }
 
 func (c *Cache) SetService(svc *corev1.Service) error {
-	c.services.set([]string{svc.Metadata.Uid}, svc)
+	deleteMaps(c, c.services.set([]string{svc.Metadata.Uid}, svc))
 	return nil
 }
 
@@ -148,12 +169,12 @@ func (c *Cache) GetService(identifier string) (*corev1.Service, error) {
 }
 
 func (c *Cache) DeleteService(svc *corev1.Service) error {
-	c.services.del([]string{svc.Metadata.Uid})
+	deleteMaps(c, c.services.del([]string{svc.Metadata.Uid}, svc))
 	return nil
 }
 
 func (c *Cache) SetGroup(group *corev1.Group) error {
-	c.groups.set([]string{group.Metadata.Uid, group.Metadata.Name}, group)
+	deleteMaps(c, c.groups.set([]string{group.Metadata.Uid, group.Metadata.Name}, group))
 	return nil
 }
 
@@ -166,12 +187,12 @@ func (c *Cache) GetGroup(key string) (*corev1.Group, error) {
 }
 
 func (c *Cache) DeleteGroup(group *corev1.Group) error {
-	c.groups.del([]string{group.Metadata.Uid, group.Metadata.Name})
+	deleteMaps(c, c.groups.del([]string{group.Metadata.Uid, group.Metadata.Name}, group))
 	return nil
 }
 
 func (c *Cache) SetPolicy(p *corev1.Policy) error {
-	c.policies.set([]string{p.Metadata.Uid, p.Metadata.Name}, p)
+	deleteMaps(c, c.policies.set([]string{p.Metadata.Uid, p.Metadata.Name}, p))
 	return nil
 }
 
@@ -184,12 +205,12 @@ func (c *Cache) GetPolicy(key string) (*corev1.Policy, error) {
 }
 
 func (c *Cache) DeletePolicy(p *corev1.Policy) error {
-	c.policies.del([]string{p.Metadata.Uid, p.Metadata.Name})
+	deleteMaps(c, c.policies.del([]string{p.Metadata.Uid, p.Metadata.Name}, p))
 	return nil
 }
 
 func (c *Cache) SetNamespace(ns *corev1.Namespace) error {
-	c.namespaces.set([]string{ns.Metadata.Uid, ns.Metadata.Name}, ns)
+	deleteMaps(c, c.namespaces.set([]string{ns.Metadata.Uid, ns.Metadata.Name}, ns))
 	return nil
 }
 
@@ -202,7 +223,7 @@ func (c *Cache) GetNamespace(key string) (*corev1.Namespace, error) {
 }
 
 func (c *Cache) DeleteNamespace(ns *corev1.Namespace) error {
-	c.namespaces.del([]string{ns.Metadata.Uid, ns.Metadata.Name})
+	deleteMaps(c, c.namespaces.del([]string{ns.Metadata.Uid, ns.Metadata.Name}, ns))
 	return nil
 }
 
@@ -211,6 +232,8 @@ func (c *Cache) SetSession(sess *corev1.Session) error {
 	defer c.sessions.Unlock()
 
 	uid := sess.Metadata.Uid
+
+	deleteMaps(c, []*corev1.Session{sess, c.sessions.m[uid]})
 
 	if oldIPKeys, ok := c.sessions.ipKeys[uid]; ok {
 		for _, key := range oldIPKeys {
@@ -265,6 +288,8 @@ func (c *Cache) DeleteSession(sess *corev1.Session) error {
 
 	uid := sess.Metadata.Uid
 
+	deleteMaps(c, []*corev1.Session{sess, c.sessions.m[uid]})
+
 	if oldIPKeys, ok := c.sessions.ipKeys[uid]; ok {
 		for _, key := range oldIPKeys {
 			delete(c.sessions.m, key)
@@ -287,6 +312,66 @@ func (c *Cache) DeleteSession(sess *corev1.Session) error {
 	delete(c.sessions.m, sess.Metadata.Name)
 
 	return nil
+}
+
+func (c *Cache) GetUserMap(usr *corev1.User) (map[string]any, error) {
+	cur, _ := c.users.get(usr.GetMetadata().GetUid())
+	return c.getMap(usr, usr, usr != nil && cur == usr)
+}
+
+func (c *Cache) GetDeviceMap(device *corev1.Device) (map[string]any, error) {
+	cur, _ := c.devices.get(device.GetMetadata().GetUid())
+	return c.getMap(device, device, device != nil && cur == device)
+}
+
+func (c *Cache) GetServiceMap(svc *corev1.Service) (map[string]any, error) {
+	cur, _ := c.services.get(svc.GetMetadata().GetUid())
+	return c.getMap(svc, svc, svc != nil && cur == svc)
+}
+
+func (c *Cache) GetGroupMap(group *corev1.Group) (map[string]any, error) {
+	cur, _ := c.groups.get(group.GetMetadata().GetUid())
+	return c.getMap(group, group, group != nil && cur == group)
+}
+
+func (c *Cache) GetNamespaceMap(ns *corev1.Namespace) (map[string]any, error) {
+	cur, _ := c.namespaces.get(ns.GetMetadata().GetUid())
+	return c.getMap(ns, ns, ns != nil && cur == ns)
+}
+
+func (c *Cache) GetSessionMap(sess *corev1.Session) (map[string]any, error) {
+	cur, _ := c.GetSession(sess.GetMetadata().GetUid())
+	return c.getMap(sess, sess, sess != nil && cur == sess)
+}
+
+func (c *Cache) GetPolicyAttrsMap(p *corev1.Policy) (map[string]any, error) {
+	cur, _ := c.policies.get(p.GetMetadata().GetUid())
+	return c.getMap(p, p.GetSpec().GetAttrs(), p != nil && cur == p)
+}
+
+func (c *Cache) getMap(key proto.Message, val proto.Message, isCached bool) (map[string]any, error) {
+	if !isCached {
+		return pbutils.ConvertToMap(val)
+	}
+
+	if ret, ok := c.maps.Get(key); ok {
+		return ret, nil
+	}
+
+	ret, err := pbutils.ConvertToMap(val)
+	if err != nil {
+		return nil, err
+	}
+
+	c.maps.Set(key, ret)
+
+	return ret, nil
+}
+
+func deleteMaps[T proto.Message](c *Cache, vals []T) {
+	for _, val := range vals {
+		c.maps.Delete(val)
+	}
 }
 
 type DownstreamInfo struct {

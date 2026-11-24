@@ -46,6 +46,7 @@ import (
 	sesscontroller "github.com/octelium/octelium/cluster/octovigil/octovigil/controllers/sessions"
 	usercontroller "github.com/octelium/octelium/cluster/octovigil/octovigil/controllers/users"
 	"github.com/octelium/octelium/pkg/apiutils/umetav1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -2663,6 +2664,255 @@ func TestAuthorizationControllers(t *testing.T) {
 	})
 	assert.Nil(t, srv.s.Close())
 	assert.Nil(t, srv.s.Close())
+}
+
+func updateCachedResource[T proto.Message](t *testing.T, controller authorizationController[T],
+	get func(string) (T, error), key string, inPlace bool, mutate func(T)) {
+	t.Helper()
+	cur, err := get(key)
+	if !assert.Nil(t, err) {
+		return
+	}
+	next := cur
+	if !inPlace {
+		next = proto.Clone(cur).(T)
+	}
+	mutate(next)
+	assert.Nil(t, controller.OnUpdate(t.Context(), next, cur))
+}
+
+func TestAuthorizationCacheUpdates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		match  string
+		update func(t *testing.T, c *acache.Cache, val string, inPlace bool)
+	}{
+		{"Session", `ctx.session.metadata.displayName == "allowed"`,
+			func(t *testing.T, c *acache.Cache, val string, inPlace bool) {
+				updateCachedResource(t, sesscontroller.NewController(c), c.GetSession, "100.64.0.2", inPlace,
+					func(sess *corev1.Session) { sess.Metadata.DisplayName = val })
+			}},
+		{"User", `ctx.user.metadata.displayName == "allowed"`,
+			func(t *testing.T, c *acache.Cache, val string, inPlace bool) {
+				updateCachedResource(t, usercontroller.NewController(c), c.GetUser, "user", inPlace,
+					func(usr *corev1.User) { usr.Metadata.DisplayName = val })
+			}},
+		{"Groups", `ctx.groups[1].metadata.displayName == "allowed"`,
+			func(t *testing.T, c *acache.Cache, val string, inPlace bool) {
+				updateCachedResource(t, groupcontroller.NewController(c), c.GetGroup, "group2", inPlace,
+					func(grp *corev1.Group) { grp.Metadata.DisplayName = val })
+			}},
+		{"Device", `ctx.device.metadata.displayName == "allowed"`,
+			func(t *testing.T, c *acache.Cache, val string, inPlace bool) {
+				updateCachedResource(t, devicecontroller.NewController(c), c.GetDevice, "device", inPlace,
+					func(device *corev1.Device) { device.Metadata.DisplayName = val })
+			}},
+		{"Service", `ctx.service.metadata.displayName == "allowed"`,
+			func(t *testing.T, c *acache.Cache, val string, inPlace bool) {
+				updateCachedResource(t, svccontroller.NewController(c), c.GetService, "service", inPlace,
+					func(svc *corev1.Service) { svc.Metadata.DisplayName = val })
+			}},
+		{"Namespace", `ctx.namespace.metadata.displayName == "allowed"`,
+			func(t *testing.T, c *acache.Cache, val string, inPlace bool) {
+				updateCachedResource(t, nscontroller.NewController(c), c.GetNamespace, "namespace", inPlace,
+					func(ns *corev1.Namespace) { ns.Metadata.DisplayName = val })
+			}},
+		{"PolicyAttrs", `attrs.value == "allowed"`,
+			func(t *testing.T, c *acache.Cache, val string, inPlace bool) {
+				updateCachedResource(t, policycontroller.NewController(c), c.GetPolicy, "attrs", inPlace,
+					func(p *corev1.Policy) { p.Spec.Attrs.Fields["value"] = structpb.NewStringValue(val) })
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+			downstream.device.Status.ProbeAttempt = nil
+			downstream.device.Status.Posture = nil
+			assert.Nil(t, srv.s.cache.SetDevice(downstream.device))
+
+			rules := []*corev1.Policy_Spec_Rule{{
+				Name:      "allow",
+				Effect:    corev1.Policy_Spec_Rule_ALLOW,
+				Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: tc.match}},
+			}}
+			svc := proto.Clone(coreC.service).(*corev1.Service)
+			if tc.name == "PolicyAttrs" {
+				policy := &corev1.Policy{
+					Metadata: &metav1.Metadata{Uid: "attrs-uid", Name: "attrs"},
+					Spec: &corev1.Policy_Spec{
+						Attrs: &structpb.Struct{Fields: map[string]*structpb.Value{"value": structpb.NewStringValue("")}},
+						Rules: rules,
+					},
+				}
+				coreC.policies["attrs"] = policy
+				assert.Nil(t, srv.s.cache.SetPolicy(policy))
+				svc.Spec.Authorization = &corev1.Service_Spec_Authorization{Policies: []string{"attrs"}}
+			} else {
+				svc.Spec.Authorization.InlinePolicies[0].Spec.Rules = rules
+			}
+			assert.Nil(t, svccontroller.NewController(srv.s.cache).OnUpdate(t.Context(), svc, coreC.service))
+			coreC.service = svc
+
+			request := &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+				Http: &corev1.RequestContext_Request_HTTP{Path: "/", Method: "GET"},
+			}}
+			requireAuthorized := func(expected bool) {
+				t.Helper()
+				for range 2 {
+					resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+						ServiceUID: "service",
+						Request: &coctovigilv1.DownstreamRequest{
+							Source:  &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"},
+							Request: request,
+						},
+					})
+					if assert.Nil(t, err) && assert.NotNil(t, resp) {
+						assert.True(t, resp.IsAuthenticated)
+						assert.Equal(t, expected, resp.IsAuthorized)
+					}
+					authResp, err := srv.Authorize(t.Context(), &coctovigilv1.AuthorizeRequest{
+						ServiceUID: "service", SessionUID: downstream.session.Metadata.Uid, Request: request,
+					})
+					if assert.Nil(t, err) && assert.NotNil(t, authResp) {
+						assert.Equal(t, expected, authResp.IsAuthorized)
+					}
+				}
+			}
+
+			requireAuthorized(false)
+			for _, inPlace := range []bool{false, true, false} {
+				tc.update(t, srv.s.cache, "allowed", inPlace)
+				requireAuthorized(true)
+				tc.update(t, srv.s.cache, "denied", inPlace)
+				requireAuthorized(false)
+			}
+			tc.update(t, srv.s.cache, "allowed", true)
+			requireAuthorized(true)
+			assert.Empty(t, coreC.calls)
+		})
+	}
+}
+
+func TestReqCtxMapsReadOnly(t *testing.T) {
+	for _, engine := range []string{"CEL", "OPA"} {
+		t.Run(engine, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			c := srv.s.cache
+			downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+			downstream.device.Status.ProbeAttempt = nil
+			downstream.device.Status.Posture = nil
+			assert.Nil(t, c.SetDevice(downstream.device))
+			downstream.user.Spec.Attrs = &structpb.Struct{Fields: map[string]*structpb.Value{
+				"list": structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{
+					structpb.NewNumberValue(1), structpb.NewStringValue("a"), structpb.NewNullValue(),
+					structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{"k": structpb.NewBoolValue(true)}}),
+				}}),
+			}}
+			assert.Nil(t, c.SetUser(downstream.user))
+
+			policy := &corev1.Policy{
+				Metadata: &metav1.Metadata{Uid: "attrs-uid", Name: "attrs"},
+				Spec: &corev1.Policy_Spec{
+					Attrs: &structpb.Struct{Fields: map[string]*structpb.Value{
+						"nested": structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{"k": structpb.NewStringValue("v")}}),
+					}},
+					EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{{
+						Effect:    corev1.Policy_Spec_EnforcementRule_ENFORCE,
+						Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: `attrs.nested.k == "v"`}},
+					}},
+					Rules: []*corev1.Policy_Spec_Rule{
+						{
+							Name:   "deny",
+							Effect: corev1.Policy_Spec_Rule_DENY,
+							Condition: &corev1.Condition{Type: &corev1.Condition_Match{
+								Match: `ctx.user.spec.attrs.list[1] == "b" || ctx.session.metadata.name != "session"`,
+							}},
+						},
+					},
+				},
+			}
+
+			svc := proto.Clone(coreC.service).(*corev1.Service)
+			svc.Spec.Authorization = &corev1.Service_Spec_Authorization{Policies: []string{"attrs"}}
+			allow := &corev1.Policy_Spec_Rule{Name: "allow", Effect: corev1.Policy_Spec_Rule_ALLOW}
+			if engine == "CEL" {
+				allow.Condition = &corev1.Condition{Type: &corev1.Condition_Match{
+					Match: `ctx.user.metadata.name == "user" && size(ctx.groups) == 2 && ctx.device.metadata.name == "device" && attrs.nested.k == "v"`,
+				}}
+				svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+					Condition: &corev1.Condition{Type: &corev1.Condition_Match{Match: `ctx.namespace.metadata.name == "namespace"`}},
+					Type: &corev1.Service_Spec_DynamicConfig_Rule_Eval{
+						Eval: `{"upstream": {"url": "http://127.0.0.1:9090"}, "user": ctx.user, "session": ctx.session, "groups": ctx.groups, "device": ctx.device, "service": ctx.service, "namespace": ctx.namespace}`,
+					},
+				}}}
+			} else {
+				allow.Condition = &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+					Type: &corev1.Condition_OPA_Inline{Inline: `
+package octelium.condition
+
+default match = false
+
+match if {
+	input.ctx.user.metadata.name == "user"
+	count(input.ctx.groups) == 2
+	input.ctx.device.metadata.name == "device"
+	input.attrs.nested.k == "v"
+}
+`},
+				}}}
+				svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+					Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+					Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{
+						Opa: "package octelium.eval\nresult := {\"upstream\": {\"url\": \"http://127.0.0.1:9090\"}, \"user\": input.ctx.user, \"session\": input.ctx.session, \"groups\": input.ctx.groups, \"device\": input.ctx.device, \"service\": input.ctx.service, \"namespace\": input.ctx.namespace}",
+					},
+				}}}
+			}
+			policy.Spec.Rules = append(policy.Spec.Rules, allow)
+			coreC.policies["attrs"] = policy
+			assert.Nil(t, c.SetPolicy(policy))
+			assert.Nil(t, c.SetService(svc))
+			coreC.service = svc
+
+			for range 3 {
+				resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+					ServiceUID: "service",
+					Request: &coctovigilv1.DownstreamRequest{
+						Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"},
+						Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+							Http: &corev1.RequestContext_Request_HTTP{Path: "/", Method: "GET"},
+						}},
+					},
+				})
+				if assert.Nil(t, err) && assert.NotNil(t, resp) {
+					assert.True(t, resp.IsAuthorized)
+					assert.Equal(t, "http://127.0.0.1:9090", resp.Config.GetUpstream().GetUrl())
+				}
+			}
+
+			requireMemo := func(val proto.Message, getMap func() (map[string]any, error)) {
+				t.Helper()
+				exp, err := pbutils.ConvertToMap(val)
+				assert.Nil(t, err)
+				first, err := getMap()
+				assert.Nil(t, err)
+				assert.Equal(t, exp, first)
+				second, err := getMap()
+				assert.Nil(t, err)
+				assert.True(t, isSameMap(first, second))
+			}
+			sess, err := c.GetSession("100.64.0.2")
+			assert.Nil(t, err)
+			requireMemo(sess, func() (map[string]any, error) { return c.GetSessionMap(sess) })
+			requireMemo(downstream.user, func() (map[string]any, error) { return c.GetUserMap(downstream.user) })
+			for _, grp := range downstream.groups {
+				requireMemo(grp, func() (map[string]any, error) { return c.GetGroupMap(grp) })
+			}
+			requireMemo(downstream.device, func() (map[string]any, error) { return c.GetDeviceMap(downstream.device) })
+			requireMemo(svc, func() (map[string]any, error) { return c.GetServiceMap(svc) })
+			requireMemo(coreC.namespace, func() (map[string]any, error) { return c.GetNamespaceMap(coreC.namespace) })
+			requireMemo(policy.Spec.Attrs, func() (map[string]any, error) { return c.GetPolicyAttrsMap(policy) })
+		})
+	}
 }
 
 type failingPolicyTriggerCtl struct {

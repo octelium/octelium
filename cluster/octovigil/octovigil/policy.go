@@ -63,7 +63,7 @@ type policyRuleInline struct {
 }
 
 func (s *Server) getDecision(ctx context.Context, req *getDecisionReq) (*getDecisionResp, error) {
-	reqCtxMap, err := pbutils.ConvertToMap(req.i)
+	reqCtxMap, err := s.getReqCtxMap(req.i)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +74,72 @@ func (s *Server) getDecision(ctx context.Context, req *getDecisionReq) (*getDeci
 	}
 
 	return s.doGetDecision(ctx, reqCtxMap, allRules, isBodyOmitted(req.i))
+}
+
+func (s *Server) getReqCtxMap(i *corev1.RequestContext) (map[string]any, error) {
+	ret := make(map[string]any)
+
+	if i.GetRequest() != nil {
+		val, err := pbutils.ConvertToMap(i.Request)
+		if err != nil {
+			return nil, err
+		}
+		ret["request"] = val
+	}
+
+	if i.GetSession() != nil {
+		val, err := s.cache.GetSessionMap(i.Session)
+		if err != nil {
+			return nil, err
+		}
+		ret["session"] = val
+	}
+
+	if i.GetUser() != nil {
+		val, err := s.cache.GetUserMap(i.User)
+		if err != nil {
+			return nil, err
+		}
+		ret["user"] = val
+	}
+
+	if len(i.GetGroups()) > 0 {
+		groups := make([]any, 0, len(i.Groups))
+		for _, grp := range i.Groups {
+			val, err := s.cache.GetGroupMap(grp)
+			if err != nil {
+				return nil, err
+			}
+			groups = append(groups, val)
+		}
+		ret["groups"] = groups
+	}
+
+	if i.GetDevice() != nil {
+		val, err := s.cache.GetDeviceMap(i.Device)
+		if err != nil {
+			return nil, err
+		}
+		ret["device"] = val
+	}
+
+	if i.GetService() != nil {
+		val, err := s.cache.GetServiceMap(i.Service)
+		if err != nil {
+			return nil, err
+		}
+		ret["service"] = val
+	}
+
+	if i.GetNamespace() != nil {
+		val, err := s.cache.GetNamespaceMap(i.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		ret["namespace"] = val
+	}
+
+	return ret, nil
 }
 
 func (s *Server) doGetDecision(ctx context.Context,
@@ -197,7 +263,7 @@ func (s *Server) getEvaluatePolicyRules(ctx context.Context, req *coctovigilv1.E
 				continue
 			}
 
-			attrs, err := pbutils.ConvertToMap(policy.Spec.Attrs)
+			attrs, err := s.cache.GetPolicyAttrsMap(policy)
 			if err != nil {
 				zap.L().Debug("Could not unmarshal attrs", zap.Error(err))
 				continue
@@ -294,7 +360,7 @@ func (s *Server) getResourcePolicyRules(ctx context.Context,
 				continue
 			}
 
-			attrs, err := pbutils.ConvertToMap(policy.Spec.Attrs)
+			attrs, err := s.cache.GetPolicyAttrsMap(policy)
 			if err != nil {
 				zap.L().Debug("Could not unmarshal attrs", zap.Error(err))
 				continue

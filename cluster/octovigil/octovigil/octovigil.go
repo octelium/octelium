@@ -559,7 +559,7 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 		return nil
 	}
 
-	reqCtxMap, err := pbutils.ConvertToMap(reqCtx)
+	reqCtxMap, err := s.getReqCtxMap(reqCtx)
 	if err != nil {
 		return err
 	}
