@@ -224,6 +224,12 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 				outReq.Proto = "HTTP/2"
 				outReq.ProtoMajor = 2
 				outReq.ProtoMinor = 0
+				if outReq.Body != nil && outReq.Body != http.NoBody {
+					outReq.Body = &downstreamBody{
+						ReadCloser: outReq.Body,
+						ctx:        outReq.Context(),
+					}
+				}
 			} else {
 				outReq.Proto = "HTTP/1.1"
 				outReq.ProtoMajor = 1
@@ -282,6 +288,22 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 		},
 	}
 	return ret, nil
+}
+
+type downstreamBody struct {
+	io.ReadCloser
+	ctx context.Context
+}
+
+func (b *downstreamBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		if ctxErr := b.ctx.Err(); ctxErr != nil {
+			return n, ctxErr
+		}
+	}
+
+	return n, err
 }
 
 func removeOcteliumResponseCookies(header http.Header) {
