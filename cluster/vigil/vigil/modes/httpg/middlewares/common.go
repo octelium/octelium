@@ -104,7 +104,8 @@ type RequestContext struct {
 
 	UpstreamBody []byte
 
-	ReqCtxMap map[string]any
+	ReqCtxMap      map[string]any
+	isReqCtxMapSet bool
 
 	MCP *httputils.MCPRequest
 
@@ -337,11 +338,16 @@ func (r *RequestContext) SetLLMGuardrail(
 }
 
 func (r *RequestContext) SetReqCtxMap() {
-	if r.DownstreamInfo == nil {
-		r.ReqCtxMap = nil
-		return
+	r.ReqCtxMap = nil
+	r.isReqCtxMapSet = r.DownstreamInfo != nil
+}
+
+func (r *RequestContext) GetReqCtxMap() map[string]any {
+	if r.ReqCtxMap == nil && r.isReqCtxMapSet {
+		r.ReqCtxMap, _ = GetRequestContextMap(r.DownstreamInfo)
 	}
-	r.ReqCtxMap = pbutils.MustConvertToMap(r.DownstreamInfo)
+
+	return r.ReqCtxMap
 }
 
 func (r *RequestContext) GetServiceConfig() *corev1.Service_Spec_Config {

@@ -37,7 +37,6 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares/commonplugin"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/octelium/octelium/pkg/common/pbutils"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -95,9 +94,8 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	isHead := req.Method == http.MethodHead
 
 	if reqCtx.ReqCtxMap == nil && reqCtx.DownstreamInfo != nil {
-		reqCtx.ReqCtxMap = pbutils.MustConvertToMap(reqCtx.DownstreamInfo)
+		reqCtx.SetReqCtxMap()
 	}
-	reqCtxMap := reqCtx.ReqCtxMap
 
 	for _, plugin := range plugins {
 
@@ -127,7 +125,7 @@ func (m *middleware) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				req:        req,
 				rw:         crw,
 				fnProto:    fnProto,
-				reqCtxMap:  reqCtxMap,
+				reqCtxMap:  reqCtx.GetReqCtxMap(),
 				pluginName: plugin.GetName(),
 			})
 			if err != nil {

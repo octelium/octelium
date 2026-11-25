@@ -125,7 +125,7 @@ func TestRebuild(t *testing.T) {
 		assert.Equal(t, "production",
 			params.Fields["arguments"].GetStructValue().Fields["environment"].GetStringValue())
 
-		reqCtxMap := reqCtx.ReqCtxMap["request"].(map[string]any)["mcp"].(map[string]any)
+		reqCtxMap := reqCtx.GetReqCtxMap()["request"].(map[string]any)["mcp"].(map[string]any)
 		assert.Equal(t, "delete-production", reqCtxMap["name"])
 		assert.Equal(t, "tools/call", reqCtxMap["method"])
 

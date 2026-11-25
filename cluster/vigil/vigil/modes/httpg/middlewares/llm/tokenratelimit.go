@@ -234,7 +234,7 @@ func (m *tokenRateLimit) getKey(ctx context.Context, name string,
 				reqCtx.SetReqCtxMap()
 			}
 			res, err := m.celEngine.EvalPolicyString(ctx, key.GetEval(), map[string]any{
-				"ctx": reqCtx.ReqCtxMap,
+				"ctx": reqCtx.GetReqCtxMap(),
 			})
 			if err != nil {
 				return nil, err

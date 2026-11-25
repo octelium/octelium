@@ -28,6 +28,7 @@ import (
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/httputils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
@@ -607,4 +608,42 @@ func TestGuardrailUpstreamErrorIsNotInspected(t *testing.T) {
 	})
 
 	assert.Equal(t, http.StatusBadGateway, res.code)
+}
+
+func TestGuardrailRenderReqCtxMap(t *testing.T) {
+	ctx := context.Background()
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+
+	m := &guardrail{celEngine: celEngine}
+	cfg := &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace{
+		Type: &corev1.Service_Spec_Config_LLM_Plugin_Guardrail_Pattern_Replace_Eval{
+			Eval: `ctx.user.spec.email`,
+		},
+	}
+
+	for _, state := range []string{"NotSet", "Set", "Built"} {
+		reqCtx := &middlewares.RequestContext{
+			DownstreamInfo: &corev1.RequestContext{
+				User: &corev1.User{
+					Metadata: &metav1.Metadata{Uid: "mcp-user-uid", Name: "user", ResourceVersion: "mcp-user-rv"},
+					Spec:     &corev1.User_Spec{Type: corev1.User_Spec_HUMAN, Email: "user@example.com"},
+				},
+			},
+		}
+
+		switch state {
+		case "Set":
+			reqCtx.SetReqCtxMap()
+		case "Built":
+			reqCtx.SetReqCtxMap()
+			reqCtx.GetReqCtxMap()
+		}
+
+		ret, err := m.render(ctx, reqCtx, cfg)
+		assert.Nil(t, err, state)
+		assert.Equal(t, "user@example.com", ret, state)
+		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap, state)
+	}
 }

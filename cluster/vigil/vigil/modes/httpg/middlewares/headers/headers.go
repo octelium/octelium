@@ -166,7 +166,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 		scrubLLMCredentialHeaders(req)
 	}
 
-	inputMap := reqCtx.ReqCtxMap
+	inputMap := reqCtx.GetReqCtxMap()
 
 	if cfg := ucorev1.ToServiceConfig(svcCfg).GetHTTPHeader(); cfg != nil {
 
@@ -341,7 +341,7 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 	svcCfg := reqCtx.ServiceConfig
 
 	ctx := req.Context()
-	inputMap := reqCtx.ReqCtxMap
+	inputMap := reqCtx.GetReqCtxMap()
 
 	if cfg := ucorev1.ToServiceConfig(svcCfg).GetHTTPHeader(); cfg != nil {
 		for _, hdr := range cfg.AddResponseHeaders {

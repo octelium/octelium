@@ -125,7 +125,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	reqCtx.AuthResponse = auth
 	reqCtx.ServiceConfig = vigilutils.GetServiceConfig(ctx, auth)
 
-	reqCtx.ReqCtxMap = pbutils.MustConvertToMap(reqCtx.DownstreamInfo)
+	reqCtx.SetReqCtxMap()
 
 	if !reqCtx.IsAuthorized {
 		m.handleUnauthorized(w, req, reqCtx)
@@ -143,7 +143,7 @@ func (s *middleware) setServiceConfig(ctx context.Context, req *middlewares.Requ
 		return nil
 	}
 
-	reqCtxMap, err := pbutils.ConvertToMap(reqCtx)
+	reqCtxMap, err := middlewares.GetRequestContextMap(reqCtx)
 	if err != nil {
 		return err
 	}

@@ -24,8 +24,10 @@ import (
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -247,6 +249,99 @@ func TestShouldEnforcePluginInvalidUTF8(t *testing.T) {
 		} else {
 			assert.Equal(t, http.StatusInternalServerError, rw.Code)
 			assert.Contains(t, rw.Body.String(), "could not evaluate the Plugins")
+		}
+	}
+}
+
+func TestShouldEnforcePluginReqCtxMap(t *testing.T) {
+
+	ctx := context.Background()
+
+	celEngine, err := celengine.New(ctx, &celengine.Opts{})
+	assert.Nil(t, err)
+
+	newDownstreamInfo := func(email string) *corev1.RequestContext {
+		return &corev1.RequestContext{
+			Request: &corev1.RequestContext_Request{
+				Type: &corev1.RequestContext_Request_Http{
+					Http: &corev1.RequestContext_Request_HTTP{
+						Path:    "/admin",
+						Headers: map[string]string{"x-meta": `{"priority": 10}`},
+					},
+				},
+			},
+			User: &corev1.User{
+				Metadata: &metav1.Metadata{Uid: "user-uid", Name: "user", ResourceVersion: "rv-" + email},
+				Spec:     &corev1.User_Spec{Type: corev1.User_Spec_HUMAN, Email: email},
+			},
+			Groups: []*corev1.Group{
+				{Metadata: &metav1.Metadata{Uid: "group-uid", Name: "admins", ResourceVersion: "rv"}},
+			},
+		}
+	}
+
+	newCtx := func(reqCtx *middlewares.RequestContext) context.Context {
+		return context.WithValue(ctx, middlewares.CtxRequestContext, reqCtx)
+	}
+
+	opts := &ShouldEnforcePluginOpts{
+		Plugin: &corev1.Service_Spec_Config_HTTP_Plugin{
+			Name: "plugin",
+			Condition: &corev1.Condition{
+				Type: &corev1.Condition_Match{
+					Match: `ctx.user.spec.email == "admin@example.com" && ctx.groups[0].metadata.name == "admins" && json.parse(ctx.request.http.headers["x-meta"]).priority > 5.0`,
+				},
+			},
+		},
+		CELEngine: celEngine,
+		Phase:     corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH,
+	}
+
+	for _, tst := range []struct {
+		email          string
+		isSetReqCtxMap bool
+		isEnforced     bool
+	}{
+		{"admin@example.com", false, true},
+		{"admin@example.com", true, true},
+		{"user@example.com", false, false},
+		{"user@example.com", true, false},
+	} {
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt:      time.Now(),
+			DownstreamInfo: newDownstreamInfo(tst.email),
+		}
+		if tst.isSetReqCtxMap {
+			reqCtx.SetReqCtxMap()
+			assert.Nil(t, reqCtx.ReqCtxMap)
+		}
+
+		for range 2 {
+			isEnforced, err := ShouldEnforcePluginErr(newCtx(reqCtx), opts)
+			assert.Nil(t, err)
+			assert.Equal(t, tst.isEnforced, isEnforced, "%+v", tst)
+			assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap)
+			assert.Equal(t, reqCtx.ReqCtxMap, reqCtx.GetReqCtxMap())
+		}
+	}
+
+	{
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt:      time.Now(),
+			DownstreamInfo: newDownstreamInfo("admin@example.com"),
+		}
+		reqCtx.DownstreamInfo.User.Metadata.DisplayName = "invalid-\xff"
+		reqCtx.DownstreamInfo.User.Metadata.ResourceVersion = "rv-invalid"
+		_, expErr := pbutils.ConvertToMap(reqCtx.DownstreamInfo)
+		assert.NotNil(t, expErr)
+
+		for range 2 {
+			isEnforced, err := ShouldEnforcePluginErr(newCtx(reqCtx), opts)
+			assert.False(t, isEnforced)
+			if assert.NotNil(t, err) {
+				assert.Equal(t, expErr.Error(), err.Error())
+			}
+			assert.Nil(t, reqCtx.ReqCtxMap)
 		}
 	}
 }

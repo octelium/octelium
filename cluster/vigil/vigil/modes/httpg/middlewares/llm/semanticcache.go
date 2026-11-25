@@ -252,7 +252,7 @@ func (m *semanticCache) getScope(ctx context.Context,
 			reqCtx.SetReqCtxMap()
 		}
 		ret, err := m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), map[string]any{
-			"ctx": reqCtx.ReqCtxMap,
+			"ctx": reqCtx.GetReqCtxMap(),
 		})
 		if err != nil {
 			return "", err

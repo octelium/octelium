@@ -233,7 +233,7 @@ func (m *guardrail) render(ctx context.Context, reqCtx *middlewares.RequestConte
 		reqCtx.SetReqCtxMap()
 	}
 	inputMap := map[string]any{
-		"ctx": reqCtx.ReqCtxMap,
+		"ctx": reqCtx.GetReqCtxMap(),
 	}
 
 	var ret string

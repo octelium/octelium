@@ -245,11 +245,11 @@ func (m *model) getModel(ctx context.Context,
 		return cfg.GetValue(), nil
 	case *corev1.Service_Spec_Config_LLM_Model_Eval:
 		return m.celEngine.EvalPolicyString(ctx, cfg.GetEval(), map[string]any{
-			"ctx": reqCtx.ReqCtxMap,
+			"ctx": reqCtx.GetReqCtxMap(),
 		})
 	case *corev1.Service_Spec_Config_LLM_Model_Opa:
 		return m.celEngine.EvalPolicyStringOPA(ctx, cfg.GetOpa(), map[string]any{
-			"ctx": reqCtx.ReqCtxMap,
+			"ctx": reqCtx.GetReqCtxMap(),
 		})
 	default:
 		return "", nil

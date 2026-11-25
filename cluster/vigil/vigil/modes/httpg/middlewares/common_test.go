@@ -188,8 +188,8 @@ func TestSetRequestContextInvalidUTF8(t *testing.T) {
 		assert.Equal(t, "tool", mcpC.Name)
 		_, err := proto.Marshal(reqCtx.DownstreamRequest)
 		assert.Nil(t, err)
-		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap)
-		assert.NotNil(t, reqCtx.ReqCtxMap)
+		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.GetReqCtxMap())
+		assert.NotNil(t, reqCtx.GetReqCtxMap())
 	}
 
 	{
@@ -210,7 +210,7 @@ func TestSetRequestContextInvalidUTF8(t *testing.T) {
 		assert.Equal(t, "/v1/chat/completions/\xff", req.URL.Path)
 		_, err := proto.Marshal(reqCtx.DownstreamRequest)
 		assert.Nil(t, err)
-		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap)
-		assert.NotNil(t, reqCtx.ReqCtxMap)
+		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.GetReqCtxMap())
+		assert.NotNil(t, reqCtx.GetReqCtxMap())
 	}
 }

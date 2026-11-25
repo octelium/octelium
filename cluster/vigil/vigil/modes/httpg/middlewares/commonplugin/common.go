@@ -24,7 +24,6 @@ import (
 	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
-	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -79,7 +78,7 @@ func ShouldEnforcePluginErr(ctx context.Context, o *ShouldEnforcePluginOpts) (bo
 	}
 
 	if reqCtx.ReqCtxMap == nil {
-		reqCtxMap, err := pbutils.ConvertToMap(reqCtx.DownstreamInfo)
+		reqCtxMap, err := middlewares.GetRequestContextMap(reqCtx.DownstreamInfo)
 		if err != nil {
 			return false, err
 		}

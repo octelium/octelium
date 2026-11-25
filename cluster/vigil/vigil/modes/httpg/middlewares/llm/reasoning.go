@@ -487,7 +487,7 @@ func (m *reasoning) render(ctx context.Context, reqCtx *middlewares.RequestConte
 	}
 
 	return eval(map[string]any{
-		"ctx": reqCtx.ReqCtxMap,
+		"ctx": reqCtx.GetReqCtxMap(),
 	})
 }
 

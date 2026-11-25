@@ -151,7 +151,7 @@ func (m *middleware) getKey(ctx context.Context, name string,
 
 	switch rateLimit.Key.Type.(type) {
 	case *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval:
-		key, err := m.celEngine.EvalPolicyString(ctx, rateLimit.Key.GetEval(), reqCtx.ReqCtxMap)
+		key, err := m.celEngine.EvalPolicyString(ctx, rateLimit.Key.GetEval(), reqCtx.GetReqCtxMap())
 		if err == nil && key != "" {
 			return key
 		}

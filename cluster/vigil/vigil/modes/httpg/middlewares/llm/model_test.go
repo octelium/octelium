@@ -280,7 +280,7 @@ func TestModelEvalAfterRebuild(t *testing.T) {
 	assert.Nil(t, err)
 	rebuild.ServeHTTP(httptest.NewRecorder(), req)
 
-	assert.NotEmpty(t, reqCtx.ReqCtxMap)
+	assert.NotEmpty(t, reqCtx.GetReqCtxMap())
 
 	var upstream map[string]any
 	mdlwr, err := NewModel(ctx, http.HandlerFunc(

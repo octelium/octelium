@@ -176,7 +176,7 @@ func (s *Server) getProxy(ctx context.Context) (http.Handler, error) {
 					res, err := s.celEngine.EvalPolicyString(
 						inReq.Context(),
 						hostCfg.GetEval(),
-						reqCtx.ReqCtxMap,
+						reqCtx.GetReqCtxMap(),
 					)
 					if err == nil && res != "" {
 						outReq.Host = res
