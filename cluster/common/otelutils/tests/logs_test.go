@@ -243,7 +243,7 @@ func TestComponentLogExport(t *testing.T) {
 		assert.Nil(t, provider.Shutdown(ctx))
 	})
 
-	c := otelcore.NewOTELCore(provider.Logger("component-test")).With([]zapcore.Field{
+	c := otelcore.NewOTELCore(provider.Logger("component-test"), zapcore.DebugLevel).With([]zapcore.Field{
 		zap.String("context", "original"), zap.Float32("float32", 1.5),
 	})
 	require.NotNil(t, c)

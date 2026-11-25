@@ -35,26 +35,29 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-func NewOTELCore(logger log.Logger) zapcore.Core {
+func NewOTELCore(logger log.Logger, levelEnabler zapcore.LevelEnabler) zapcore.Core {
 
 	return &otelCore{
-		logger: logger,
+		logger:       logger,
+		levelEnabler: levelEnabler,
 	}
 }
 
 type otelCore struct {
-	logger log.Logger
-	fields *structpb.Struct
+	logger       log.Logger
+	levelEnabler zapcore.LevelEnabler
+	fields       *structpb.Struct
 }
 
-func (c *otelCore) Enabled(zapcore.Level) bool {
-	return true
+func (c *otelCore) Enabled(l zapcore.Level) bool {
+	return c.levelEnabler.Enabled(l)
 }
 
 func (c *otelCore) With(fs []zapcore.Field) zapcore.Core {
 	return &otelCore{
-		logger: c.logger,
-		fields: c.getFields(fs),
+		logger:       c.logger,
+		levelEnabler: c.levelEnabler,
+		fields:       c.getFields(fs),
 	}
 }
 

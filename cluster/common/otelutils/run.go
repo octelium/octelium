@@ -22,6 +22,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/components/otelcore"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/log"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -50,15 +51,17 @@ func RunOTEL(ctx context.Context) error {
 	otel.SetLoggerProvider(logProvider)
 	otel.SetMeterProvider(metricProvider)
 
-	zapLogger := otelcore.NewOTELCore(GetLogger())
-
 	otel.SetErrorHandler(&otelErrorHandler{})
 
-	zap.ReplaceGlobals(zap.New(zapcore.NewTee(zap.L().Core(), zapLogger)))
+	zap.ReplaceGlobals(newZapLogger(zap.L(), GetLogger()))
 
 	if err := SetProcessMetrics(ctx); err != nil {
 		zap.L().Warn("Could not SetProcessMetrics", zap.Error(err))
 	}
 
 	return nil
+}
+
+func newZapLogger(stdLogger *zap.Logger, logger log.Logger) *zap.Logger {
+	return zap.New(zapcore.NewTee(stdLogger.Core(), otelcore.NewOTELCore(logger, stdLogger.Level())))
 }

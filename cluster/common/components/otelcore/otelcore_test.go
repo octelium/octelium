@@ -46,7 +46,7 @@ func (l *recordingLogger) Emit(ctx context.Context, record log.Record) {
 
 func TestCoreWrite(t *testing.T) {
 	l := &recordingLogger{}
-	c := NewOTELCore(l)
+	c := NewOTELCore(l, zapcore.DebugLevel)
 	assert.True(t, c.Enabled(zapcore.InfoLevel))
 	assert.NotNil(t, c.Check(zapcore.Entry{Level: zapcore.InfoLevel}, nil))
 	assert.Nil(t, c.Sync())
@@ -107,7 +107,7 @@ func TestCoreFields(t *testing.T) {
 
 func TestCoreWith(t *testing.T) {
 	l := &recordingLogger{}
-	c := NewOTELCore(l)
+	c := NewOTELCore(l, zapcore.DebugLevel)
 	empty := c.With(nil)
 	require.NotNil(t, empty)
 	assert.NotSame(t, c, empty)
@@ -159,7 +159,7 @@ func TestCoreWithSnapshot(t *testing.T) {
 		zap.String("context", "original"), zap.Binary("binary", data),
 		zap.ByteString("bytes", data), zap.Any("user", usr),
 	}
-	c := NewOTELCore(l).With(fields)
+	c := NewOTELCore(l, zapcore.DebugLevel).With(fields)
 	require.NotNil(t, c)
 	fields[0] = zap.String("context", "changed")
 	data[0] = 'z'
@@ -190,7 +190,7 @@ func TestCoreWithConcurrent(t *testing.T) {
 	const workers = 16
 	const requests = 32
 	l := &concurrentRecordingLogger{records: make(chan log.Record, workers*requests+1)}
-	c := NewOTELCore(l).With([]zapcore.Field{zap.String("context", "shared")})
+	c := NewOTELCore(l, zapcore.DebugLevel).With([]zapcore.Field{zap.String("context", "shared")})
 	require.NotNil(t, c)
 	logger := zap.New(c)
 	var wg sync.WaitGroup
@@ -267,7 +267,7 @@ func TestCoreNumbers(t *testing.T) {
 	} {
 		t.Run(tc.field.Key, func(t *testing.T) {
 			l := &recordingLogger{}
-			c := NewOTELCore(l)
+			c := NewOTELCore(l, zapcore.DebugLevel)
 			require.Nil(t, c.Write(zapcore.Entry{Level: zapcore.InfoLevel, Time: time.Now()}, []zapcore.Field{tc.field}))
 			require.Len(t, l.records, 1)
 			res := &corev1.ComponentLog{}
@@ -295,7 +295,7 @@ func TestCoreFloatSpecialValues(t *testing.T) {
 	} {
 		t.Run(tc.field.Key, func(t *testing.T) {
 			l := &recordingLogger{}
-			c := NewOTELCore(l)
+			c := NewOTELCore(l, zapcore.DebugLevel)
 			require.Nil(t, c.Write(zapcore.Entry{Level: zapcore.WarnLevel, Time: time.Now(), Message: "special float"},
 				[]zapcore.Field{tc.field, zap.String("context", "retained")}))
 			child := c.With([]zapcore.Field{tc.field})
@@ -331,7 +331,7 @@ func TestCoreLevels(t *testing.T) {
 	} {
 		t.Run(tc.level.String(), func(t *testing.T) {
 			l := &recordingLogger{}
-			c := NewOTELCore(l)
+			c := NewOTELCore(l, zapcore.DebugLevel)
 			require.Nil(t, c.Write(zapcore.Entry{Level: tc.level, Time: time.Now(), Message: "level"}, nil))
 			require.Len(t, l.records, 1)
 			assert.Equal(t, tc.severity, l.records[0].Severity())
@@ -340,5 +340,98 @@ func TestCoreLevels(t *testing.T) {
 			require.Nil(t, pbutils.UnmarshalJSON([]byte(l.records[0].Body().AsString()), res))
 			assert.Equal(t, tc.want, res.Entry.Level)
 		})
+	}
+}
+
+func TestCoreLevelEnabler(t *testing.T) {
+	levels := []zapcore.Level{
+		zapcore.DebugLevel, zapcore.InfoLevel, zapcore.WarnLevel, zapcore.ErrorLevel,
+		zapcore.DPanicLevel, zapcore.PanicLevel, zapcore.FatalLevel,
+	}
+	for _, minLevel := range levels {
+		t.Run(minLevel.String(), func(t *testing.T) {
+			l := &recordingLogger{}
+			c := NewOTELCore(l, minLevel)
+			child := c.With([]zapcore.Field{zap.String("context", "child")})
+			require.NotNil(t, child)
+			assert.Equal(t, minLevel, zapcore.LevelOf(c))
+			assert.Equal(t, minLevel, zapcore.LevelOf(child))
+			assert.Equal(t, minLevel, zap.New(zapcore.NewTee(zapcore.NewNopCore(), c)).Level())
+
+			var want, wantSeverities []string
+			for _, level := range levels {
+				isEnabled := level >= minLevel
+				assert.Equal(t, isEnabled, c.Enabled(level))
+				assert.Equal(t, isEnabled, child.Enabled(level))
+				for i, core := range []zapcore.Core{c, child} {
+					ent := zapcore.Entry{Level: level, Time: time.Now(), Message: fmt.Sprintf("%s-%d", level, i)}
+					ce := core.Check(ent, nil)
+					if !isEnabled {
+						assert.Nil(t, ce)
+						continue
+					}
+					require.NotNil(t, ce)
+					ce.Write(zap.Any("user", &corev1.User{Metadata: &metav1.Metadata{Name: "user"}}))
+					want = append(want, ent.Message)
+					wantSeverities = append(wantSeverities, level.String())
+				}
+			}
+
+			logger := zap.New(zapcore.NewTee(zapcore.NewNopCore(), c))
+			for _, level := range levels[:4] {
+				msg := fmt.Sprintf("%s-logger", level)
+				if ce := logger.Check(level, msg); ce != nil {
+					assert.GreaterOrEqual(t, level, minLevel)
+					ce.Write(zap.String("context", "logger"))
+					want = append(want, msg)
+					wantSeverities = append(wantSeverities, level.String())
+				} else {
+					assert.Less(t, level, minLevel)
+				}
+			}
+
+			var got, gotSeverities []string
+			for _, record := range l.records {
+				res := &corev1.ComponentLog{}
+				require.Nil(t, pbutils.UnmarshalJSON([]byte(record.Body().AsString()), res))
+				got = append(got, res.Entry.Message)
+				gotSeverities = append(gotSeverities, record.SeverityText())
+			}
+			assert.Equal(t, want, got)
+			assert.Equal(t, wantSeverities, gotSeverities)
+		})
+	}
+}
+
+func TestCoreAtomicLevel(t *testing.T) {
+	l := &recordingLogger{}
+	level := zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	c := NewOTELCore(l, level)
+	child := c.With([]zapcore.Field{zap.String("context", "child")})
+	require.NotNil(t, child)
+	logger := zap.New(zapcore.NewTee(zapcore.NewNopCore(), c))
+	childLogger := zap.New(zapcore.NewTee(zapcore.NewNopCore(), child))
+
+	for _, tc := range []struct {
+		level zapcore.Level
+		want  []string
+	}{
+		{zapcore.InfoLevel, []string{"info", "warn", "error"}},
+		{zapcore.DebugLevel, []string{"debug", "info", "warn", "error"}},
+		{zapcore.ErrorLevel, []string{"error"}},
+	} {
+		level.SetLevel(tc.level)
+		for _, lgr := range []*zap.Logger{logger, childLogger} {
+			l.records = nil
+			lgr.Debug("debug")
+			lgr.Info("info")
+			lgr.Warn("warn")
+			lgr.Error("error")
+			var got []string
+			for _, record := range l.records {
+				got = append(got, record.SeverityText())
+			}
+			assert.Equal(t, tc.want, got, tc.level.String())
+		}
 	}
 }
