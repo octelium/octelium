@@ -350,6 +350,16 @@ func (r *RequestContext) GetReqCtxMap() map[string]any {
 	return r.ReqCtxMap
 }
 
+func (r *RequestContext) GetInputMap() map[string]any {
+	if r.ReqCtxMap == nil {
+		r.SetReqCtxMap()
+	}
+
+	return map[string]any{
+		"ctx": r.GetReqCtxMap(),
+	}
+}
+
 func (r *RequestContext) GetServiceConfig() *corev1.Service_Spec_Config {
 	if r == nil {
 		return nil

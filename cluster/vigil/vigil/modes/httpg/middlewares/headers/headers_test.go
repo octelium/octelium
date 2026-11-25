@@ -345,10 +345,8 @@ func TestMiddleware(t *testing.T) {
 				CreatedAt:     time.Now(),
 				Service:       svc,
 				ServiceConfig: svc.Spec.Config,
-				ReqCtxMap: map[string]any{
-					"ctx": map[string]any{
-						"service": pbutils.MustConvertToMap(svc),
-					},
+				DownstreamInfo: &corev1.RequestContext{
+					Service: svc,
 				},
 			}))
 
@@ -1712,4 +1710,229 @@ func TestUpstreamCredentialSecretLifecycle(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rw.Code)
 	assert.True(t, isCalled)
 	assert.Equal(t, fmt.Sprintf("Bearer %s", sec.Data.GetValue()), upstreamAuth)
+}
+
+func newEvalHeaderKeyValue(key, eval string, isAppend bool) *corev1.Service_Spec_Config_HTTP_Header_KeyValue {
+	return &corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+		Key:    key,
+		Append: isAppend,
+		Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval{
+			Eval: eval,
+		},
+	}
+}
+
+func TestHeadersEval(t *testing.T) {
+	ctx := context.Background()
+	celEngine, err := celengine.New(ctx, nil)
+	assert.Nil(t, err)
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "tst.default", Uid: "svc-uid", ResourceVersion: "svc-rv"},
+		Spec: &corev1.Service_Spec{
+			Config: &corev1.Service_Spec_Config{
+				Type: &corev1.Service_Spec_Config_Http{
+					Http: &corev1.Service_Spec_Config_HTTP{
+						Header: &corev1.Service_Spec_Config_HTTP_Header{
+							AddRequestHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+								newEvalHeaderKeyValue("X-User", `ctx.user.metadata.name`, false),
+								newEvalHeaderKeyValue("X-Path", `ctx.request.http.path`, true),
+								newEvalHeaderKeyValue("X-Path", `ctx.request.http.method + " " + ctx.request.http.path`, true),
+								newEvalHeaderKeyValue("X-Tenant", `ctx.request.http.headers["x-tenant"] + "." + ctx.service.metadata.name`, false),
+								newEvalHeaderKeyValue("X-Const", `"const"`, false),
+								newEvalHeaderKeyValue("X-Invalid", `ctx.missing.field`, false),
+							},
+							AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+								newEvalHeaderKeyValue("X-User", `ctx.user.metadata.name`, false),
+								newEvalHeaderKeyValue("X-Path", `ctx.request.http.path`, true),
+								newEvalHeaderKeyValue("X-Path", `ctx.request.http.method + " " + ctx.request.http.path`, true),
+								newEvalHeaderKeyValue("X-Tenant", `ctx.request.http.headers["x-tenant"] + "." + ctx.service.metadata.name`, false),
+								newEvalHeaderKeyValue("X-Const", `"const"`, false),
+								newEvalHeaderKeyValue("X-Invalid", `ctx.missing.field`, false),
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: &corev1.Service_Status{},
+	}
+	usr := &corev1.User{
+		Metadata: &metav1.Metadata{Name: "usr", Uid: "usr-uid", ResourceVersion: "usr-rv"},
+		Spec:     &corev1.User_Spec{Type: corev1.User_Spec_HUMAN},
+	}
+	request := &corev1.RequestContext_Request{
+		Type: &corev1.RequestContext_Request_Http{
+			Http: &corev1.RequestContext_Request_HTTP{
+				Method:  http.MethodGet,
+				Path:    "/v1/path",
+				Headers: map[string]string{"x-tenant": "tenant"},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		name   string
+		reqCtx func() *middlewares.RequestContext
+		user   string
+		path   []string
+		tenant string
+	}{
+		{
+			name: "authenticated",
+			reqCtx: func() *middlewares.RequestContext {
+				ret := &middlewares.RequestContext{
+					DownstreamInfo: &corev1.RequestContext{Request: request, Service: svc, User: usr},
+				}
+				ret.SetReqCtxMap()
+				return ret
+			},
+			user:   "usr",
+			path:   []string{"downstream", "/v1/path", "GET /v1/path"},
+			tenant: "tenant.tst.default",
+		},
+		{
+			name: "anonymous",
+			reqCtx: func() *middlewares.RequestContext {
+				return &middlewares.RequestContext{
+					DownstreamInfo: &corev1.RequestContext{Request: request, Service: svc},
+				}
+			},
+			path:   []string{"downstream", "/v1/path", "GET /v1/path"},
+			tenant: "tenant.tst.default",
+		},
+		{
+			name: "plugin",
+			reqCtx: func() *middlewares.RequestContext {
+				downstreamInfo := &corev1.RequestContext{Request: request, Service: svc, User: usr}
+				return &middlewares.RequestContext{
+					DownstreamInfo: downstreamInfo,
+					ReqCtxMap:      pbutils.MustConvertToMap(downstreamInfo),
+				}
+			},
+			user:   "usr",
+			path:   []string{"downstream", "/v1/path", "GET /v1/path"},
+			tenant: "tenant.tst.default",
+		},
+		{
+			name: "noDownstreamInfo",
+			reqCtx: func() *middlewares.RequestContext {
+				return &middlewares.RequestContext{}
+			},
+			path: []string{"downstream", "", ""},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &middleware{celEngine: celEngine}
+
+			reqCtx := tc.reqCtx()
+			reqCtx.CreatedAt = time.Now()
+			reqCtx.Service = svc
+			reqCtx.ServiceConfig = svc.Spec.Config
+
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/v1/path", nil)
+			req.Header.Set("X-Path", "downstream")
+			req.Header.Set("X-User", "downstream")
+			req = req.WithContext(context.WithValue(context.Background(), middlewares.CtxRequestContext, reqCtx))
+			assert.Nil(t, m.setRequestHeaders(req, reqCtx))
+
+			hdr := http.Header{}
+			hdr.Set("X-Path", "downstream")
+			hdr.Set("X-User", "downstream")
+			m.modifyResponseHeaders(hdr, req, reqCtx)
+
+			for _, h := range []http.Header{req.Header, hdr} {
+				assert.Equal(t, []string{tc.user}, h.Values("X-User"))
+				assert.Equal(t, tc.path, h.Values("X-Path"))
+				assert.Equal(t, []string{tc.tenant}, h.Values("X-Tenant"))
+				assert.Equal(t, []string{"const"}, h.Values("X-Const"))
+				assert.Equal(t, []string{""}, h.Values("X-Invalid"))
+			}
+			assert.Equal(t, "octelium", hdr.Get("Server"))
+		})
+	}
+}
+
+func TestHeadersReqCtxMapLazy(t *testing.T) {
+	ctx := context.Background()
+	celEngine, err := celengine.New(ctx, nil)
+	assert.Nil(t, err)
+
+	var nReqCtx int
+	newReqCtx := func(header *corev1.Service_Spec_Config_HTTP_Header) (*http.Request, *middlewares.RequestContext) {
+		nReqCtx++
+		svc := &corev1.Service{
+			Metadata: &metav1.Metadata{
+				Name:            "tst.default",
+				Uid:             "lazy-svc-uid",
+				ResourceVersion: fmt.Sprintf("lazy-svc-rv-%d", nReqCtx),
+			},
+			Spec: &corev1.Service_Spec{
+				Config: &corev1.Service_Spec_Config{
+					Type: &corev1.Service_Spec_Config_Http{
+						Http: &corev1.Service_Spec_Config_HTTP{
+							Header: header,
+						},
+					},
+				},
+			},
+			Status: &corev1.Service_Status{},
+		}
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt:      time.Now(),
+			Service:        svc,
+			ServiceConfig:  svc.Spec.Config,
+			DownstreamInfo: &corev1.RequestContext{Service: svc},
+		}
+		reqCtx.SetReqCtxMap()
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+		return req.WithContext(context.WithValue(context.Background(), middlewares.CtxRequestContext, reqCtx)), reqCtx
+	}
+
+	valueHeaders := []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+		{
+			Key:  "X-Value",
+			Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value{Value: "value"},
+		},
+	}
+
+	m := &middleware{celEngine: celEngine}
+
+	for _, header := range []*corev1.Service_Spec_Config_HTTP_Header{
+		nil,
+		{},
+		{AddRequestHeaders: valueHeaders, AddResponseHeaders: valueHeaders, RemoveRequestHeaders: []string{"X-Remove"}},
+	} {
+		req, reqCtx := newReqCtx(header)
+		assert.Nil(t, m.setRequestHeaders(req, reqCtx))
+		m.modifyResponseHeaders(http.Header{}, req, reqCtx)
+		assert.Nil(t, reqCtx.ReqCtxMap)
+	}
+
+	{
+		req, reqCtx := newReqCtx(&corev1.Service_Spec_Config_HTTP_Header{
+			AddRequestHeaders: valueHeaders,
+			AddResponseHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+				newEvalHeaderKeyValue("X-Service", `ctx.service.metadata.name`, false),
+			},
+		})
+		assert.Nil(t, m.setRequestHeaders(req, reqCtx))
+		assert.Nil(t, reqCtx.ReqCtxMap)
+
+		hdr := http.Header{}
+		m.modifyResponseHeaders(hdr, req, reqCtx)
+		assert.Equal(t, "tst.default", hdr.Get("X-Service"))
+		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap)
+	}
+
+	{
+		req, reqCtx := newReqCtx(&corev1.Service_Spec_Config_HTTP_Header{
+			AddRequestHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+				newEvalHeaderKeyValue("X-Service", `ctx.service.metadata.name`, false),
+			},
+		})
+		assert.Nil(t, m.setRequestHeaders(req, reqCtx))
+		assert.Equal(t, "tst.default", req.Header.Get("X-Service"))
+		assert.Equal(t, pbutils.MustConvertToMap(reqCtx.DownstreamInfo), reqCtx.ReqCtxMap)
+	}
 }

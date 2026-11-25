@@ -703,13 +703,6 @@ func getReqCtxMapLuaInput(r *RequestContext) (map[string]any, error) {
 	return r.GetReqCtxMap(), nil
 }
 
-func getReqCtxMapLLMInput(r *RequestContext) map[string]any {
-	if r.ReqCtxMap == nil {
-		r.SetReqCtxMap()
-	}
-	return map[string]any{"ctx": r.GetReqCtxMap()}
-}
-
 func TestReqCtxMap(t *testing.T) {
 	i := newReqCtxMapTestContext("reqctx")
 	exp := pbutils.MustConvertToMap(i)
@@ -781,11 +774,75 @@ func TestReqCtxMap(t *testing.T) {
 		reqCtx.SetReqCtxMap()
 		for range 2 {
 			assert.Nil(t, reqCtx.GetReqCtxMap())
-			assert.Nil(t, getReqCtxMapLLMInput(reqCtx)["ctx"])
+			assert.Nil(t, reqCtx.GetInputMap()["ctx"])
 			_, err := getReqCtxMapPluginInput(reqCtx)
 			if assert.NotNil(t, err) {
 				assert.Equal(t, expErr.Error(), err.Error())
 			}
+		}
+	}
+}
+
+func TestGetInputMap(t *testing.T) {
+	i := newReqCtxMapTestContext("input")
+	exp := pbutils.MustConvertToMap(i)
+
+	{
+		reqCtx := &RequestContext{}
+		assert.Equal(t, map[string]any{"ctx": map[string]any(nil)}, reqCtx.GetInputMap())
+		assert.Nil(t, reqCtx.ReqCtxMap)
+		assert.Nil(t, reqCtx.GetReqCtxMap())
+	}
+
+	{
+		preAuth := &corev1.RequestContext{Request: i.Request, Service: i.Service}
+		reqCtx := &RequestContext{DownstreamInfo: preAuth}
+		ret := reqCtx.GetInputMap()
+		assert.Equal(t, map[string]any{"ctx": pbutils.MustConvertToMap(preAuth)}, ret)
+		assert.Len(t, ret, 1)
+		assert.True(t, isSameMap(ret["ctx"], reqCtx.ReqCtxMap))
+		assert.True(t, isSameMap(ret["ctx"], reqCtx.GetInputMap()["ctx"]))
+		assert.True(t, isSameMap(ret["ctx"], reqCtx.GetReqCtxMap()))
+
+		authenticateReqCtxMap(reqCtx, i)
+		assert.Nil(t, reqCtx.ReqCtxMap)
+		authenticated := reqCtx.GetInputMap()
+		assert.Equal(t, map[string]any{"ctx": exp}, authenticated)
+		assert.False(t, isSameMap(ret["ctx"], authenticated["ctx"]))
+		assert.True(t, isSameMap(authenticated["ctx"], reqCtx.GetInputMap()["ctx"]))
+	}
+
+	{
+		reqCtx := &RequestContext{DownstreamInfo: i}
+		reqCtx.SetReqCtxMap()
+		assert.Nil(t, reqCtx.ReqCtxMap)
+		ret := reqCtx.GetInputMap()
+		assert.Equal(t, map[string]any{"ctx": exp}, ret)
+		assert.True(t, isSameMap(ret["ctx"], reqCtx.ReqCtxMap))
+	}
+
+	{
+		injected := map[string]any{"request": map[string]any{}}
+		reqCtx := &RequestContext{DownstreamInfo: i, ReqCtxMap: injected}
+		assert.True(t, isSameMap(injected, reqCtx.GetInputMap()["ctx"]))
+		assert.True(t, isSameMap(injected, reqCtx.ReqCtxMap))
+	}
+
+	{
+		reqCtx := &RequestContext{DownstreamInfo: i}
+		assert.Nil(t, reqCtx.GetReqCtxMap())
+		assert.Equal(t, map[string]any{"ctx": exp}, reqCtx.GetInputMap())
+		assert.Equal(t, exp, reqCtx.GetReqCtxMap())
+	}
+
+	{
+		invalid := proto.Clone(i).(*corev1.RequestContext)
+		invalid.User.Metadata.DisplayName = "invalid-\xff"
+		invalid.User.Metadata.ResourceVersion = "invalid-input"
+		reqCtx := &RequestContext{DownstreamInfo: invalid}
+		for range 2 {
+			assert.Equal(t, map[string]any{"ctx": map[string]any(nil)}, reqCtx.GetInputMap())
+			assert.Nil(t, reqCtx.ReqCtxMap)
 		}
 	}
 }
@@ -857,7 +914,7 @@ func TestReqCtxMapLazy(t *testing.T) {
 					l, lErr := getReqCtxMapPluginInput(lazy)
 					compareErr(e, l, eErr, lErr)
 				case 2:
-					compare(eager.getLLMInput(), getReqCtxMapLLMInput(lazy))
+					compare(eager.getLLMInput(), lazy.GetInputMap())
 				default:
 					compare(eager.reqCtxMap, lazy.GetReqCtxMap())
 				}
@@ -912,7 +969,7 @@ func TestReqCtxMapLazy(t *testing.T) {
 				eager.setLuaInput()
 				setReqCtxMapLuaInput(lazy)
 			case 6:
-				compare(eager.getLLMInput(), getReqCtxMapLLMInput(lazy))
+				compare(eager.getLLMInput(), lazy.GetInputMap())
 			default:
 				compare(eager.reqCtxMap, lazy.GetReqCtxMap())
 			}

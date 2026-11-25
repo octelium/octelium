@@ -807,3 +807,125 @@ func TestCacheResponseAdmissionSensitiveHeadersWithCompression(t *testing.T) {
 		assert.False(t, responseAllowsCache(headers), directive)
 	}
 }
+
+func TestCacheCustomKeyEval(t *testing.T) {
+	celEngine, err := celengine.New(t.Context(), nil)
+	require.Nil(t, err)
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "tst.default", Uid: "cache-svc-uid", ResourceVersion: "cache-svc-rv"},
+		Spec:     &corev1.Service_Spec{IsAnonymous: true},
+	}
+	usr := &corev1.User{
+		Metadata: &metav1.Metadata{Name: "usr", Uid: "cache-usr-uid", ResourceVersion: "cache-usr-rv"},
+	}
+	sess := &corev1.Session{
+		Metadata: &metav1.Metadata{Name: "sess", Uid: "cache-sess-uid", ResourceVersion: "cache-sess-rv"},
+	}
+	newRequest := func(tenant string) *corev1.RequestContext_Request {
+		return &corev1.RequestContext_Request{
+			Type: &corev1.RequestContext_Request_Http{
+				Http: &corev1.RequestContext_Request_HTTP{
+					Path:    "/v1",
+					Headers: map[string]string{"x-tenant": tenant},
+				},
+			},
+		}
+	}
+
+	newReqCtx := map[string]func(tenant string) *middlewares.RequestContext{
+		"authenticated": func(tenant string) *middlewares.RequestContext {
+			ret := &middlewares.RequestContext{
+				Service:         svc,
+				IsAuthenticated: true,
+				DownstreamInfo: &corev1.RequestContext{
+					Request: newRequest(tenant), Service: svc, User: usr, Session: sess,
+				},
+			}
+			ret.SetReqCtxMap()
+			return ret
+		},
+		"anonymous": func(tenant string) *middlewares.RequestContext {
+			return &middlewares.RequestContext{
+				Service:        svc,
+				DownstreamInfo: &corev1.RequestContext{Request: newRequest(tenant), Service: svc},
+			}
+		},
+		"plugin": func(tenant string) *middlewares.RequestContext {
+			downstreamInfo := &corev1.RequestContext{Request: newRequest(tenant), Service: svc, User: usr, Session: sess}
+			return &middlewares.RequestContext{
+				Service:         svc,
+				IsAuthenticated: true,
+				DownstreamInfo:  downstreamInfo,
+				ReqCtxMap:       pbutils.MustConvertToMap(downstreamInfo),
+			}
+		},
+	}
+
+	getKey := func(m *middleware, reqCtx *middlewares.RequestContext, eval string) ([]byte, bool) {
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/v1", nil)
+		return m.getKey(t.Context(), &corev1.Service_Spec_Config_HTTP_Plugin_Cache{
+			Key: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key{
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval{
+					Eval: eval,
+				},
+			},
+		}, reqCtx, req)
+	}
+
+	for _, phase := range []corev1.Service_Spec_Config_HTTP_Plugin_Phase{
+		corev1.Service_Spec_Config_HTTP_Plugin_POST_AUTH,
+		corev1.Service_Spec_Config_HTTP_Plugin_PRE_AUTH,
+	} {
+		m := &middleware{celEngine: celEngine, svcUID: "service", phase: phase}
+
+		for name, fn := range newReqCtx {
+			t.Run(fmt.Sprintf("%s/%s", phase, name), func(t *testing.T) {
+				keyA, isCustom := getKey(m, fn("a"), `ctx.request.http.headers["x-tenant"]`)
+				assert.True(t, isCustom)
+				require.NotEmpty(t, keyA)
+
+				constA, _ := getKey(m, fn("a"), `"a"`)
+				assert.Equal(t, constA, keyA)
+
+				again, _ := getKey(m, fn("a"), `ctx.request.http.headers["x-tenant"]`)
+				assert.Equal(t, keyA, again)
+
+				keyB, _ := getKey(m, fn("b"), `ctx.request.http.headers["x-tenant"]`)
+				require.NotEmpty(t, keyB)
+				assert.NotEqual(t, keyA, keyB)
+				constB, _ := getKey(m, fn("b"), `"b"`)
+				assert.Equal(t, constB, keyB)
+
+				svcKey, _ := getKey(m, fn("a"), `ctx.service.metadata.name + ":" + ctx.request.http.headers["x-tenant"]`)
+				constSvcKey, _ := getKey(m, fn("a"), `"tst.default:a"`)
+				require.NotEmpty(t, svcKey)
+				assert.Equal(t, constSvcKey, svcKey)
+
+				for _, eval := range []string{`""`, `ctx.missing.field`, `1`} {
+					key, isCustom := getKey(m, fn("a"), eval)
+					assert.Nil(t, key, eval)
+					assert.True(t, isCustom, eval)
+				}
+
+				usrKey, _ := getKey(m, fn("a"), `ctx.user.metadata.name`)
+				if name == "anonymous" {
+					assert.Nil(t, usrKey)
+				} else {
+					constUsrKey, _ := getKey(m, fn("a"), `"usr"`)
+					require.NotEmpty(t, usrKey)
+					assert.Equal(t, constUsrKey, usrKey)
+				}
+			})
+		}
+
+		{
+			key, isCustom := getKey(m, &middlewares.RequestContext{Service: svc}, `ctx.request.http.path`)
+			assert.Nil(t, key)
+			assert.True(t, isCustom)
+
+			key, _ = getKey(m, &middlewares.RequestContext{Service: svc}, `"a"`)
+			assert.NotEmpty(t, key)
+		}
+	}
+}

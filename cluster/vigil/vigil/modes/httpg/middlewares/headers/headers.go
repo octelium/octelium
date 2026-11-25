@@ -166,8 +166,6 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 		scrubLLMCredentialHeaders(req)
 	}
 
-	inputMap := reqCtx.GetReqCtxMap()
-
 	if cfg := ucorev1.ToServiceConfig(svcCfg).GetHTTPHeader(); cfg != nil {
 
 		switch cfg.AuthorizationMode {
@@ -188,7 +186,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
 					req.Header.Add(hdr.Key, hdr.GetValue())
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), reqCtx.GetInputMap())
 					req.Header.Add(hdr.Key, val)
 				}
 
@@ -197,7 +195,7 @@ func (m *middleware) setRequestHeaders(req *http.Request, reqCtx *middlewares.Re
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
 					req.Header.Set(hdr.Key, hdr.GetValue())
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), reqCtx.GetInputMap())
 					req.Header.Set(hdr.Key, val)
 				}
 			}
@@ -341,7 +339,6 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 	svcCfg := reqCtx.ServiceConfig
 
 	ctx := req.Context()
-	inputMap := reqCtx.GetReqCtxMap()
 
 	if cfg := ucorev1.ToServiceConfig(svcCfg).GetHTTPHeader(); cfg != nil {
 		for _, hdr := range cfg.AddResponseHeaders {
@@ -350,7 +347,7 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
 					rwHdr.Add(hdr.Key, hdr.GetValue())
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), reqCtx.GetInputMap())
 					rwHdr.Add(hdr.Key, val)
 				}
 			} else {
@@ -358,7 +355,7 @@ func (m *middleware) modifyResponseHeaders(rwHdr http.Header, req *http.Request,
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Value:
 					rwHdr.Set(hdr.Key, hdr.GetValue())
 				case *corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval:
-					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), inputMap)
+					val, _ := m.celEngine.EvalPolicyString(ctx, hdr.GetEval(), reqCtx.GetInputMap())
 					rwHdr.Set(hdr.Key, val)
 				}
 			}

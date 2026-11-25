@@ -216,13 +216,8 @@ func (m *middleware) getKey(ctx context.Context,
 	if cacheC.Key != nil {
 		switch cacheC.Key.Type.(type) {
 		case *corev1.Service_Spec_Config_HTTP_Plugin_Cache_Key_Eval:
-			inputMap := reqCtx.GetReqCtxMap()
-			if inputMap == nil {
-				inputMap = map[string]any{}
-			}
-
 			key, err := m.celEngine.EvalPolicyString(ctx,
-				cacheC.Key.GetEval(), inputMap)
+				cacheC.Key.GetEval(), reqCtx.GetInputMap())
 			if err != nil {
 				zap.L().Warn("Could not evaluate HTTP cache key", zap.Error(err))
 				return nil, true

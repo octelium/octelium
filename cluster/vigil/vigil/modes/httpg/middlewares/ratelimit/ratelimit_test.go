@@ -30,6 +30,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/modes/httpg/middlewares"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -279,4 +280,95 @@ func TestMiddleware(t *testing.T) {
 
 	}
 
+}
+
+func TestGetKeyEval(t *testing.T) {
+	ctx := context.Background()
+	celEngine, err := celengine.New(ctx, nil)
+	assert.Nil(t, err)
+	m := &middleware{celEngine: celEngine}
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{Name: "tst.default", Uid: "rl-svc-uid", ResourceVersion: "rl-svc-rv"},
+	}
+	usr := &corev1.User{
+		Metadata: &metav1.Metadata{Name: "usr", Uid: "rl-usr-uid", ResourceVersion: "rl-usr-rv"},
+	}
+	sess := &corev1.Session{
+		Metadata: &metav1.Metadata{Name: "sess", Uid: "rl-sess-uid", ResourceVersion: "rl-sess-rv"},
+	}
+	request := &corev1.RequestContext_Request{
+		Type: &corev1.RequestContext_Request_Http{
+			Http: &corev1.RequestContext_Request_HTTP{
+				Path:    "/v1",
+				Headers: map[string]string{"x-tenant": "tenant"},
+			},
+		},
+	}
+
+	authenticated := func() *middlewares.RequestContext {
+		ret := &middlewares.RequestContext{
+			DownstreamInfo: &corev1.RequestContext{Request: request, Service: svc, User: usr, Session: sess},
+		}
+		ret.SetReqCtxMap()
+		return ret
+	}
+	preAuth := func() *middlewares.RequestContext {
+		downstreamInfo := &corev1.RequestContext{Request: request, Service: svc}
+		return &middlewares.RequestContext{
+			DownstreamInfo: downstreamInfo,
+			ReqCtxMap:      pbutils.MustConvertToMap(downstreamInfo),
+		}
+	}
+	anonymous := func() *middlewares.RequestContext {
+		return &middlewares.RequestContext{
+			DownstreamInfo: &corev1.RequestContext{Request: request, Service: svc},
+		}
+	}
+	noDownstreamInfo := func() *middlewares.RequestContext {
+		return &middlewares.RequestContext{}
+	}
+
+	evalKey := func(eval string) *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key {
+		return &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_Eval{
+				Eval: eval,
+			},
+		}
+	}
+
+	for i, tc := range []struct {
+		reqCtx func() *middlewares.RequestContext
+		key    *corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key
+		want   string
+	}{
+		{authenticated, nil, "rl-sess-uid"},
+		{authenticated, evalKey(`ctx.user.metadata.name`), "usr"},
+		{authenticated, evalKey(`ctx.request.http.headers["x-tenant"] + ":" + ctx.session.metadata.name`), "tenant:sess"},
+		{authenticated, evalKey(`ctx.service.metadata.uid`), "rl-svc-uid"},
+		{authenticated, evalKey(`"const"`), "const"},
+		{authenticated, evalKey(`""`), "rl:rl-sess-uid"},
+		{authenticated, evalKey(`ctx.missing.field`), "rl:rl-sess-uid"},
+		{authenticated, evalKey(`1`), "rl:rl-sess-uid"},
+		{authenticated, &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerUser{PerUser: true},
+		}, "rl-usr-uid"},
+		{authenticated, &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key{
+			Type: &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit_Key_PerSession{PerSession: true},
+		}, "rl:rl-sess-uid"},
+		{preAuth, evalKey(`ctx.request.http.headers["x-tenant"]`), "tenant"},
+		{preAuth, evalKey(`ctx.user.metadata.name`), "rl:"},
+		{anonymous, evalKey(`ctx.request.http.headers["x-tenant"] + ":" + ctx.service.metadata.name`), "tenant:tst.default"},
+		{anonymous, evalKey(`ctx.session.metadata.uid`), "rl:"},
+		{noDownstreamInfo, evalKey(`"const"`), "const"},
+		{noDownstreamInfo, evalKey(`ctx.request.http.path`), "rl:"},
+	} {
+		reqCtx := tc.reqCtx()
+		assert.Equal(t, tc.want, m.getKey(ctx, "rl", &corev1.Service_Spec_Config_HTTP_Plugin_RateLimit{
+			Key: tc.key,
+		}, reqCtx), "%d", i)
+		if tc.key.GetEval() == "" {
+			assert.Nil(t, reqCtx.ReqCtxMap, "%d", i)
+		}
+	}
 }
