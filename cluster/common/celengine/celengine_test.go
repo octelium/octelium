@@ -18,12 +18,15 @@ package celengine
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"cel.dev/cel-go/common/types"
 	"github.com/octelium/octelium/apis/main/corev1"
@@ -450,4 +453,298 @@ func TestCELListConcurrentLimits(t *testing.T) {
 			})
 		}
 	}
+}
+
+func getOldProgKey(exp string, typ *types.Type) string {
+	if typ != nil {
+		exp = exp + "\x00" + typ.String()
+	}
+	hsh := sha256.Sum256([]byte(exp))
+	return fmt.Sprintf("%x", hsh[:24])
+}
+
+func getOldPQKey(script, mod, qry string) string {
+	hsh := sha256.Sum256([]byte(script + "\x00" + mod + "\x00" + qry))
+	return fmt.Sprintf("%x", hsh[:24])
+}
+
+func TestProgKey(t *testing.T) {
+	type arg struct {
+		exp string
+		typ *types.Type
+	}
+
+	var args []arg
+	for _, exp := range []string{
+		"", " ", "true", "true ", " true", "True", "ctx.value", `"value"`, `{"value": ctx.value}`,
+		"bool", "string", "true\x00", "\x00bool", "true\x00bool", "true\x00string", `"value"` + "\x00string",
+	} {
+		for _, typ := range []*types.Type{
+			nil, types.BoolType, types.StringType, types.IntType, types.DynType,
+			types.NewListType(types.StringType), types.NewListType(types.StringType),
+			types.NewMapType(types.StringType, types.DynType),
+		} {
+			args = append(args, arg{exp, typ})
+		}
+	}
+
+	nCollisions := 0
+	for _, a := range args {
+		for _, b := range args {
+			isOldEqual := getOldProgKey(a.exp, a.typ) == getOldProgKey(b.exp, b.typ)
+			isEqual := getProgKey(a.exp, a.typ) == getProgKey(b.exp, b.typ)
+			if isOldEqual && !isEqual {
+				assert.Contains(t, a.exp+b.exp, "\x00")
+				nCollisions++
+				continue
+			}
+			assert.Equal(t, isOldEqual, isEqual, "%q %v %q %v", a.exp, a.typ, b.exp, b.typ)
+		}
+	}
+	assert.Equal(t, 8, nCollisions)
+
+	assert.Equal(t, progKey{exp: "true"}, getProgKey("true", nil))
+	assert.Equal(t, progKey{exp: "true", typ: "bool"}, getProgKey("true", types.BoolType))
+	assert.Equal(t, progKey{exp: "true", typ: "list(string)"}, getProgKey("true", types.NewListType(types.StringType)))
+	assert.NotEqual(t, getProgKey("true\x00bool", nil), getProgKey("true", types.BoolType))
+
+	var pqArgs [][3]string
+	for _, script := range []string{"", "a", "package octelium", "package octelium\x00condition", "a\x00b"} {
+		for _, q := range [][2]string{
+			{"condition", "match"}, {"eval", "result"}, {"condition", "result"}, {"eval", "match"},
+			{"match", "condition"}, {"b", "c"}, {"b\x00c", "d"}, {"c", "d"},
+		} {
+			pqArgs = append(pqArgs, [3]string{script, q[0], q[1]})
+		}
+	}
+	nCollisions = 0
+	for _, a := range pqArgs {
+		for _, b := range pqArgs {
+			isOldEqual := getOldPQKey(a[0], a[1], a[2]) == getOldPQKey(b[0], b[1], b[2])
+			isEqual := pqKey{a[0], a[1], a[2]} == pqKey{b[0], b[1], b[2]}
+			if isOldEqual && !isEqual {
+				assert.Contains(t, a[0]+a[1]+a[2]+b[0]+b[1]+b[2], "\x00")
+				nCollisions++
+				continue
+			}
+			assert.Equal(t, isOldEqual, isEqual, "%q %q", a, b)
+		}
+	}
+	assert.Equal(t, 2, nCollisions)
+}
+
+func TestProgCacheNul(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+
+	require.Nil(t, srv.AddPolicy(ctx, "true"))
+	require.Nil(t, srv.AddPolicyString(ctx, `"value"`))
+	assert.ErrorContains(t, srv.AddPolicyMapAny(ctx, "true\x00bool"), "Could not compile CEL expression")
+	assert.ErrorContains(t, srv.AddPolicyMapAny(ctx, `"value"`+"\x00string"), "Could not compile CEL expression")
+	_, err = srv.EvalPolicyMapStrAny(ctx, "true\x00bool", nil)
+	assert.ErrorContains(t, err, "Could not compile CEL expression")
+	assert.Equal(t, 2, srv.c.Len())
+}
+
+func TestProgCacheKeyCopy(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+
+	buf := strings.Repeat("x", 1<<16) + "ctx.value"
+	exp := buf[1<<16:]
+	prg, err := srv.getOrSetProg(ctx, exp, types.BoolType)
+	require.Nil(t, err)
+	cached, err := srv.getOrSetProg(ctx, strings.Clone(exp), types.BoolType)
+	require.Nil(t, err)
+	assert.True(t, prg == cached)
+	assert.Equal(t, 1, srv.c.Len())
+	for key := range srv.c.All() {
+		assert.Equal(t, progKey{exp: "ctx.value", typ: "bool"}, key)
+		assert.NotSame(t, unsafe.StringData(exp), unsafe.StringData(key.exp))
+	}
+
+	buf = strings.Repeat("x", 1<<16) + "package octelium.eval\nresult := input.ctx.value"
+	script := buf[1<<16:]
+	pq, err := srv.opaEngine.getOrSetPQ(ctx, script, "eval", "result")
+	require.Nil(t, err)
+	cachedPQ, err := srv.opaEngine.getOrSetPQ(ctx, strings.Clone(script), "eval", "result")
+	require.Nil(t, err)
+	assert.Same(t, pq, cachedPQ)
+	assert.Equal(t, 1, srv.opaEngine.c.Len())
+	for key := range srv.opaEngine.c.All() {
+		assert.Equal(t, pqKey{script: "package octelium.eval\nresult := input.ctx.value", mod: "eval", qry: "result"}, key)
+		assert.NotSame(t, unsafe.StringData(script), unsafe.StringData(key.script))
+	}
+}
+
+func TestProgCacheRandom(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+	ref, err := New(ctx, nil)
+	require.Nil(t, err)
+
+	exps := []string{
+		"true", "false", "42", `"value"`, "ctx.value", "ctx.allow", "ctx.missing.value",
+		`{"value": ctx.value}`, `ctx.value + "-suffix"`, `ctx.allow && ctx.value == "user"`,
+		`[ctx.value]`, "(", "unknownVariable", "", strings.Repeat(" ", 10001),
+	}
+	scripts := []string{
+		"package octelium.eval\nresult := input.ctx.value",
+		"package octelium.eval\nresult := {\"value\": input.ctx.value}",
+		"package octelium.condition\nmatch := input.ctx.allow",
+		"package octelium.condition\nmatch := true",
+		"package octelium\ncondition := {\"match\": input.ctx.allow}\neval := {\"result\": input.ctx.value}",
+		"package octelium.eval\nresult := ",
+		"",
+	}
+	inputs := []map[string]any{
+		nil,
+		{"ctx": map[string]any{}},
+		{"ctx": map[string]any{"value": "user", "allow": true}},
+		{"ctx": map[string]any{"value": "other", "allow": false}},
+		{"ctx": map[string]any{"value": true, "allow": "true"}},
+	}
+
+	type evalFn func(e *CELEngine, exp string, input map[string]any) (any, error)
+	celFns := []evalFn{
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return e.EvalPolicy(ctx, exp, input)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return e.EvalPolicyString(ctx, exp, input)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return e.EvalPolicyMapStrAny(ctx, exp, input)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return nil, e.AddPolicy(ctx, exp)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return nil, e.AddPolicyString(ctx, exp)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return nil, e.AddPolicyMapAny(ctx, exp)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return e.EvalCondition(ctx, &corev1.Condition{Type: &corev1.Condition_Match{Match: exp}}, input)
+		},
+	}
+	celTypes := []*types.Type{types.BoolType, types.StringType, nil, types.BoolType, types.StringType, nil, types.BoolType}
+	opaFns := []evalFn{
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return e.EvalPolicyStringOPA(ctx, exp, input)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return e.OPAEvalPolicyMapStrAny(ctx, exp, input)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return nil, e.AddPolicyOPA(ctx, exp)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return nil, e.AddPolicyStringOPA(ctx, exp)
+		},
+		func(e *CELEngine, exp string, input map[string]any) (any, error) {
+			return e.EvalCondition(ctx, &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+				Type: &corev1.Condition_OPA_Inline{Inline: exp},
+			}}}, input)
+		},
+	}
+	opaQueries := [][2]string{{"eval", "result"}, {"eval", "result"}, {"condition", "match"}, {"eval", "result"}, {"condition", "match"}}
+
+	getErr := func(err error) string {
+		if err == nil {
+			return ""
+		}
+		return err.Error()
+	}
+
+	oldKeys := map[string]bool{}
+	oldPQKeys := map[string]bool{}
+	nCached, nPQCached, nErr := 0, 0, 0
+	r := rand.New(rand.NewPCG(20261125, 11))
+	for i := range 2000 {
+		input := inputs[r.IntN(len(inputs))]
+		if r.IntN(3) > 0 {
+			idx := r.IntN(len(celFns))
+			exp := exps[r.IntN(len(exps))]
+			oldKey := getOldProgKey(exp, celTypes[idx])
+			isCached := oldKeys[oldKey]
+			_, ok := srv.c.Get(getProgKey(exp, celTypes[idx]))
+			assert.Equal(t, isCached, ok, "%d %d %q", i, idx, exp)
+			ref.c.Clear()
+			want, wantErr := celFns[idx](ref, exp, input)
+			if ref.c.Len() == 1 {
+				oldKeys[oldKey] = true
+			}
+			got, err := celFns[idx](srv, exp, input)
+			assert.Equal(t, want, got, "%d %d %q", i, idx, exp)
+			assert.Equal(t, getErr(wantErr), getErr(err), "%d %d %q", i, idx, exp)
+			if isCached {
+				nCached++
+			}
+			if err != nil {
+				nErr++
+			}
+		} else {
+			idx := r.IntN(len(opaFns))
+			script := scripts[r.IntN(len(scripts))]
+			oldKey := getOldPQKey(script, opaQueries[idx][0], opaQueries[idx][1])
+			isCached := oldPQKeys[oldKey]
+			_, ok := srv.opaEngine.c.Get(pqKey{script: script, mod: opaQueries[idx][0], qry: opaQueries[idx][1]})
+			assert.Equal(t, isCached, ok, "%d %d %q", i, idx, script)
+			ref.opaEngine.c.Clear()
+			want, wantErr := opaFns[idx](ref, script, input)
+			if ref.opaEngine.c.Len() == 1 {
+				oldPQKeys[oldKey] = true
+			}
+			got, err := opaFns[idx](srv, script, input)
+			assert.Equal(t, want, got, "%d %d %q", i, idx, script)
+			assert.Equal(t, getErr(wantErr), getErr(err), "%d %d %q", i, idx, script)
+			if isCached {
+				nPQCached++
+			}
+			if err != nil {
+				nErr++
+			}
+		}
+		assert.Equal(t, len(oldKeys), srv.c.Len(), "%d", i)
+		assert.Equal(t, len(oldPQKeys), srv.opaEngine.c.Len(), "%d", i)
+	}
+	assert.Greater(t, nCached, 500)
+	assert.Greater(t, nPQCached, 200)
+	assert.Greater(t, nErr, 200)
+	assert.Greater(t, len(oldKeys), 15)
+	assert.Greater(t, len(oldPQKeys), 5)
+}
+
+func BenchmarkGetOrSetProg(b *testing.B) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	require.Nil(b, err)
+	exp := `ctx.user.spec.type == "HUMAN" && ctx.session.status.isBrowser && ctx.request.http.path.startsWith("/api") && ctx.request.http.path != "/some/longer/padding/to/reach/typical/policy/length"`
+	_, err = srv.getOrSetProg(ctx, exp, types.BoolType)
+	require.Nil(b, err)
+	script := "package octelium.eval\nresult := input.ctx.value"
+	_, err = srv.opaEngine.getOrSetPQ(ctx, script, "eval", "result")
+	require.Nil(b, err)
+
+	b.Run("cel", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := srv.getOrSetProg(ctx, exp, types.BoolType); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("opa", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := srv.opaEngine.getOrSetPQ(ctx, script, "eval", "result"); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

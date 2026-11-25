@@ -19,6 +19,7 @@ package celengine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/octelium/octelium/cluster/common/cache"
@@ -34,7 +35,7 @@ const opaEvalTimeout = 10 * time.Second
 var opaRoundTripper topdown.CustomizeRoundTripper = httputils.RestrictTransport
 
 type opaEngine struct {
-	c           *cache.Cache[string, *rego.PreparedEvalQuery]
+	c           *cache.Cache[pqKey, *rego.PreparedEvalQuery]
 	caps        *ast.Capabilities
 	evalTimeout time.Duration
 }
@@ -54,7 +55,7 @@ func newOPAEngine(_ context.Context, o *opaOpts) (*opaEngine, error) {
 	}
 
 	return &opaEngine{
-		c: cache.New(&cache.Opts[string, *rego.PreparedEvalQuery]{
+		c: cache.New(&cache.Opts[pqKey, *rego.PreparedEvalQuery]{
 			DefaultTTL:      24 * time.Hour,
 			CleanupInterval: 10 * time.Minute,
 		}),
@@ -64,6 +65,12 @@ func newOPAEngine(_ context.Context, o *opaOpts) (*opaEngine, error) {
 }
 
 var ErrOPAUndefined = errors.New("OPA decision undefined")
+
+type pqKey struct {
+	script string
+	mod    string
+	qry    string
+}
 
 func (e *opaEngine) EvalPolicy(ctx context.Context, script string, input map[string]any) (bool, error) {
 	res, err := e.doEvalPolicy(ctx, script, input, "condition", "match")
@@ -94,7 +101,7 @@ func (e *opaEngine) getOrSetPQ(ctx context.Context, script string, mod, qry stri
 		return nil, errors.Errorf("OPA script is too long")
 	}
 
-	key := getKey(script + "\x00" + mod + "\x00" + qry)
+	key := pqKey{script: script, mod: mod, qry: qry}
 	if pq, ok := e.c.Get(key); ok {
 		return pq, nil
 	}
@@ -110,7 +117,7 @@ func (e *opaEngine) getOrSetPQ(ctx context.Context, script string, mod, qry stri
 	if err != nil {
 		return nil, err
 	}
-	e.c.Set(key, &pq)
+	e.c.Set(pqKey{script: strings.Clone(script), mod: mod, qry: qry}, &pq)
 
 	return &pq, nil
 }

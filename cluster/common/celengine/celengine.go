@@ -18,8 +18,6 @@ package celengine
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -37,7 +35,7 @@ import (
 )
 
 type CELEngine struct {
-	c         *cache.Cache[string, cel.Program]
+	c         *cache.Cache[progKey, cel.Program]
 	env       *cel.Env
 	opaEngine *opaEngine
 }
@@ -65,7 +63,7 @@ func New(ctx context.Context, opts *Opts) (*CELEngine, error) {
 	}
 
 	return &CELEngine{
-		c: cache.New(&cache.Opts[string, cel.Program]{
+		c: cache.New(&cache.Opts[progKey, cel.Program]{
 			DefaultTTL:      24 * time.Hour,
 			CleanupInterval: 10 * time.Minute,
 		}),
@@ -275,7 +273,7 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 		return nil, err
 	}
 
-	e.c.Set(key, prg)
+	e.c.Set(progKey{exp: strings.Clone(exp), typ: key.typ}, prg)
 	/*
 		zap.L().Debug("CEL expression compilation done",
 			zap.Float32("time microsec", float32(time.Since(startedAt).Nanoseconds())/1000),
@@ -285,16 +283,16 @@ func (e *CELEngine) getOrSetProg(_ context.Context, exp string, typ *types.Type)
 	return prg, nil
 }
 
-func getKey(script string) string {
-	hsh := sha256.Sum256([]byte(script))
-	return fmt.Sprintf("%x", hsh[:24])
+type progKey struct {
+	exp string
+	typ string
 }
 
-func getProgKey(script string, typ *types.Type) string {
+func getProgKey(exp string, typ *types.Type) progKey {
 	if typ == nil {
-		return getKey(script)
+		return progKey{exp: exp}
 	}
-	return getKey(script + "\x00" + typ.String())
+	return progKey{exp: exp, typ: typ.String()}
 }
 
 func (e *CELEngine) EvalCondition(ctx context.Context, condition *corev1.Condition, inputMap map[string]any) (bool, error) {
