@@ -39,13 +39,13 @@ func TestGenesisPackageJobs(t *testing.T) {
 		{"", "", "init", "octelium"}, {"init", "octeliumee", "init", "octeliumee"}, {"upgrade", "cordium", "upgrade", "cordium"},
 	} {
 		t.Run(tc.wantCmd+"/"+tc.wantPkg, func(t *testing.T) {
-			first := getGenesisJob("example.com", tc.cmd, "1.2.3", tc.pkg, nil)
-			second := getGenesisJob("example.com", tc.cmd, "1.2.3", tc.pkg, nil)
+			first := getGenesisJob("example.com", tc.cmd, "1.2.3", tc.pkg, "octelium-genesis", nil)
+			second := getGenesisJob("example.com", tc.cmd, "1.2.3", tc.pkg, "octelium-genesis", nil)
 			assert.NotEqual(t, first.Name, second.Name)
 			assert.Regexp(t, "^octelium-genesis-"+tc.wantCmd+"-"+tc.wantPkg+"-[a-z0-9]{6}$", first.Name)
 			assert.Equal(t, "octelium", first.Namespace)
 			assert.Equal(t, first.Labels, first.Spec.Template.Labels)
-			assert.Equal(t, "octelium-nocturne", first.Spec.Template.Spec.ServiceAccountName)
+			assert.Equal(t, "octelium-genesis", first.Spec.Template.Spec.ServiceAccountName)
 			assert.Equal(t, k8scorev1.RestartPolicyNever, first.Spec.Template.Spec.RestartPolicy)
 			require.Len(t, first.Spec.Template.Spec.Containers, 1)
 			container := first.Spec.Template.Spec.Containers[0]
@@ -56,7 +56,8 @@ func TestGenesisPackageJobs(t *testing.T) {
 			assert.Empty(t, first.Spec.Template.Spec.Volumes)
 		})
 	}
-	job := getGenesisJob("example.com", "upgrade", "1.2.3", "cordium", &install.SPIFFEOpts{CSIDriver: "custom.csi", TrustDomain: "test.local"})
+	job := getGenesisJob("example.com", "upgrade", "1.2.3", "cordium", "octelium-nocturne", &install.SPIFFEOpts{CSIDriver: "custom.csi", TrustDomain: "test.local"})
+	assert.Equal(t, "octelium-nocturne", job.Spec.Template.Spec.ServiceAccountName)
 	assert.Equal(t, "custom.csi", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
 	assert.Contains(t, job.Spec.Template.Spec.Containers[0].Env, k8scorev1.EnvVar{Name: "OCTELIUM_SPIFFE_TRUST_DOMAIN", Value: "test.local"})
 }
@@ -70,6 +71,7 @@ func TestCreateGenesisPackage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs.Items, 1)
 	for _, job := range jobs.Items {
+		assert.Equal(t, "octelium-genesis", job.Spec.Template.Spec.ServiceAccountName)
 		assert.Equal(t, "csi.spiffe.io", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
 		_, err = c.BatchV1().Jobs(job.Namespace).UpdateStatus(ctx, &job, metav1.UpdateOptions{})
@@ -84,4 +86,30 @@ func TestCreateGenesisPackage(t *testing.T) {
 	c = fakek8s.NewSimpleClientset()
 	c.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 	assert.ErrorIs(t, createGenesis(ctx, c, "example.com", "upgrade", "1.2.3", "cordium"), want)
+}
+
+func TestCreateGenesisPackageServiceAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		forbidden  bool
+		svcAccount string
+	}{
+		{name: "Installer", svcAccount: "octelium-genesis"},
+		{name: "LegacyFallback", forbidden: true, svcAccount: "octelium-nocturne"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			c := fakek8s.NewSimpleClientset()
+			if tc.forbidden {
+				c.PrependReactor("create", "serviceaccounts", func(k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, k8serr.NewForbidden(schema.GroupResource{Resource: "serviceaccounts"}, "octelium-genesis", fmt.Errorf("not permitted"))
+				})
+			}
+			require.NoError(t, createGenesis(ctx, c, "example.com", "init", "1.2.3", "cordium"))
+			jobs, err := c.BatchV1().Jobs("octelium").List(ctx, metav1.ListOptions{})
+			require.NoError(t, err)
+			require.Len(t, jobs.Items, 1)
+			assert.Equal(t, tc.svcAccount, jobs.Items[0].Spec.Template.Spec.ServiceAccountName)
+		})
+	}
 }

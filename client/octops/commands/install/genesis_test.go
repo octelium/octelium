@@ -49,6 +49,7 @@ import (
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -245,7 +246,7 @@ func TestGenesisResourcesAndBootstrapSPIFFE(t *testing.T) {
 }
 
 func TestGenesisPreservesSharedResources(t *testing.T) {
-	c := fakek8s.NewSimpleClientset(getGenesisRoleBinding(), getGenesisRole(), getGenesisServiceAccount())
+	c := fakek8s.NewSimpleClientset(getGenesisRoleBinding([]rbacv1.Subject{getGenesisSubject(genesisNS)}), getGenesisRole(), getGenesisServiceAccount(genesisNS))
 	_, err := createGenesis(t.Context(), &Opts{K8sC: c})
 	require.NoError(t, err)
 	for _, action := range c.Actions() {

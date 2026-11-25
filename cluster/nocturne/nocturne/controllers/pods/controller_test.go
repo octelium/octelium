@@ -702,6 +702,24 @@ func TestPodEvents(t *testing.T) {
 			h.OnDelete(cache.DeletedFinalStateUnknown{Obj: "pod"})
 		}, 0},
 		{"InvalidDelete", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) { h.OnDelete(nil) }, 0},
+		{"OtherNamespaceAdd", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Namespace = "tenant"
+			h.OnAdd(p, false)
+		}, 0},
+		{"OtherNamespaceUpdate", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Namespace = "tenant"
+			old := p.DeepCopy()
+			p.ResourceVersion = "2"
+			h.OnUpdate(old, p)
+		}, 0},
+		{"OtherNamespaceDelete", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Namespace = "tenant"
+			h.OnDelete(p)
+		}, 0},
+		{"OtherNamespaceTombstone", func(h cache.ResourceEventHandler, p *k8scorev1.Pod) {
+			p.Namespace = "tenant"
+			h.OnDelete(cache.DeletedFinalStateUnknown{Key: "tenant/pod", Obj: p})
+		}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
@@ -764,6 +782,8 @@ func TestReconcilePodAddresses(t *testing.T) {
 	notStarted.Status.Conditions = []k8scorev1.PodCondition{
 		{Type: k8scorev1.PodReadyToStartContainers, Status: k8scorev1.ConditionFalse},
 	}
+	otherNamespace := newTstPod("other-namespace", svc.Metadata.Name, `[{"name":"octelium/octelium","ips":["100.64.0.3"]}]`)
+	otherNamespace.Namespace = "tenant"
 	c := newTstController(t, coreC,
 		newTstPod("b", svc.Metadata.Name, valid),
 		newTstPod("a", svc.Metadata.Name, `[{"name":"octelium/octelium","ips":["fd00::1"]}]`),
@@ -772,7 +792,7 @@ func TestReconcilePodAddresses(t *testing.T) {
 		newTstPod("object", svc.Metadata.Name, `{}`),
 		newTstPod("null", svc.Metadata.Name, `null`),
 		newTstPod("network", svc.Metadata.Name, `[{"name":"other/network","ips":["192.0.2.1"]}]`),
-		noAnnotation, failed, terminating, notStarted,
+		noAnnotation, failed, terminating, notStarted, otherNamespace,
 	)
 	assert.Nil(t, c.reconcile(ctx, svc.Metadata.Name))
 	assert.Equal(t, 1, updates)
@@ -879,10 +899,13 @@ func TestPodResync(t *testing.T) {
 					return ret, nil
 				},
 			}
+			otherNamespace := newTstPod("c", "other-namespace-only", "[]")
+			otherNamespace.Namespace = "tenant"
 			c := newTstController(t, coreC,
 				newTstPod("a", "svc-0", "[]"),
 				newTstPod("b", "pod-only", "[]"),
-				&k8scorev1.Pod{ObjectMeta: k8smetav1.ObjectMeta{Name: "unlabelled"}},
+				&k8scorev1.Pod{ObjectMeta: k8smetav1.ObjectMeta{Name: "unlabelled", Namespace: vutils.K8sNS}},
+				otherNamespace,
 			)
 			if tc.podErr {
 				c.podLister = &fakePodLister{err: errors.New("could not list pods")}

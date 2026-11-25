@@ -19,6 +19,7 @@ package k8sutils
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/octelium/octelium/cluster/common/k8sretry"
@@ -369,6 +370,95 @@ func CreateOrUpdateClusterRoleBinding(ctx context.Context, c kubernetes.Interfac
 			return c.RbacV1().ClusterRoleBindings().Update(ctx, old, k8smetav1.UpdateOptions{})
 		},
 		func(old *rbacv1.ClusterRoleBinding) {
+			mergeMetadata(old, itm)
+			old.OwnerReferences = itm.OwnerReferences
+			old.Subjects = itm.Subjects
+			replace = old.RoleRef != itm.RoleRef
+			old.RoleRef = itm.RoleRef
+		},
+	)
+}
+
+func CreateOrUpdateClusterRoleBindingSubjects(ctx context.Context, c kubernetes.Interface, itm *rbacv1.ClusterRoleBinding, removed []rbacv1.Subject) (*rbacv1.ClusterRoleBinding, error) {
+	return retryableCreateOrUpdate(
+		ctx, itm.Name,
+		func(ctx context.Context) (*rbacv1.ClusterRoleBinding, error) {
+			return c.RbacV1().ClusterRoleBindings().Create(ctx, itm, k8smetav1.CreateOptions{})
+		},
+		func(ctx context.Context) (*rbacv1.ClusterRoleBinding, error) {
+			return c.RbacV1().ClusterRoleBindings().Get(ctx, itm.Name, k8smetav1.GetOptions{})
+		},
+		func(ctx context.Context, old *rbacv1.ClusterRoleBinding) (*rbacv1.ClusterRoleBinding, error) {
+			return c.RbacV1().ClusterRoleBindings().Update(ctx, old, k8smetav1.UpdateOptions{})
+		},
+		func(old *rbacv1.ClusterRoleBinding) {
+			mergeMetadata(old, itm)
+			old.Subjects = MergeSubjects(old.Subjects, itm.Subjects, removed)
+		},
+	)
+}
+
+func MergeSubjects(current, added, removed []rbacv1.Subject) []rbacv1.Subject {
+	ret := make([]rbacv1.Subject, 0, len(current)+len(added))
+	for i, itm := range append(slices.Clone(current), added...) {
+		isSame := func(arg rbacv1.Subject) bool {
+			return arg.Kind == itm.Kind && arg.Name == itm.Name && arg.Namespace == itm.Namespace
+		}
+		if slices.ContainsFunc(ret, isSame) || (i < len(current) && slices.ContainsFunc(removed, isSame)) {
+			continue
+		}
+		ret = append(ret, itm)
+	}
+
+	return ret
+}
+
+func CreateOrUpdateRole(ctx context.Context, c kubernetes.Interface, itm *rbacv1.Role) (*rbacv1.Role, error) {
+	return retryableCreateOrUpdate(
+		ctx, itm.Name,
+		func(ctx context.Context) (*rbacv1.Role, error) {
+			return c.RbacV1().Roles(itm.Namespace).Create(ctx, itm, k8smetav1.CreateOptions{})
+		},
+		func(ctx context.Context) (*rbacv1.Role, error) {
+			return c.RbacV1().Roles(itm.Namespace).Get(ctx, itm.Name, k8smetav1.GetOptions{})
+		},
+		func(ctx context.Context, old *rbacv1.Role) (*rbacv1.Role, error) {
+			return c.RbacV1().Roles(itm.Namespace).Update(ctx, old, k8smetav1.UpdateOptions{})
+		},
+		func(old *rbacv1.Role) {
+			mergeMetadata(old, itm)
+			old.OwnerReferences = itm.OwnerReferences
+			old.Rules = itm.Rules
+		},
+	)
+}
+
+func CreateOrUpdateRoleBinding(ctx context.Context, c kubernetes.Interface, itm *rbacv1.RoleBinding) (*rbacv1.RoleBinding, error) {
+	replace := false
+	return retryableCreateOrUpdate(
+		ctx, itm.Name,
+		func(ctx context.Context) (*rbacv1.RoleBinding, error) {
+			return c.RbacV1().RoleBindings(itm.Namespace).Create(ctx, itm, k8smetav1.CreateOptions{})
+		},
+		func(ctx context.Context) (*rbacv1.RoleBinding, error) {
+			return c.RbacV1().RoleBindings(itm.Namespace).Get(ctx, itm.Name, k8smetav1.GetOptions{})
+		},
+		func(ctx context.Context, old *rbacv1.RoleBinding) (*rbacv1.RoleBinding, error) {
+			if replace {
+				deleteErr := c.RbacV1().RoleBindings(itm.Namespace).Delete(
+					ctx, old.Name, k8smetav1.DeleteOptions{Preconditions: &k8smetav1.Preconditions{UID: &old.UID, ResourceVersion: &old.ResourceVersion}},
+				)
+				if deleteErr != nil && !k8serr.IsNotFound(deleteErr) {
+					return nil, deleteErr
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				return c.RbacV1().RoleBindings(itm.Namespace).Create(ctx, itm, k8smetav1.CreateOptions{})
+			}
+			return c.RbacV1().RoleBindings(itm.Namespace).Update(ctx, old, k8smetav1.UpdateOptions{})
+		},
+		func(old *rbacv1.RoleBinding) {
 			mergeMetadata(old, itm)
 			old.OwnerReferences = itm.OwnerReferences
 			old.Subjects = itm.Subjects

@@ -91,6 +91,10 @@ func (g *Genesis) RunUpgrade(ctx context.Context, o *UpgradeOpts) error {
 	}
 	os.Setenv("OCTELIUM_REGION_NAME", regionName)
 
+	if err := components.CreateGenesisIdentity(ctx, &components.CommonOpts{K8sC: g.k8sC}, false); err != nil {
+		return err
+	}
+
 	zap.L().Debug("upgrading rscServer")
 
 	if err := components.CreateRscServer(ctx, &components.CommonOpts{

@@ -217,6 +217,10 @@ func (g *Genesis) RunInit(ctx context.Context, o *InitOpts) error {
 		return err
 	}
 
+	if err := components.CreateGenesisIdentity(ctx, &components.CommonOpts{K8sC: g.k8sC}, true); err != nil {
+		return err
+	}
+
 	if err := g.installComponents(ctx,
 		region, &components.CommonOpts{
 			K8sC:          g.k8sC,

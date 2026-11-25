@@ -56,6 +56,7 @@ import (
 	"google.golang.org/grpc/status"
 	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smeta "k8s.io/apimachinery/pkg/api/meta"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -339,7 +340,13 @@ func TestUpgradeAndPackageCommandsE2E(t *testing.T) {
 				require.Len(t, jobs.Items, 1)
 				job := jobs.Items[0]
 				assert.Equal(t, job.Labels, job.Spec.Template.Labels)
-				assert.Equal(t, "octelium-nocturne", job.Spec.Template.Spec.ServiceAccountName)
+				assert.Equal(t, "octelium-genesis", job.Spec.Template.Spec.ServiceAccountName)
+				_, err = c.CoreV1().ServiceAccounts("octelium").Get(context.Background(), "octelium-genesis", k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				binding, err := c.RbacV1().ClusterRoleBindings().Get(context.Background(), "octelium-genesis", k8smetav1.GetOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, "octelium-genesis", binding.RoleRef.Name)
+				assert.Equal(t, []rbacv1.Subject{{Kind: "ServiceAccount", Name: "octelium-genesis", Namespace: "octelium"}}, binding.Subjects)
 				command, pkg, version := "upgrade", "octelium", "latest"
 				if args[0] == "install-package" {
 					command = "init"

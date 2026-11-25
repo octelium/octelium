@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/octelium/octelium/client/common/cliutils"
 	"github.com/octelium/octelium/client/octops/commands/install"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	batchv1 "k8s.io/api/batch/v1"
@@ -33,14 +34,23 @@ func createGenesis(ctx context.Context, c kubernetes.Interface, domain,
 	if err != nil {
 		return nil, err
 	}
-	job, err := install.BindGenesisJobTarget(ctx, c, getGenesisJob(domain, version, spiffe))
+	job, err := install.BindGenesisJobTarget(ctx, c, getGenesisJob(domain, version, install.GenesisServiceAccount, spiffe))
 	if err != nil {
 		return nil, err
+	}
+	svcAccount, err := install.EnsureGenesisServiceAccount(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	if svcAccount != install.GenesisServiceAccount {
+		cliutils.LineWarn("Could not prepare the %s ServiceAccount. Using the legacy %s ServiceAccount instead\n",
+			install.GenesisServiceAccount, svcAccount)
+		job.Spec.Template.Spec.ServiceAccountName = svcAccount
 	}
 	return install.SubmitGenesisJobWithResult(ctx, c, job, nil)
 }
 
-func getGenesisJob(domain, version string, spiffe *install.SPIFFEOpts) *batchv1.Job {
+func getGenesisJob(domain, version, svcAccount string, spiffe *install.SPIFFEOpts) *batchv1.Job {
 	labels := map[string]string{
 		"app":                         "octelium",
 		"octelium.com/component":      "genesis",
@@ -62,7 +72,7 @@ func getGenesisJob(domain, version string, spiffe *install.SPIFFEOpts) *batchv1.
 					Domain:     domain,
 					Cmd:        "upgrade",
 					Version:    version,
-					SvcAccount: "octelium-nocturne",
+					SvcAccount: svcAccount,
 					SPIFFE:     spiffe,
 				}),
 			},

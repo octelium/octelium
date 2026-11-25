@@ -31,6 +31,7 @@ import (
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/types"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -43,10 +44,14 @@ const genesisNS = "default"
 
 const genesisJobName = "octelium-genesis"
 
+const GenesisServiceAccount = "octelium-genesis"
+
+const LegacyGenesisServiceAccount = "octelium-nocturne"
+
 func getGenesisRole() *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "octelium-genesis",
+			Name: GenesisServiceAccount,
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
@@ -58,33 +63,145 @@ func getGenesisRole() *rbacv1.ClusterRole {
 	}
 }
 
-func getGenesisServiceAccount() *corev1.ServiceAccount {
+func getGenesisServiceAccount(namespace string) *corev1.ServiceAccount {
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "octelium-genesis",
-			Namespace: genesisNS,
+			Name:      GenesisServiceAccount,
+			Namespace: namespace,
 		},
 	}
 }
 
-func getGenesisRoleBinding() *rbacv1.ClusterRoleBinding {
+func getGenesisSubject(namespace string) rbacv1.Subject {
+	return rbacv1.Subject{
+		Kind:      "ServiceAccount",
+		Name:      GenesisServiceAccount,
+		Namespace: namespace,
+	}
+}
+
+func getGenesisRoleBinding(subjects []rbacv1.Subject) *rbacv1.ClusterRoleBinding {
 	return &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "octelium-genesis",
+			Name: GenesisServiceAccount,
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
 			Kind:     "ClusterRole",
-			Name:     "octelium-genesis",
+			Name:     GenesisServiceAccount,
 		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      "octelium-genesis",
-				Namespace: genesisNS,
-			},
-		},
+		Subjects: subjects,
 	}
+}
+
+func EnsureGenesisServiceAccount(ctx context.Context, c kubernetes.Interface) (string, error) {
+	err := ensureGenesisIdentity(ctx, c, octeliumNS)
+	switch {
+	case err == nil:
+		return GenesisServiceAccount, nil
+	case k8serr.IsForbidden(err):
+		zap.L().Warn("Could not prepare the Genesis ServiceAccount. Falling back to the legacy ServiceAccount",
+			zap.String("serviceAccount", LegacyGenesisServiceAccount), zap.Error(err))
+		return LegacyGenesisServiceAccount, nil
+	default:
+		return "", err
+	}
+}
+
+func ensureGenesisIdentity(ctx context.Context, c kubernetes.Interface, namespace string) error {
+	for _, create := range []func(context.Context) error{
+		func(ctx context.Context) error {
+			_, err := c.CoreV1().ServiceAccounts(namespace).Create(ctx, getGenesisServiceAccount(namespace), metav1.CreateOptions{})
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := c.RbacV1().ClusterRoles().Create(ctx, getGenesisRole(), metav1.CreateOptions{})
+			return err
+		},
+	} {
+		if err := k8sretry.Do(ctx, func(ctx context.Context) error {
+			err := create(ctx)
+			if k8serr.IsAlreadyExists(err) {
+				return nil
+			}
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+
+	return updateGenesisRoleBindingSubjects(ctx, c, []rbacv1.Subject{getGenesisSubject(namespace)}, nil)
+}
+
+func removeInitGenesisIdentity(ctx context.Context, c kubernetes.Interface) error {
+	if err := updateGenesisRoleBindingSubjects(ctx, c, nil, []rbacv1.Subject{getGenesisSubject(genesisNS)}); err != nil {
+		return err
+	}
+
+	serviceAccounts := c.CoreV1().ServiceAccounts(genesisNS)
+	sa, err := k8sretry.Read(ctx, func(ctx context.Context) (*corev1.ServiceAccount, error) {
+		return serviceAccounts.Get(ctx, GenesisServiceAccount, metav1.GetOptions{})
+	})
+	if k8serr.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	return k8sretry.Delete(ctx, sa,
+		func(ctx context.Context) (*corev1.ServiceAccount, error) {
+			return serviceAccounts.Get(ctx, GenesisServiceAccount, metav1.GetOptions{})
+		},
+		func(ctx context.Context, options metav1.DeleteOptions) error {
+			return serviceAccounts.Delete(ctx, GenesisServiceAccount, options)
+		})
+}
+
+func updateGenesisRoleBindingSubjects(ctx context.Context, c kubernetes.Interface, added, removed []rbacv1.Subject) error {
+	bindings := c.RbacV1().ClusterRoleBindings()
+	return k8sretry.Do(ctx, func(ctx context.Context) error {
+		binding, err := bindings.Get(ctx, GenesisServiceAccount, metav1.GetOptions{})
+		if k8serr.IsNotFound(err) {
+			if len(added) == 0 {
+				return nil
+			}
+			desired := getGenesisRoleBinding(added)
+			_, err := bindings.Create(ctx, desired, metav1.CreateOptions{})
+			if k8serr.IsAlreadyExists(err) {
+				return k8serr.NewConflict(rbacv1.Resource("clusterrolebindings"), desired.Name, err)
+			}
+			return err
+		}
+		if err != nil {
+			return err
+		}
+
+		subjects := mergeSubjects(binding.Subjects, added, removed)
+		if slices.Equal(subjects, binding.Subjects) {
+			return nil
+		}
+
+		binding = binding.DeepCopy()
+		binding.Subjects = subjects
+		_, err = bindings.Update(ctx, binding, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func mergeSubjects(current, added, removed []rbacv1.Subject) []rbacv1.Subject {
+	ret := make([]rbacv1.Subject, 0, len(current)+len(added))
+	for i, itm := range append(slices.Clone(current), added...) {
+		isSame := func(arg rbacv1.Subject) bool {
+			return arg.Kind == itm.Kind && arg.Name == itm.Name && arg.Namespace == itm.Namespace
+		}
+		if slices.ContainsFunc(ret, isSame) || (i < len(current) && slices.ContainsFunc(removed, isSame)) {
+			continue
+		}
+		ret = append(ret, itm)
+	}
+
+	return ret
 }
 
 func getGenesisJob(o *Opts, spiffe *SPIFFEOpts) *batchv1.Job {
@@ -108,7 +225,7 @@ func getGenesisJob(o *Opts, spiffe *SPIFFEOpts) *batchv1.Job {
 					Domain:     o.ClusterDomain,
 					Cmd:        "init",
 					Version:    o.Version,
-					SvcAccount: "octelium-genesis",
+					SvcAccount: GenesisServiceAccount,
 					SPIFFE:     spiffe,
 				}),
 			},
@@ -260,31 +377,7 @@ func createGenesis(ctx context.Context, o *Opts) (*batchv1.Job, error) {
 		if err := setClusterResources(ctx, o); err != nil {
 			return err
 		}
-		for _, create := range []func(context.Context) error{
-			func(ctx context.Context) error {
-				_, err := c.CoreV1().ServiceAccounts(genesisNS).Create(ctx, getGenesisServiceAccount(), metav1.CreateOptions{})
-				return err
-			},
-			func(ctx context.Context) error {
-				_, err := c.RbacV1().ClusterRoles().Create(ctx, getGenesisRole(), metav1.CreateOptions{})
-				return err
-			},
-			func(ctx context.Context) error {
-				_, err := c.RbacV1().ClusterRoleBindings().Create(ctx, getGenesisRoleBinding(), metav1.CreateOptions{})
-				return err
-			},
-		} {
-			if err := k8sretry.Do(ctx, func(ctx context.Context) error {
-				err := create(ctx)
-				if k8serr.IsAlreadyExists(err) {
-					return nil
-				}
-				return err
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
+		return ensureGenesisIdentity(ctx, c, genesisNS)
 	}
 	accepted, err := submitGenesisJob(ctx, c, job, prepare)
 	if err != nil && !prepared && job.Spec.Template.Annotations[initializationInputHashKey] != "" &&

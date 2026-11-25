@@ -226,10 +226,17 @@ func getAnnotations() map[string]string {
 	}
 }
 
+func getLegacyAnnotations() map[string]string {
+	return map[string]string{
+		"octelium.com/deprecated": "Only used by the Genesis Jobs of older octops and Cluster Manager versions. To be removed in v1.0.0",
+	}
+}
+
 const componentGWAgent = "gwagent"
 const componentIngress = "ingress"
 const componentIngressDataPlane = "ingress-dataplane"
 const componentNocturne = "nocturne"
+const componentNocturneRuntime = "nocturne-runtime"
 const componentRscServer = "rscserver"
 const componentOctovigil = "octovigil"
 

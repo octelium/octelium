@@ -267,7 +267,7 @@ func getGatewayAgentRole() *rbacv1.ClusterRole {
 		Rules: []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{""},
-				Resources: []string{"nodes", "pods"},
+				Resources: []string{"nodes"},
 				Verbs:     []string{"get", "update", "watch", "list"},
 			},
 		},

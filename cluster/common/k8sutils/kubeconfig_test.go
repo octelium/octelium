@@ -260,6 +260,88 @@ func TestCreateOrUpdateResources(t *testing.T) {
 		assert.Equal(t, want.RoleRef, got.RoleRef)
 		assert.Equal(t, want.Subjects, got.Subjects)
 	})
+	t.Run("Role", func(t *testing.T) {
+		want := &rbacv1.Role{Rules: []rbacv1.PolicyRule{{Verbs: []string{"get"}, Resources: []string{"pods"}}}}
+		testCreateOrUpdateResource(t, &rbacv1.Role{Rules: []rbacv1.PolicyRule{{Verbs: []string{"*"}, Resources: []string{"*"}}}}, want, CreateOrUpdateRole, func(got *rbacv1.Role) {
+			assert.Equal(t, want.Rules, got.Rules)
+			assert.Equal(t, "octelium", got.Namespace)
+		})
+	})
+	t.Run("RoleBinding", func(t *testing.T) {
+		want := &rbacv1.RoleBinding{RoleRef: rbacv1.RoleRef{Kind: "Role", Name: "role"}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "service", Namespace: "octelium"}}}
+		old := &rbacv1.RoleBinding{RoleRef: want.RoleRef}
+		testCreateOrUpdateResource(t, old, want, CreateOrUpdateRoleBinding, func(got *rbacv1.RoleBinding) {
+			assert.Equal(t, want.Subjects, got.Subjects)
+			assert.Equal(t, want.RoleRef, got.RoleRef)
+		})
+		old.RoleRef.Name = "old-role"
+		client := fake.NewClientset(old)
+		got, err := CreateOrUpdateRoleBinding(context.Background(), client, want)
+		assert.Nil(t, err)
+		assert.Equal(t, want.RoleRef, got.RoleRef)
+		assert.Equal(t, want.Subjects, got.Subjects)
+	})
+}
+
+func TestCreateOrUpdateClusterRoleBindingSubjects(t *testing.T) {
+	ctx := context.Background()
+	installer := rbacv1.Subject{Kind: "ServiceAccount", Name: "octelium-genesis", Namespace: "octelium"}
+	initial := rbacv1.Subject{Kind: "ServiceAccount", Name: "octelium-genesis", Namespace: "default"}
+	external := rbacv1.Subject{Kind: "User", Name: "admin"}
+	desired := func() *rbacv1.ClusterRoleBinding {
+		return &rbacv1.ClusterRoleBinding{
+			ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-genesis", Labels: map[string]string{"managed": "new"}},
+			RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "octelium-genesis"},
+			Subjects:   []rbacv1.Subject{installer},
+		}
+	}
+
+	t.Run("Create", func(t *testing.T) {
+		client := fake.NewClientset()
+		got, err := CreateOrUpdateClusterRoleBindingSubjects(ctx, client, desired(), []rbacv1.Subject{initial})
+		require.Nil(t, err)
+		assert.Equal(t, []rbacv1.Subject{installer}, got.Subjects)
+		assert.Equal(t, desired().RoleRef, got.RoleRef)
+	})
+
+	t.Run("MergeAndRemove", func(t *testing.T) {
+		old := desired()
+		old.Subjects = []rbacv1.Subject{initial, external}
+		old.Labels = map[string]string{"external": "kept"}
+		client := fake.NewClientset(old)
+		got, err := CreateOrUpdateClusterRoleBindingSubjects(ctx, client, desired(), []rbacv1.Subject{initial})
+		require.Nil(t, err)
+		assert.Equal(t, []rbacv1.Subject{external, installer}, got.Subjects)
+		assert.Equal(t, map[string]string{"managed": "new", "external": "kept"}, got.Labels)
+	})
+
+	t.Run("KeepsRoleRefWithoutRecreation", func(t *testing.T) {
+		old := desired()
+		old.UID = "existing"
+		old.RoleRef.Name = "another-role"
+		old.Subjects = []rbacv1.Subject{initial}
+		client := fake.NewClientset(old)
+		got, err := CreateOrUpdateClusterRoleBindingSubjects(ctx, client, desired(), nil)
+		require.Nil(t, err)
+		assert.Equal(t, "another-role", got.RoleRef.Name)
+		assert.Equal(t, k8stypes.UID("existing"), got.UID)
+		assert.Equal(t, []rbacv1.Subject{initial, installer}, got.Subjects)
+		for _, action := range client.Actions() {
+			assert.NotEqual(t, "delete", action.GetVerb())
+		}
+	})
+}
+
+func TestMergeSubjects(t *testing.T) {
+	a := rbacv1.Subject{Kind: "ServiceAccount", Name: "a", Namespace: "octelium"}
+	aOtherNS := rbacv1.Subject{Kind: "ServiceAccount", Name: "a", Namespace: "default"}
+	b := rbacv1.Subject{Kind: "ServiceAccount", Name: "b", Namespace: "octelium"}
+	user := rbacv1.Subject{Kind: "User", Name: "a", APIGroup: "rbac.authorization.k8s.io"}
+
+	assert.Equal(t, []rbacv1.Subject{}, MergeSubjects(nil, nil, nil))
+	assert.Equal(t, []rbacv1.Subject{a, aOtherNS, user, b}, MergeSubjects([]rbacv1.Subject{a, aOtherNS, a}, []rbacv1.Subject{user, b, a}, nil))
+	assert.Equal(t, []rbacv1.Subject{a, b}, MergeSubjects([]rbacv1.Subject{aOtherNS, a}, []rbacv1.Subject{b}, []rbacv1.Subject{aOtherNS}))
+	assert.Equal(t, []rbacv1.Subject{aOtherNS}, MergeSubjects(nil, []rbacv1.Subject{aOtherNS}, []rbacv1.Subject{aOtherNS}))
 }
 
 func TestRetryableCreateOrUpdate(t *testing.T) {

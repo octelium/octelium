@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/urscsrv"
 	"github.com/octelium/octelium/cluster/common/utilnet"
+	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/pkg/grpcerr"
 	"github.com/pkg/errors"
 
@@ -100,6 +101,10 @@ func (c *Controller) handlePod(obj any) {
 		return
 	}
 
+	if pod.Namespace != vutils.K8sNS {
+		return
+	}
+
 	svcName, ok := pod.Labels["octelium.com/svc"]
 	if !ok {
 		return
@@ -125,6 +130,10 @@ func (c *Controller) handleDelete(obj any) {
 		if !ok {
 			return
 		}
+	}
+
+	if pod.Namespace != vutils.K8sNS {
+		return
 	}
 
 	svcName, ok := pod.Labels["octelium.com/svc"]
@@ -233,6 +242,9 @@ func (c *Controller) enqueueAllServices(ctx context.Context) {
 	}
 
 	for _, pod := range pods {
+		if pod.Namespace != vutils.K8sNS {
+			continue
+		}
 		svcName, ok := pod.Labels["octelium.com/svc"]
 		if !ok {
 			continue
@@ -302,7 +314,7 @@ func (c *Controller) reconcile(ctx context.Context, svcName string) error {
 	desired := make(map[string]*corev1.Service_Status_Address, len(pods))
 
 	for _, pod := range pods {
-		if !isPodAddressable(pod) {
+		if pod.Namespace != vutils.K8sNS || !isPodAddressable(pod) {
 			continue
 		}
 

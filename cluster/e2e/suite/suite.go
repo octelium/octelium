@@ -106,6 +106,7 @@ func Phases() []Phase {
 		{"NocturnePodAddresses", testNocturnePodAddresses},
 		{"NocturnePodReconciliation", testNocturnePodReconciliation},
 		{"NocturneRegionIngress", testNocturneRegionIngress},
+		{"KubernetesPermissions", testKubernetesPermissions},
 		{"Ingress", testIngress},
 		{"IngressCompression", testIngressCompression},
 		{"IngressTLSBoundaries", testIngressTLSBoundaries},

@@ -38,6 +38,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -141,6 +142,14 @@ func TestDoInstallLifecycle(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "example.com", string(secret.(*k8scorev1.Secret).Data["domain"]))
 		assert.NoError(t, c.Tracker().Add(&k8scorev1.Secret{ObjectMeta: k8smetav1.ObjectMeta{Name: "init-token", Namespace: "octelium"}, Data: map[string][]byte{"data": []byte("new-token")}}))
+		assert.Equal(t, "octelium-genesis", job.Spec.Template.Spec.ServiceAccountName)
+		obj, err := c.Tracker().Get(rbacv1.SchemeGroupVersion.WithResource("clusterrolebindings"), "", "octelium-genesis")
+		assert.NoError(t, err)
+		binding := obj.(*rbacv1.ClusterRoleBinding).DeepCopy()
+		assert.Equal(t, []rbacv1.Subject{getGenesisSubject("default")}, binding.Subjects)
+		binding.Subjects = append(binding.Subjects, getGenesisSubject("octelium"))
+		assert.NoError(t, c.Tracker().Update(rbacv1.SchemeGroupVersion.WithResource("clusterrolebindings"), binding, ""))
+		assert.NoError(t, c.Tracker().Add(getGenesisServiceAccount("octelium")))
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
 		return false, nil, nil
 	})
@@ -149,6 +158,13 @@ func TestDoInstallLifecycle(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, "new-token", string(data))
+	binding, err := c.RbacV1().ClusterRoleBindings().Get(context.Background(), "octelium-genesis", k8smetav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []rbacv1.Subject{getGenesisSubject("octelium")}, binding.Subjects)
+	_, err = c.CoreV1().ServiceAccounts("default").Get(context.Background(), "octelium-genesis", k8smetav1.GetOptions{})
+	assert.True(t, k8serr.IsNotFound(err))
+	_, err = c.CoreV1().ServiceAccounts("octelium").Get(context.Background(), "octelium-genesis", k8smetav1.GetOptions{})
+	assert.NoError(t, err)
 	_, err = d.Get("example.com")
 	assert.True(t, d.ErrorIsNotFound(err))
 	other, err := d.GetSessionToken("other.example")

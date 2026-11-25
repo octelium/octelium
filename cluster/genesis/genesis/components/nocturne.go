@@ -51,7 +51,7 @@ func getNocturneDeployment(o *CommonOpts) *appsv1.Deployment {
 				},
 				Spec: k8scorev1.PodSpec{
 					NodeSelector:       getNodeSelectorControlPlane(o.ClusterConfig),
-					ServiceAccountName: getComponentName(componentNocturne),
+					ServiceAccountName: getComponentName(componentNocturneRuntime),
 
 					Containers: []k8scorev1.Container{
 						{
@@ -100,10 +100,112 @@ func getNocturneDeployment(o *CommonOpts) *appsv1.Deployment {
 	return deployment
 }
 
-func getNocturneRole() *rbacv1.ClusterRole {
+func getNocturneRuntimeServiceAccount() *k8scorev1.ServiceAccount {
+	return &k8scorev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      getComponentName(componentNocturneRuntime),
+			Namespace: ns,
+		},
+	}
+}
+
+func getNocturneRuntimeRole() *rbacv1.Role {
+	return &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      getComponentName(componentNocturneRuntime),
+			Namespace: ns,
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"services", "secrets"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"get", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps/finalizers"},
+				Verbs:     []string{"update"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"list", "watch"},
+			},
+		},
+	}
+}
+
+func getNocturneRuntimeRoleBinding() *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      getComponentName(componentNocturneRuntime),
+			Namespace: ns,
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     getComponentName(componentNocturneRuntime),
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      getComponentName(componentNocturneRuntime),
+				Namespace: ns,
+			},
+		},
+	}
+}
+
+func getNocturneRuntimeClusterRole() *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: getComponentName(componentNocturne),
+			Name: getComponentName(componentNocturneRuntime),
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"nodes"},
+				Verbs:     []string{"get", "list", "watch", "update"},
+			},
+		},
+	}
+}
+
+func getNocturneRuntimeClusterRoleBinding() *rbacv1.ClusterRoleBinding {
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: getComponentName(componentNocturneRuntime),
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     getComponentName(componentNocturneRuntime),
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      getComponentName(componentNocturneRuntime),
+				Namespace: ns,
+			},
+		},
+	}
+}
+
+func getNocturneLegacyRole() *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        getComponentName(componentNocturne),
+			Annotations: getLegacyAnnotations(),
 		},
 
 		Rules: []rbacv1.PolicyRule{
@@ -116,19 +218,21 @@ func getNocturneRole() *rbacv1.ClusterRole {
 	}
 }
 
-func getNocturneServiceAccount() *k8scorev1.ServiceAccount {
+func getNocturneLegacyServiceAccount() *k8scorev1.ServiceAccount {
 	return &k8scorev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      getComponentName(componentNocturne),
-			Namespace: ns,
+			Name:        getComponentName(componentNocturne),
+			Namespace:   ns,
+			Annotations: getLegacyAnnotations(),
 		},
 	}
 }
 
-func getNocturneRoleBinding() *rbacv1.ClusterRoleBinding {
+func getNocturneLegacyRoleBinding() *rbacv1.ClusterRoleBinding {
 	return &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: getComponentName(componentNocturne),
+			Name:        getComponentName(componentNocturne),
+			Annotations: getLegacyAnnotations(),
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
@@ -164,15 +268,35 @@ func getNocturneNetworkPolicy(c *corev1.ClusterConfig) *networkingv1.NetworkPoli
 
 func CreateNocturne(ctx context.Context, o *CommonOpts) error {
 
-	if _, err := k8sutils.CreateOrUpdateServiceAccount(ctx, o.K8sC, getNocturneServiceAccount()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateServiceAccount(ctx, o.K8sC, getNocturneRuntimeServiceAccount()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateClusterRole(ctx, o.K8sC, getNocturneRole()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateRole(ctx, o.K8sC, getNocturneRuntimeRole()); err != nil {
 		return err
 	}
 
-	if _, err := k8sutils.CreateOrUpdateClusterRoleBinding(ctx, o.K8sC, getNocturneRoleBinding()); err != nil {
+	if _, err := k8sutils.CreateOrUpdateRoleBinding(ctx, o.K8sC, getNocturneRuntimeRoleBinding()); err != nil {
+		return err
+	}
+
+	if _, err := k8sutils.CreateOrUpdateClusterRole(ctx, o.K8sC, getNocturneRuntimeClusterRole()); err != nil {
+		return err
+	}
+
+	if _, err := k8sutils.CreateOrUpdateClusterRoleBinding(ctx, o.K8sC, getNocturneRuntimeClusterRoleBinding()); err != nil {
+		return err
+	}
+
+	if _, err := k8sutils.CreateOrUpdateServiceAccount(ctx, o.K8sC, getNocturneLegacyServiceAccount()); err != nil {
+		return err
+	}
+
+	if _, err := k8sutils.CreateOrUpdateClusterRole(ctx, o.K8sC, getNocturneLegacyRole()); err != nil {
+		return err
+	}
+
+	if _, err := k8sutils.CreateOrUpdateClusterRoleBinding(ctx, o.K8sC, getNocturneLegacyRoleBinding()); err != nil {
 		return err
 	}
 

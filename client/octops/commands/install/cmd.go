@@ -70,6 +70,12 @@ func DoInstall(ctx context.Context, o *Opts) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
+	if err := removeInitGenesisIdentity(ctx, o.K8sC); err != nil {
+		cliutils.LineWarn("Could not remove the initial Genesis ServiceAccount %s/%s: %+v\n",
+			genesisNS, GenesisServiceAccount, err)
+	}
+
 	if err := setInitialAuthToken(o, secret); err != nil {
 		return err
 	}

@@ -53,6 +53,7 @@ import (
 	"google.golang.org/grpc/status"
 	batchv1 "k8s.io/api/batch/v1"
 	k8scorev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -314,7 +315,7 @@ func TestGenesisUpgradeJobs(t *testing.T) {
 	require.Len(t, jobs.Items, 1)
 	for _, job := range jobs.Items {
 		assert.Regexp(t, "^octelium-genesis-upgrade-[a-z0-9]{6}$", job.Name)
-		assert.Equal(t, "octelium-nocturne", job.Spec.Template.Spec.ServiceAccountName)
+		assert.Equal(t, "octelium-genesis", job.Spec.Template.Spec.ServiceAccountName)
 		assert.Equal(t, "csi.spiffe.io", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
 		assert.Equal(t, []string{"upgrade"}, job.Spec.Template.Spec.Containers[0].Args)
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: k8scorev1.ConditionTrue}}
@@ -332,6 +333,46 @@ func TestGenesisUpgradeJobs(t *testing.T) {
 	c.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, want })
 	_, err = createGenesis(ctx, c, "example.com", "1.2.3")
 	assert.ErrorIs(t, err, want)
-	job := getGenesisJob("example.com", "1.2.3", &install.SPIFFEOpts{CSIDriver: "custom.csi"})
+	job := getGenesisJob("example.com", "1.2.3", "octelium-genesis", &install.SPIFFEOpts{CSIDriver: "custom.csi"})
 	assert.Equal(t, "custom.csi", job.Spec.Template.Spec.Volumes[0].CSI.Driver)
+	assert.Equal(t, "octelium-genesis", job.Spec.Template.Spec.ServiceAccountName)
+}
+
+func TestGenesisUpgradeJobServiceAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		forbidden  bool
+		svcAccount string
+	}{
+		{name: "Installer", svcAccount: "octelium-genesis"},
+		{name: "LegacyFallback", forbidden: true, svcAccount: "octelium-nocturne"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			c := fakek8s.NewSimpleClientset(&rbacv1.ClusterRoleBinding{
+				ObjectMeta: k8smetav1.ObjectMeta{Name: "octelium-genesis"},
+				RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "octelium-genesis"},
+				Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "octelium-genesis", Namespace: "default"}},
+			})
+			if tc.forbidden {
+				c.PrependReactor("create", "clusterroles", func(k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, k8serr.NewForbidden(schema.GroupResource{Group: "rbac.authorization.k8s.io", Resource: "clusterroles"}, "octelium-genesis", fmt.Errorf("not permitted"))
+				})
+			}
+			job, err := createGenesis(ctx, c, "example.com", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, tc.svcAccount, job.Spec.Template.Spec.ServiceAccountName)
+
+			binding, err := c.RbacV1().ClusterRoleBindings().Get(ctx, "octelium-genesis", k8smetav1.GetOptions{})
+			require.NoError(t, err)
+			if tc.forbidden {
+				assert.Len(t, binding.Subjects, 1)
+			} else {
+				assert.Equal(t, []rbacv1.Subject{
+					{Kind: "ServiceAccount", Name: "octelium-genesis", Namespace: "default"},
+					{Kind: "ServiceAccount", Name: "octelium-genesis", Namespace: "octelium"},
+				}, binding.Subjects)
+			}
+		})
+	}
 }

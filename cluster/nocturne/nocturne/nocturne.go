@@ -21,6 +21,7 @@ import (
 
 	"go.uber.org/zap"
 	kubeinformers "k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/commoninit"
@@ -58,7 +59,7 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
-	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(k8sC, 0)
+	kubeInformerFactory, nodeInformerFactory := newInformerFactories(k8sC)
 
 	region, err := octeliumC.CoreC().GetRegion(ctx, &rmetav1.GetOptions{Name: vutils.GetMyRegionName()})
 	if err != nil {
@@ -72,7 +73,7 @@ func Run(ctx context.Context) error {
 		umetav1.GetObjectReference(region))
 	k8ssecretcontroller.NewController(k8sC, octeliumC, kubeInformerFactory.Core().V1().Secrets())
 	k8sservicecontroller.NewController(k8sC, octeliumC, kubeInformerFactory.Core().V1().Services())
-	nodecontroller.NewController(k8sC, octeliumC, kubeInformerFactory.Core().V1().Nodes())
+	nodecontroller.NewController(k8sC, octeliumC, nodeInformerFactory.Core().V1().Nodes())
 
 	usrCtl := usrcontroller.NewController(octeliumC)
 	svcCtl := svccontroller.NewController(octeliumC, k8sC)
@@ -106,6 +107,7 @@ func Run(ctx context.Context) error {
 	stopCh := make(chan struct{})
 
 	kubeInformerFactory.Start(stopCh)
+	nodeInformerFactory.Start(stopCh)
 
 	go podCtl.Run(ctx, 2)
 	go sessCtl.Run(ctx)
@@ -117,4 +119,9 @@ func Run(ctx context.Context) error {
 	close(stopCh)
 
 	return nil
+}
+
+func newInformerFactories(k8sC kubernetes.Interface) (kubeinformers.SharedInformerFactory, kubeinformers.SharedInformerFactory) {
+	return kubeinformers.NewSharedInformerFactoryWithOptions(k8sC, 0, kubeinformers.WithNamespace(vutils.K8sNS)),
+		kubeinformers.NewSharedInformerFactory(k8sC, 0)
 }
