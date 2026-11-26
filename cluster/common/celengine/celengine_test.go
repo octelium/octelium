@@ -303,6 +303,81 @@ func TestCELPolicyLimits(t *testing.T) {
 	assert.True(t, res)
 }
 
+func TestCELJSONEncode(t *testing.T) {
+	ctx := t.Context()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+
+	values := map[string]any{}
+	for i := range 32 {
+		values[fmt.Sprintf("key-%02d", 31-i)] = map[string]any{"index": float64(i), "items": []any{"<&>", nil, true}}
+	}
+	want, err := json.Marshal(values)
+	require.Nil(t, err)
+	input := map[string]any{"ctx": map[string]any{"values": values}}
+
+	for range 16 {
+		out, err := srv.EvalPolicyString(ctx, `json.encode(ctx.values)`, input)
+		require.Nil(t, err)
+		assert.Equal(t, string(want), out)
+	}
+
+	matched, err := srv.EvalPolicy(ctx, `json.encode(ctx.values) == json.encode(ctx.values)`, input)
+	require.Nil(t, err)
+	assert.True(t, matched)
+
+	out, err := srv.EvalPolicyString(ctx, `json.encode({"b": [1, 2], "a": "<&>"})`, nil)
+	require.Nil(t, err)
+	assert.Equal(t, `{"a":"\u003c\u0026\u003e","b":[1,2]}`, out)
+
+	body := strings.Repeat("a", 4<<20)
+	out, err = srv.EvalPolicyString(ctx, `json.encode(ctx.body)`,
+		map[string]any{"ctx": map[string]any{"body": body}})
+	require.Nil(t, err)
+	assert.Equal(t, `"`+body+`"`, out)
+
+	out, err = srv.EvalPolicyString(ctx, `json.encode({"value": 1.0 / 0.0})`, nil)
+	assert.NotNil(t, err)
+	assert.Empty(t, out)
+}
+
+func TestCELComprehensionEmptyRange(t *testing.T) {
+	ctx := t.Context()
+	srv, err := New(ctx, nil)
+	require.Nil(t, err)
+
+	for _, value := range []any{"", []byte{}, []any{}, map[string]any{}} {
+		input := map[string]any{"ctx": map[string]any{"value": value}}
+		for _, tc := range []struct {
+			expr string
+			want bool
+		}{
+			{`ctx.value.all(x, x == "a")`, true},
+			{`ctx.value.exists(x, x == "a")`, false},
+			{`ctx.value.exists_one(x, x == "a")`, false},
+			{`size(ctx.value.map(x, x)) == 0`, true},
+			{`size(ctx.value.filter(x, x == "a")) == 0`, true},
+		} {
+			res, err := srv.EvalPolicy(ctx, tc.expr, input)
+			assert.Nil(t, err, "%s: %#v", tc.expr, value)
+			assert.Equal(t, tc.want, res, "%s: %#v", tc.expr, value)
+		}
+	}
+
+	for _, value := range []any{"a", []byte("a")} {
+		input := map[string]any{"ctx": map[string]any{"value": value}}
+		for _, expr := range []string{
+			`ctx.value.all(x, x == "a")`,
+			`ctx.value.exists(x, x == "a")`,
+			`size(ctx.value.map(x, x)) == 0`,
+		} {
+			res, err := srv.EvalPolicy(ctx, expr, input)
+			assert.ErrorContains(t, err, "expected iterable type", "%s: %#v", expr, value)
+			assert.False(t, res)
+		}
+	}
+}
+
 func TestPolicyConcurrent(t *testing.T) {
 	ctx := context.Background()
 	srv, err := New(ctx, nil)

@@ -18,6 +18,8 @@ package cellib
 
 import (
 	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/cost"
+	"cel.dev/cel-go/common/types/ref"
 	"cel.dev/cel-go/ext"
 )
 
@@ -39,14 +41,25 @@ func (*celLib) CompileOptions() []cel.EnvOption {
 
 	ret = append(ret, MethodsList())
 	ret = append(ret, Str())
-	ret = append(ret, ext.Strings())
-	ret = append(ret, ext.Encoders())
-	ret = append(ret, ext.Math())
-	ret = append(ret, ext.Bindings())
+	ret = append(ret, ext.Strings(ext.StringsVersion(5)))
+	ret = append(ret, ext.Encoders(ext.EncodersVersion(1)))
+	ret = append(ret, funcJSONEncode())
+	ret = append(ret, ext.Math(ext.MathVersion(3)))
+	ret = append(ret, ext.Bindings(ext.BindingsVersion(1)))
 
 	return ret
 }
 
 func (*celLib) ProgramOptions() []cel.ProgramOption {
-	return []cel.ProgramOption{}
+	return []cel.ProgramOption{
+		cel.CostTrackerOptions(
+			cost.OverloadTracker("json_encode_dyn", trackJSONEncode),
+		),
+	}
+}
+
+func trackJSONEncode(_ []ref.Val, result ref.Val) *uint64 {
+	ret := cost.SafeAdd(cost.CallCost,
+		cost.SafeMultiplyByFactor(cost.ActualSize(result), cost.StringTraversalCostFactor))
+	return &ret
 }

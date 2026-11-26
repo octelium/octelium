@@ -19,7 +19,9 @@ package cellib
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -338,6 +340,86 @@ func TestFunctionJSONMarshalCycles(t *testing.T) {
 	out, _, err := prg.ContextEval(t.Context(), map[string]any{"ctx": map[string]any{"value": "test"}})
 	require.Nil(t, err)
 	assert.Equal(t, `{"value":"test"}`, out.Value())
+}
+
+func TestFunctionJSONEncode(t *testing.T) {
+	env, err := cel.NewEnv(cel.Variable("ctx", cel.DynType), CELLib())
+	require.Nil(t, err)
+
+	eval := func(expr string, arg any, opts ...cel.ProgramOption) (ref.Val, *cel.EvalDetails, error) {
+		ast, iss := env.Compile(expr)
+		require.Nil(t, iss.Err(), expr)
+		prg, err := env.Program(ast, opts...)
+		require.Nil(t, err, expr)
+		return prg.ContextEval(t.Context(), map[string]any{"ctx": arg})
+	}
+
+	nested := map[string]any{}
+	for i := range 32 {
+		nested[fmt.Sprintf("key-%02d", 31-i)] = map[string]any{"b": float64(i), "a": []any{nil, true, "<&>"}}
+	}
+	nestedJSON, err := json.Marshal(nested)
+	require.Nil(t, err)
+
+	for _, tc := range []struct {
+		expr string
+		arg  any
+		want string
+	}{
+		{`json.encode(ctx)`, nested, string(nestedJSON)},
+		{`json.encode(ctx)`, "<a href='x'>&</a>", `"\u003ca href='x'\u003e\u0026\u003c/a\u003e"`},
+		{`json.encode(ctx)`, "a\u2028b", `"a\u2028b"`},
+		{`json.encode(ctx)`, nil, `null`},
+		{`json.encode(ctx)`, map[string]any{}, `{}`},
+		{`json.encode(ctx)`, []any{}, `[]`},
+		{`json.encode({"b": 1, "a": [2u, -3, 1.5, null, true, b"ab"]})`, nil, `{"a":[2,-3,1.5,null,true,"YWI="],"b":1}`},
+		{`json.encode([9007199254740991, 9007199254740992, -9007199254740992, 18446744073709551615u])`, nil,
+			`[9007199254740991,"9007199254740992","-9007199254740992","18446744073709551615"]`},
+		{`json.encode([1e21, 0.000001, -0.0, 100.0])`, nil, `[1e+21,0.000001,-0,100]`},
+		{`json.encode(timestamp("2025-01-01T00:00:00Z"))`, nil, `"2025-01-01T00:00:00Z"`},
+		{`json.encode(duration("90s"))`, nil, `"90s"`},
+	} {
+		for range 4 {
+			out, _, err := eval(tc.expr, tc.arg)
+			require.Nil(t, err, tc.expr)
+			assert.Equal(t, tc.want, out.Value(), tc.expr)
+		}
+	}
+
+	for _, tc := range []struct {
+		expr string
+		arg  any
+	}{
+		{`json.encode(1.0 / 0.0)`, nil},
+		{`json.encode(ctx)`, math.NaN()},
+		{`json.encode({1: "a"})`, nil},
+		{`json.encode({true: "a"})`, nil},
+		{`json.encode(ctx)`, "a\xffb"},
+	} {
+		_, _, err := eval(tc.expr, tc.arg)
+		assert.NotNil(t, err, tc.expr)
+	}
+
+	{
+		out, det, err := eval(`json.encode(ctx)`, strings.Repeat("a", 1000), cel.CostLimit(1_000_000))
+		require.Nil(t, err)
+		assert.Equal(t, `"`+strings.Repeat("a", 1000)+`"`, out.Value())
+		assert.Equal(t, uint64(103), *det.ActualCost())
+	}
+
+	{
+		out, det, err := eval(`json.encode({"a": 1})`, nil, cel.CostLimit(1_000_000), cel.EvalOptions(cel.OptOptimize))
+		require.Nil(t, err)
+		assert.Equal(t, `{"a":1}`, out.Value())
+		assert.Equal(t, uint64(2), *det.ActualCost())
+	}
+
+	{
+		_, _, err := eval(`json.encode(ctx)`, strings.Repeat("a", 1000), cel.CostLimit(102))
+		assert.ErrorContains(t, err, "cost limit exceeded")
+		_, _, err = eval(`json.encode(ctx)`, strings.Repeat("a", 1000), cel.CostLimit(103))
+		assert.Nil(t, err)
+	}
 }
 
 func TestFunctionNet(t *testing.T) {

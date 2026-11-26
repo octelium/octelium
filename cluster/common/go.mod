@@ -3,7 +3,7 @@ module github.com/octelium/octelium/cluster/common
 go 1.27.4
 
 require (
-	cel.dev/cel-go v0.32.0
+	cel.dev/cel-go v0.33.4
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/google/uuid v1.6.0

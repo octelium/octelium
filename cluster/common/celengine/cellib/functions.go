@@ -29,6 +29,8 @@ import (
 	"cel.dev/cel-go/common/types/traits"
 	"github.com/asaskevich/govalidator"
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func functionNow() cel.EnvOption {
@@ -155,6 +157,53 @@ func toJSONValue(val ref.Val, depth int) (any, error) {
 	default:
 		return val.Value(), nil
 	}
+}
+
+func funcJSONEncode() cel.EnvOption {
+	return cel.Function("json.encode",
+		cel.Overload("json_encode_dyn",
+			[]*cel.Type{
+				cel.DynType,
+			},
+			cel.StringType,
+			cel.UnaryBinding(func(val ref.Val) ref.Val {
+				ret, err := jsonEncode(val)
+				if err != nil {
+					return types.NewErrFromString(err.Error())
+				}
+				return types.String(ret)
+			}),
+		),
+	)
+}
+
+func jsonEncode(val ref.Val) (string, error) {
+	native, err := val.ConvertToNative(types.JSONValueType)
+	if err != nil {
+		return "", err
+	}
+
+	jsonValue, ok := native.(*structpb.Value)
+	if !ok {
+		return "", errors.Errorf("Invalid json value")
+	}
+
+	jsonBytes, err := protojson.Marshal(jsonValue)
+	if err != nil {
+		return "", err
+	}
+
+	var obj any
+	if err := json.Unmarshal(jsonBytes, &obj); err != nil {
+		return "", err
+	}
+
+	jsonBytes, err = json.Marshal(obj)
+	if err != nil {
+		return "", err
+	}
+
+	return string(jsonBytes), nil
 }
 
 func funcNet() []cel.EnvOption {

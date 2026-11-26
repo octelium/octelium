@@ -25,6 +25,7 @@ import (
 	"cel.dev/cel-go/checker/decls"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCELLib(t *testing.T) {
@@ -95,4 +96,58 @@ func TestCELLib(t *testing.T) {
 		assert.True(t, out.Value().(bool))
 	}
 
+}
+
+func TestCELLibExtensions(t *testing.T) {
+	env, err := cel.NewEnv(cel.Variable("ctx", cel.ListType(cel.IntType)), CELLib())
+	require.Nil(t, err)
+
+	for _, tc := range []struct {
+		expr string
+		want any
+	}{
+		{`"%s-%.2f".format(["a", 1.5])`, "a-1.50"},
+		{`["a", "b"].join("-")`, "a-b"},
+		{`"abc".reverse()`, "cba"},
+		{`strings.quote("a\nb")`, `"a\nb"`},
+		{`math.sqrt(4.0)`, 2.0},
+		{`math.least([3, 1, 2])`, int64(1)},
+		{`math.bitAnd(12, 10)`, int64(8)},
+		{`cel.bind(x, 2, x * x)`, int64(4)},
+		{`base64.encode(b"hello")`, "aGVsbG8="},
+		{`string(base64.decode("aGVsbG8"))`, "hello"},
+		{`json.encode({"b": 1, "a": 2})`, `{"a":2,"b":1}`},
+		{`json.parse("{\"a\": 1}").a`, 1.0},
+	} {
+		ast, iss := env.Compile(tc.expr)
+		require.Nil(t, iss.Err(), tc.expr)
+		prg, err := env.Program(ast)
+		require.Nil(t, err)
+		out, _, err := prg.Eval(map[string]any{})
+		assert.Nil(t, err, tc.expr)
+		assert.Equal(t, tc.want, out.Value(), tc.expr)
+	}
+
+	for _, expr := range []string{
+		`base64.encodeUrl(b"hello")`,
+		`base64.decodeUrl("aGVsbG8")`,
+		`yaml.encode({"a": 1})`,
+		`yaml.parse("a: 1")`,
+		`json.parse("1", int)`,
+		`"%.101f".format([1.0])`,
+	} {
+		_, iss := env.Compile(expr)
+		assert.NotNil(t, iss.Err(), expr)
+	}
+
+	assert.Contains(t, env.Functions(), "cel.@block")
+
+	ast, iss := env.Compile("math.least(ctx)")
+	require.Nil(t, iss.Err())
+	prg, err := env.Program(ast, cel.CostLimit(1_000_000))
+	require.Nil(t, err)
+	out, det, err := prg.Eval(map[string]any{"ctx": make([]int64, 1000)})
+	require.Nil(t, err)
+	assert.Equal(t, int64(0), out.Value())
+	assert.Equal(t, uint64(1002), *det.ActualCost())
 }
