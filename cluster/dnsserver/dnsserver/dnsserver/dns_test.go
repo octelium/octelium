@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -212,13 +213,15 @@ func newTstDNSUpstream(t *testing.T, handler dns.Handler) string {
 	t.Helper()
 	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	require.Nil(t, err)
+	startTstDNSUpstream(t, &dns.Server{PacketConn: conn, Handler: handler})
+	return conn.LocalAddr().String()
+}
+
+func startTstDNSUpstream(t *testing.T, srv *dns.Server) {
+	t.Helper()
 	started := make(chan struct{})
 	done := make(chan error, 1)
-	srv := &dns.Server{
-		PacketConn:        conn,
-		Handler:           handler,
-		NotifyStartedFunc: func() { close(started) },
-	}
+	srv.NotifyStartedFunc = func() { close(started) }
 	go func() {
 		done <- srv.ActivateAndServe()
 	}()
@@ -231,7 +234,6 @@ func newTstDNSUpstream(t *testing.T, handler dns.Handler) string {
 	case <-time.After(5 * time.Second):
 		t.Fatal("The DNS upstream did not start")
 	}
-	return conn.LocalAddr().String()
 }
 
 func tstDNSAnswer(r *dns.Msg) *dns.Msg {
@@ -2515,26 +2517,28 @@ func TestGetProxiedAnswerFallbackConfigUpdateInFlight(t *testing.T) {
 	}
 }
 
-func newTstDNSTCPUpstream(t *testing.T, addr string, handler dns.Handler) string {
+func newTstDNSTCPUpstream(t *testing.T, udpHandler, tcpHandler dns.Handler) string {
 	t.Helper()
-	listener, err := net.Listen("tcp4", addr)
-	require.Nil(t, err)
-	started := make(chan struct{})
-	done := make(chan error, 1)
-	srv := &dns.Server{
-		Listener: listener, Handler: handler,
-		NotifyStartedFunc: func() { close(started) },
+	var listener net.Listener
+	var conn net.PacketConn
+	for range 100 {
+		var err error
+		listener, err = net.Listen("tcp4", "127.0.0.1:0")
+		require.Nil(t, err)
+		conn, err = net.ListenPacket("udp4", listener.Addr().String())
+		if err == nil {
+			break
+		}
+		require.Nil(t, listener.Close())
+		require.True(t, errors.Is(err, syscall.EADDRINUSE), "%v", err)
 	}
-	go func() { done <- srv.ActivateAndServe() }()
+	require.NotNil(t, conn, "Could not bind UDP and TCP DNS upstreams to the same port")
 	t.Cleanup(func() {
-		assert.Nil(t, srv.Shutdown())
-		assert.Nil(t, <-done)
+		listener.Close()
+		conn.Close()
 	})
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("The TCP DNS upstream did not start")
-	}
+	startTstDNSUpstream(t, &dns.Server{PacketConn: conn, Handler: udpHandler})
+	startTstDNSUpstream(t, &dns.Server{Listener: listener, Handler: tcpHandler})
 	return listener.Addr().String()
 }
 
@@ -2563,14 +2567,13 @@ func TestGetProxiedAnswerTruncatedUDP(t *testing.T) {
 			var udpQueries atomic.Int64
 			var tcpQueries atomic.Int64
 			requests := make(chan *dns.Msg, 4)
-			addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			addr := newTstDNSTCPUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 				udpQueries.Add(1)
 				requests <- r.Copy()
 				msg := tstDNSAnswer(r)
 				msg.Truncated = true
 				assert.Nil(t, w.WriteMsg(msg))
-			}))
-			newTstDNSTCPUpstream(t, addr, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			}), dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 				tcpQueries.Add(1)
 				requests <- r.Copy()
 				assert.Nil(t, w.WriteMsg(tstDNSLargeAnswer(r)))
@@ -2615,14 +2618,17 @@ func TestGetProxiedAnswerTruncatedErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var udpQueries atomic.Int64
 			var tcpQueries atomic.Int64
-			addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			udpHandler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 				udpQueries.Add(1)
 				msg := tstDNSAnswer(r)
 				msg.Truncated = true
 				assert.Nil(t, w.WriteMsg(msg))
-			}))
-			if name != "Unavailable" {
-				newTstDNSTCPUpstream(t, addr, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			})
+			var addr string
+			if name == "Unavailable" {
+				addr = newTstDNSUpstream(t, udpHandler)
+			} else {
+				addr = newTstDNSTCPUpstream(t, udpHandler, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 					tcpQueries.Add(1)
 					if name == "Malformed" {
 						_, err := w.Write([]byte{0})
@@ -2677,12 +2683,11 @@ func TestGetProxiedAnswerTruncatedFailover(t *testing.T) {
 			}))
 			var servers []string
 			for range 2 {
-				addr := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				addr := newTstDNSTCPUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 					msg := tstDNSAnswer(r)
 					msg.Truncated = udpQueries.Add(1) == 1
 					assert.Nil(t, w.WriteMsg(msg))
-				}))
-				newTstDNSTCPUpstream(t, addr, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				}), dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 					tcpQueries.Add(1)
 					if timeout {
 						return
@@ -2724,13 +2729,12 @@ func TestServeDNSTruncatedUpstream(t *testing.T) {
 		t.Run(dns.TypeToString[qtype], func(t *testing.T) {
 			var udpQueries atomic.Int64
 			var tcpQueries atomic.Int64
-			upstream := newTstDNSUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			upstream := newTstDNSTCPUpstream(t, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 				udpQueries.Add(1)
 				msg := tstDNSAnswer(r)
 				msg.Truncated = true
 				assert.Nil(t, w.WriteMsg(msg))
-			}))
-			newTstDNSTCPUpstream(t, upstream, dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			}), dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
 				tcpQueries.Add(1)
 				assert.Nil(t, w.WriteMsg(tstDNSLargeAnswer(r)))
 			}))
