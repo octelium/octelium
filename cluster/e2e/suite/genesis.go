@@ -177,14 +177,18 @@ func testGenesisInitializationReplay(t *testing.T, h *harness.H) {
 	tokenDigest := sha256.Sum256(token.Data["data"])
 	source, err := c.BatchV1().Jobs("default").Get(ctx, "octelium-genesis", k8smetav1.GetOptions{})
 	require.NoError(t, err)
+	_, err = c.CoreV1().ServiceAccounts(vutils.K8sNS).Get(ctx, "octelium-genesis", k8smetav1.GetOptions{})
+	require.NoError(t, err)
+	assertInitGenesisServiceAccountRemoved(t, h)
 
 	for range 2 {
 		spec := source.Spec.Template.DeepCopy()
 		for _, label := range []string{batchv1.JobNameLabel, batchv1.ControllerUidLabel, "job-name", "controller-uid"} {
 			delete(spec.Labels, label)
 		}
-		job, err := c.BatchV1().Jobs("default").Create(ctx, &batchv1.Job{
-			ObjectMeta: k8smetav1.ObjectMeta{GenerateName: "genesis-replay-e2e-", Namespace: "default"},
+		spec.Spec.ServiceAccountName = "octelium-genesis"
+		job, err := c.BatchV1().Jobs(vutils.K8sNS).Create(ctx, &batchv1.Job{
+			ObjectMeta: k8smetav1.ObjectMeta{GenerateName: "genesis-replay-e2e-", Namespace: vutils.K8sNS},
 			Spec: batchv1.JobSpec{
 				BackoffLimit:            new(int32(0)),
 				ActiveDeadlineSeconds:   new(int64(120)),
@@ -196,7 +200,9 @@ func testGenesisInitializationReplay(t *testing.T, h *harness.H) {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			err := c.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, k8smetav1.DeleteOptions{Preconditions: &k8smetav1.Preconditions{UID: &job.UID}})
+			err := c.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, k8smetav1.DeleteOptions{
+				Preconditions: &k8smetav1.Preconditions{UID: &job.UID}, PropagationPolicy: new(k8smetav1.DeletePropagationBackground),
+			})
 			if !k8serr.IsNotFound(err) {
 				assert.NoError(t, err)
 			}
@@ -231,5 +237,12 @@ func testGenesisInitializationReplay(t *testing.T, h *harness.H) {
 		currentPolicy, err := h.CoreC().GetPolicy(ctx, &metav1.GetOptions{Uid: policy.Metadata.Uid})
 		require.NoError(t, err)
 		assert.True(t, proto.Equal(policy.Spec, currentPolicy.Spec))
+		assertInitGenesisServiceAccountRemoved(t, h)
 	}
+}
+
+func assertInitGenesisServiceAccountRemoved(t *testing.T, h *harness.H) {
+	t.Helper()
+	_, err := h.K8sC().CoreV1().ServiceAccounts("default").Get(t.Context(), "octelium-genesis", k8smetav1.GetOptions{})
+	assert.True(t, k8serr.IsNotFound(err), "The initial Genesis ServiceAccount must not exist: %v", err)
 }
