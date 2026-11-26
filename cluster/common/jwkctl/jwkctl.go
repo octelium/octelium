@@ -52,10 +52,11 @@ const (
 )
 
 type Controller struct {
-	octeliumC octeliumc.ClientInterface
-	ctl       *ctl
-	domain    string
-	opts      *Opts
+	octeliumC        octeliumc.ClientInterface
+	ctl              *ctl
+	domain           string
+	opts             *Opts
+	accessTokenCache *accessTokenCache
 }
 
 type jwtKey struct {
@@ -83,7 +84,8 @@ func NewJWKController(ctx context.Context, octeliumC octeliumc.ClientInterface, 
 			keyMap:             make(map[string]*jwtKey),
 			isVerificationMode: o.IsVerificationMode,
 		},
-		opts: o,
+		opts:             o,
+		accessTokenCache: newAccessTokenCache(accessTokenCacheMaxEntries),
 	}
 
 	secrets, err := octeliumC.CoreC().ListSecret(ctx, &rmetav1.ListOptions{
@@ -470,105 +472,110 @@ func (c *Controller) uidToBytes(uid string) ([]byte, error) {
 var rgxT0 = regexp.MustCompile(`^[A-Za-z0-9-_]{150,220}$`)
 
 func (c *Controller) parseToken(tknStr string) (*authv1.TokenT0, error) {
+	tkn, _, err := c.doParseToken(tknStr)
+	return tkn, err
+}
+
+func (c *Controller) doParseToken(tknStr string) (*authv1.TokenT0, *jwtKey, error) {
 	strLen := len(tknStr)
 	if strLen == 0 {
-		return nil, errors.Errorf("Empty token")
+		return nil, nil, errors.Errorf("Empty token")
 	}
 
 	if strLen < 140 {
-		return nil, errors.Errorf("Token is too short")
+		return nil, nil, errors.Errorf("Token is too short")
 	}
 
 	if strLen > 300 {
-		return nil, errors.Errorf("Token is too large")
+		return nil, nil, errors.Errorf("Token is too large")
 	}
 
 	if !rgxT0.MatchString(tknStr) {
-		return nil, errors.Errorf("Invalid token")
+		return nil, nil, errors.Errorf("Invalid token")
 	}
 
 	totalTknBytes, err := base64.RawURLEncoding.DecodeString(tknStr)
 	if err != nil {
-		return nil, errors.Errorf("Could not decode token")
+		return nil, nil, errors.Errorf("Could not decode token")
 	}
 
 	lenTotalTknBytes := len(totalTknBytes)
 
 	if lenTotalTknBytes < 100 || lenTotalTknBytes > 200 {
-		return nil, errors.Errorf("Invalid token bytes")
+		return nil, nil, errors.Errorf("Invalid token bytes")
 	}
 
 	switch totalTknBytes[0] {
 	case 0x1:
 	default:
-		return nil, errors.Errorf("Invalid token type")
+		return nil, nil, errors.Errorf("Invalid token type")
 	}
 
 	tkn := &authv1.TokenT0{}
 	if err := pbutils.Unmarshal(totalTknBytes[1:], tkn); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if len(tkn.Signature) == 0 {
-		return nil, errors.Errorf("No signature")
+		return nil, nil, errors.Errorf("No signature")
 	}
 	if tkn.Content == nil {
-		return nil, errors.Errorf("No content")
+		return nil, nil, errors.Errorf("No content")
 	}
 
 	keyUID, err := c.getUID(tkn.Content.KeyID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	key, err := c.findKeyByUID(keyUID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	contentByte, err := pbutils.Marshal(tkn.Content)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	switch key.kind {
 	case KindEd25519:
 		pub, ok := key.publicKey.(ed25519.PublicKey)
 		if !ok {
-			return nil, errors.Errorf("Invalid ed25519 public key")
+			return nil, nil, errors.Errorf("Invalid ed25519 public key")
 		}
 		if isValid := ed25519.Verify(pub, contentByte, tkn.Signature); !isValid {
-			return nil, errors.Errorf("Invalid signature")
+			return nil, nil, errors.Errorf("Invalid signature")
 		}
 	case KindECDSAP256:
 		pub, ok := key.publicKey.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, errors.Errorf("Invalid ECDSA public key")
+			return nil, nil, errors.Errorf("Invalid ECDSA public key")
 		}
 		if isValid := verifyECDSAP256(pub, contentByte, tkn.Signature); !isValid {
-			return nil, errors.Errorf("Invalid signature")
+			return nil, nil, errors.Errorf("Invalid signature")
 		}
 	default:
-		return nil, errors.Errorf("Unsupported key kind")
+		return nil, nil, errors.Errorf("Unsupported key kind")
 	}
 
 	if _, err := c.getUID(tkn.Content.Subject); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if _, err := c.getUID(tkn.Content.TokenID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if tkn.Content.Type == authv1.TokenT0_Content_TYPE_UNKNOWN {
-		return nil, errors.Errorf("Unknown token type")
+		return nil, nil, errors.Errorf("Unknown token type")
 	}
 
 	if tkn.Content.ExpiresAt.IsValid() && time.Now().After(tkn.Content.ExpiresAt.AsTime()) {
-		return nil, errors.Errorf("Token is expired")
+		return nil, nil, errors.Errorf("Token is expired")
 	}
 
-	return tkn, nil
+	return tkn, key, nil
 }
 
 func (c *Controller) getUID(b []byte) (string, error) {
@@ -606,10 +613,11 @@ type tokenClaims struct {
 	subject string
 	tokenID string
 	tkn     *authv1.TokenT0
+	key     *jwtKey
 }
 
 func (c *Controller) verifyToken(tknStr string, typ authv1.TokenT0_Content_Type) (*tokenClaims, error) {
-	tkn, err := c.parseToken(tknStr)
+	tkn, key, err := c.doParseToken(tknStr)
 	if err != nil {
 		return nil, err
 	}
@@ -631,16 +639,28 @@ func (c *Controller) verifyToken(tknStr string, typ authv1.TokenT0_Content_Type)
 		subject: subject,
 		tokenID: tokenID,
 		tkn:     tkn,
+		key:     key,
 	}
 
 	return ret, nil
 }
 
 func (c *Controller) VerifyAccessToken(tknStr string) (*AccessTokenClaims, error) {
+	cached, ok := c.getCachedAccessToken(tknStr)
+	if ok {
+		ret := cached.claims
+		return &ret, nil
+	}
+
 	tokenClaims, err := c.verifyToken(tknStr, authv1.TokenT0_Content_ACCESS_TOKEN)
 	if err != nil {
+		if cached != nil {
+			c.accessTokenCache.delete(tknStr, cached)
+		}
 		return nil, err
 	}
+
+	c.setCachedAccessToken(tknStr, tokenClaims)
 
 	return &AccessTokenClaims{
 		SessionUID: tokenClaims.subject,

@@ -3027,6 +3027,109 @@ func TestAuthenticationTokenIntegrity(t *testing.T) {
 	}
 }
 
+func TestAuthenticationTokenCache(t *testing.T) {
+	tst, err := tests.Initialize(nil)
+	if !assert.Nil(t, err) {
+		return
+	}
+	t.Cleanup(func() { tst.Destroy() })
+	jwk, err := jwkctl.NewJWKController(t.Context(), tst.C.OcteliumC, nil)
+	if !assert.Nil(t, err) {
+		return
+	}
+	srv, coreC := newAuthorizationService(t)
+	srv.s.jwkCtl = jwk
+	coreC.service.Spec.IsPublic = true
+	downstream := coreC.ResourceServiceClient.(*downstreamCoreC)
+	session := downstream.session
+	session.Status.Authentication.TokenID = vutils.UUIDv4()
+	session.Status.Authentication.SetAt = timestamppb.New(time.Now())
+	session.Status.Authentication.AccessTokenDuration = &metav1.Duration{Type: &metav1.Duration_Hours{Hours: 1}}
+	session.Status.Authentication.RefreshTokenDuration = &metav1.Duration{Type: &metav1.Duration_Hours{Hours: 2}}
+	assert.Nil(t, srv.s.cache.SetSession(proto.Clone(session).(*corev1.Session)))
+	token, err := jwk.CreateAccessToken(session)
+	if !assert.Nil(t, err) {
+		return
+	}
+	refreshToken, err := jwk.CreateRefreshToken(session)
+	assert.Nil(t, err)
+
+	authenticate := func(headers map[string]string) error {
+		di, err := srv.s.Authenticate(t.Context(), &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+			Service: coreC.service,
+			Request: &coctovigilv1.DownstreamRequest{
+				Source: &coctovigilv1.DownstreamRequest_Source{Address: "192.0.2.1"},
+				Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+					Http: &corev1.RequestContext_Request_HTTP{Headers: headers},
+				}},
+			},
+		})
+		if err != nil {
+			assert.Nil(t, di)
+		} else if assert.NotNil(t, di) {
+			assert.Equal(t, session.Metadata.Uid, di.Session.Metadata.Uid)
+		}
+		return err
+	}
+	allHeaders := []map[string]string{
+		{"x-octelium-auth": token},
+		{"cookie": "theme=dark; octelium_auth=" + token + "; lang=en"},
+		{"authorization": "Bearer " + token},
+	}
+	assertAuthenticated := func() {
+		t.Helper()
+		for range 2 {
+			for _, headers := range allHeaders {
+				assert.Nil(t, authenticate(headers))
+			}
+		}
+	}
+	assertUnauthenticated := func() {
+		t.Helper()
+		for range 2 {
+			for _, headers := range allHeaders {
+				assert.ErrorIs(t, authenticate(headers), UnauthenticatedErr)
+			}
+		}
+	}
+	setSession := func(fn func(sess *corev1.Session)) {
+		fn(session)
+		assert.Nil(t, srv.s.cache.SetSession(proto.Clone(session).(*corev1.Session)))
+	}
+
+	assertAuthenticated()
+
+	tokenID := session.Status.Authentication.TokenID
+	setSession(func(sess *corev1.Session) { sess.Status.Authentication.TokenID = vutils.UUIDv4() })
+	assertUnauthenticated()
+	setSession(func(sess *corev1.Session) { sess.Status.Authentication.TokenID = tokenID })
+	assertAuthenticated()
+
+	setSession(func(sess *corev1.Session) { sess.Spec.ExpiresAt = timestamppb.New(time.Now().Add(-time.Hour)) })
+	assertUnauthenticated()
+	setSession(func(sess *corev1.Session) { sess.Spec.ExpiresAt = nil })
+	assertAuthenticated()
+
+	authentication := session.Status.Authentication
+	setSession(func(sess *corev1.Session) { sess.Status.Authentication = nil })
+	assertUnauthenticated()
+	setSession(func(sess *corev1.Session) { sess.Status.Authentication = authentication })
+	assertAuthenticated()
+
+	assert.Nil(t, srv.s.cache.DeleteSession(session))
+	downstream.errs["session"] = status.Error(codes.NotFound, "Session not found")
+	assertUnauthenticated()
+	delete(downstream.errs, "session")
+	assertAuthenticated()
+
+	for _, invalid := range []string{refreshToken, token[:len(token)-1] + "!", token + "a", " " + token} {
+		for range 2 {
+			assert.ErrorIs(t, authenticate(map[string]string{"x-octelium-auth": invalid}), UnauthenticatedErr)
+		}
+	}
+	assertAuthenticated()
+}
+
 func TestClientlessForwardedAddress(t *testing.T) {
 	tst, err := tests.Initialize(nil)
 	if !assert.Nil(t, err) {

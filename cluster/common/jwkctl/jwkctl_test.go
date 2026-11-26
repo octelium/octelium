@@ -49,7 +49,7 @@ func newTokenController(t *testing.T) *Controller {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	assert.Nil(t, err)
 	uid := vutils.UUIDv4()
-	return &Controller{opts: &Opts{}, ctl: &ctl{keyMap: map[string]*jwtKey{
+	return &Controller{opts: &Opts{}, accessTokenCache: newAccessTokenCache(accessTokenCacheMaxEntries), ctl: &ctl{keyMap: map[string]*jwtKey{
 		uid: {kind: KindEd25519, key: key, publicKey: key.Public(), createdAt: time.Now(), uid: uid},
 	}}}
 }
