@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,8 +42,6 @@ import (
 )
 
 type tstOAuthSrv struct {
-	srv         *http.Server
-	port        int
 	accessToken string
 }
 
@@ -208,22 +205,6 @@ func (s *tstOAuthSrv) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(respBytes)
 }
 
-func (s *tstOAuthSrv) run(t *testing.T) {
-	s.srv = &http.Server{
-		Addr:    net.JoinHostPort("localhost", fmt.Sprintf("%d", s.port)),
-		Handler: s,
-	}
-
-	lis, err := net.Listen("tcp", net.JoinHostPort("localhost", fmt.Sprintf("%d", s.port)))
-	assert.Nil(t, err)
-	go s.srv.Serve(lis)
-}
-
-func (s *tstOAuthSrv) close() {
-	s.srv.Close()
-	time.Sleep(1 * time.Second)
-}
-
 func TestSecretManager(t *testing.T) {
 
 	ctx := context.Background()
@@ -325,13 +306,10 @@ func TestSecretManager(t *testing.T) {
 
 	{
 		tstSrv := &tstOAuthSrv{
-			port:        utilrand.GetRandomRangeMath(40000, 50000),
 			accessToken: utilrand.GetRandomString(12),
 		}
-		tstSrv.run(t)
-		defer tstSrv.close()
-
-		time.Sleep(2 * time.Second)
+		srv := httptest.NewServer(tstSrv)
+		defer srv.Close()
 
 		svc.Spec.Mode = corev1.Service_Spec_HTTP
 		svc.Spec.Config = &corev1.Service_Spec_Config{
@@ -346,7 +324,7 @@ func TestSecretManager(t *testing.T) {
 						Type: &corev1.Service_Spec_Config_HTTP_Auth_Oauth2ClientCredentials{
 							Oauth2ClientCredentials: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials{
 								ClientID: utilrand.GetRandomStringCanonical(8),
-								TokenURL: fmt.Sprintf("http://localhost:%d/oauth2/token", tstSrv.port),
+								TokenURL: srv.URL + "/oauth2/token",
 								ClientSecret: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret{
 									Type: &corev1.Service_Spec_Config_HTTP_Auth_OAuth2ClientCredentials_ClientSecret_FromSecret{
 										FromSecret: sec1.Metadata.Name,
@@ -574,13 +552,10 @@ func TestOAuth2TokenSourceIsRebuiltOnRotation(t *testing.T) {
 	assert.Nil(t, err)
 
 	tstSrv := &tstOAuthSrv{
-		port:        tests.GetPort(),
 		accessToken: utilrand.GetRandomString(12),
 	}
-	tstSrv.run(t)
-	t.Cleanup(func() {
-		tstSrv.close()
-	})
+	srv := httptest.NewServer(tstSrv)
+	t.Cleanup(srv.Close)
 
 	sec, err := fakeC.OcteliumC.CoreC().CreateSecret(ctx, &corev1.Secret{
 		Metadata: &metav1.Metadata{
@@ -597,7 +572,7 @@ func TestOAuth2TokenSourceIsRebuiltOnRotation(t *testing.T) {
 
 	req := &GetOAuth2CCTokenReq{
 		ClientID:   utilrand.GetRandomStringCanonical(8),
-		TokenURL:   fmt.Sprintf("http://localhost:%d/token", tstSrv.port),
+		TokenURL:   srv.URL + "/token",
 		SecretName: sec.Metadata.Name,
 	}
 
