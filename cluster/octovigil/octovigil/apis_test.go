@@ -1212,3 +1212,196 @@ func TestInternalRPCLookupFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthenticateAndAuthorizeRPCOmit(t *testing.T) {
+	bodyMap, err := structpb.NewStruct(map[string]any{"model": "gpt", "count": 3})
+	assert.Nil(t, err)
+	httpC := func(path string) *corev1.RequestContext_Request_HTTP {
+		return &corev1.RequestContext_Request_HTTP{
+			Path: path, Method: "POST", Uri: path + "?q=1", Host: "service.example.com", Scheme: "https",
+			Headers: map[string]string{"x-tenant": "tenant"}, QueryParams: map[string]string{"q": "1"},
+			Body: []byte(`{"model":"gpt","count":3}`), BodyMap: bodyMap, Size: 25,
+		}
+	}
+	requests := []*corev1.RequestContext_Request{
+		nil,
+		{},
+		{Ip: "192.0.2.1", Type: &corev1.RequestContext_Request_Http{Http: httpC("/private")}},
+		{Type: &corev1.RequestContext_Request_Http{Http: &corev1.RequestContext_Request_HTTP{Path: "/", Body: []byte("raw")}}},
+		{Type: &corev1.RequestContext_Request_Kubernetes_{Kubernetes: &corev1.RequestContext_Request_Kubernetes{
+			Http: httpC("/api/v1/namespaces/default/pods"), Verb: "list", ApiPrefix: "api", ApiVersion: "v1", Namespace: "default", Resource: "pods",
+		}}},
+		{Type: &corev1.RequestContext_Request_Grpc{Grpc: &corev1.RequestContext_Request_GRPC{
+			Http: httpC("/pkg.Service/Method"), Method: "Method", Service: "Service", ServiceFullName: "pkg.Service", Package: "pkg",
+		}}},
+		{Type: &corev1.RequestContext_Request_Mcp{Mcp: &corev1.RequestContext_Request_MCP{
+			Http: httpC("/mcp"), Method: "tools/call", Name: "tool", RequestID: "1", Capabilities: []string{"tools"},
+		}}},
+		{Type: &corev1.RequestContext_Request_Llm{Llm: &corev1.RequestContext_Request_LLM{
+			Http: httpC("/v1/chat/completions"), Model: "gpt", ToolNames: []string{"search"}, HasTools: true, ToolCount: 1,
+		}}},
+		{Type: &corev1.RequestContext_Request_Postgres_{Postgres: &corev1.RequestContext_Request_Postgres{
+			Type: &corev1.RequestContext_Request_Postgres_Connect_{Connect: &corev1.RequestContext_Request_Postgres_Connect{
+				User: "postgres", Database: "db",
+			}},
+		}}},
+		{Type: &corev1.RequestContext_Request_Ssh{Ssh: &corev1.RequestContext_Request_SSH{
+			Type: &corev1.RequestContext_Request_SSH_Connect_{Connect: &corev1.RequestContext_Request_SSH_Connect{User: "root"}},
+		}}},
+		{Type: &corev1.RequestContext_Request_Dns{Dns: &corev1.RequestContext_Request_DNS{Name: "example.com.", TypeID: 1}}},
+	}
+
+	for _, shape := range []string{"Authorized", "Unauthorized", "Anonymous", "ConfigName", "Config", "Unauthenticated", "EmptyResourceVersion"} {
+		t.Run(shape, func(t *testing.T) {
+			srv, coreC := newAuthorizationService(t)
+			coreC.service.Metadata.ResourceVersion = "service-rv"
+			address := "100.64.0.2"
+			switch shape {
+			case "Unauthorized":
+				coreC.service.Spec.Authorization.InlinePolicies[0].Spec.Rules[0].Effect = corev1.Policy_Spec_Rule_DENY
+			case "Anonymous":
+				coreC.service.Spec.IsAnonymous = true
+				coreC.service.Spec.Authorization.EnableAnonymous = true
+			case "ConfigName":
+				coreC.service.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+					Configs: []*corev1.Service_Spec_Config{{Name: "named", Upstream: &corev1.Service_Spec_Config_Upstream{
+						Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://127.0.0.1:9091"},
+					}}},
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+						Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+						Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "named"},
+					}},
+				}
+			case "Config":
+				coreC.service.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{
+					Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+						Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}},
+						Type:      &corev1.Service_Spec_DynamicConfig_Rule_Eval{Eval: `{"upstream": {"url": "http://127.0.0.1:9090"}}`},
+					}},
+				}
+			case "Unauthenticated":
+				address = "192.0.2.1"
+			case "EmptyResourceVersion":
+				coreC.service.Metadata.ResourceVersion = ""
+			}
+			assert.Nil(t, srv.s.cache.SetService(coreC.service))
+			cached := pbutils.Clone(coreC.service).(*corev1.Service)
+
+			listener := bufconn.Listen(1024 * 1024)
+			server := grpc.NewServer()
+			srv.s.grpcSrv = server
+			coctovigilv1.RegisterInternalServiceServer(server, srv)
+			done := make(chan error, 1)
+			go func() { done <- server.Serve(listener) }()
+			t.Cleanup(func() {
+				assert.Nil(t, srv.s.Close())
+				listener.Close()
+				select {
+				case err := <-done:
+					assert.Nil(t, err)
+				case <-time.After(3 * time.Second):
+					assert.Fail(t, "the internal RPC server did not stop")
+				}
+			})
+			conn, err := grpc.NewClient("passthrough:///octovigil",
+				grpc.WithContextDialer(func(ctx context.Context, address string) (net.Conn, error) {
+					return listener.DialContext(ctx)
+				}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if !assert.Nil(t, err) {
+				return
+			}
+			t.Cleanup(func() { conn.Close() })
+			client := coctovigilv1.NewInternalServiceClient(conn)
+
+			var omittedRequests, omittedServices int
+			for _, request := range requests {
+				for _, omitRequest := range []bool{false, true} {
+					for _, resourceVersion := range []string{"", "service-rv", "other-rv"} {
+						downstream := &coctovigilv1.DownstreamRequest{
+							Source:  &coctovigilv1.DownstreamRequest_Source{Address: address},
+							Request: request,
+						}
+						legacy, err := client.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+							ServiceUID: "service", Request: downstream,
+						})
+						if !assert.Nil(t, err) || !assert.NotNil(t, legacy) {
+							return
+						}
+						resp, err := client.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+							ServiceUID: "service", Request: downstream,
+							OmitRequest: omitRequest, ServiceResourceVersion: resourceVersion,
+						})
+						if !assert.Nil(t, err) || !assert.NotNil(t, resp) {
+							return
+						}
+
+						switch shape {
+						case "Unauthenticated":
+							assert.False(t, legacy.IsAuthenticated)
+							assert.Nil(t, legacy.RequestContext)
+							assert.True(t, pbutils.IsEqual(legacy, resp))
+							continue
+						case "Unauthorized":
+							assert.True(t, legacy.IsAuthenticated)
+							assert.False(t, legacy.IsAuthorized)
+						case "Anonymous":
+							assert.False(t, legacy.IsAuthenticated)
+							assert.True(t, legacy.IsAuthorized)
+						case "ConfigName":
+							assert.True(t, legacy.IsAuthorized)
+							assert.Equal(t, "named", legacy.ServiceConfigName)
+						case "Config":
+							assert.True(t, legacy.IsAuthorized)
+							assert.Equal(t, "http://127.0.0.1:9090", legacy.Config.GetUpstream().GetUrl())
+						default:
+							assert.True(t, legacy.IsAuthenticated)
+							assert.True(t, legacy.IsAuthorized)
+						}
+
+						if !assert.NotNil(t, resp.RequestContext) {
+							return
+						}
+						assert.True(t, pbutils.IsEqual(request, legacy.RequestContext.Request))
+						assert.True(t, pbutils.IsEqual(cached, legacy.RequestContext.Service))
+
+						assert.Equal(t, omitRequest || request == nil, resp.RequestContext.Request == nil)
+						isServiceOmitted := resourceVersion != "" && resourceVersion == cached.Metadata.ResourceVersion
+						assert.Equal(t, isServiceOmitted, resp.RequestContext.Service == nil)
+						if omitRequest && request != nil {
+							omittedRequests++
+						}
+						if isServiceOmitted {
+							omittedServices++
+						}
+
+						if resp.RequestContext.Request == nil {
+							resp.RequestContext.Request = request
+						}
+						if resp.RequestContext.Service == nil {
+							resp.RequestContext.Service = cached
+						}
+						assert.True(t, pbutils.IsEqual(legacy, resp))
+					}
+				}
+			}
+
+			switch shape {
+			case "Unauthenticated":
+				assert.Zero(t, omittedRequests)
+				assert.Zero(t, omittedServices)
+			case "EmptyResourceVersion":
+				assert.Equal(t, 3*(len(requests)-1), omittedRequests)
+				assert.Zero(t, omittedServices)
+			default:
+				assert.Equal(t, 3*(len(requests)-1), omittedRequests)
+				assert.Equal(t, 2*len(requests), omittedServices)
+			}
+
+			svc, err := srv.s.cache.GetService("service")
+			assert.Nil(t, err)
+			assert.Same(t, coreC.service, svc)
+			assert.True(t, pbutils.IsEqual(cached, svc))
+			assert.Empty(t, coreC.calls)
+		})
+	}
+}

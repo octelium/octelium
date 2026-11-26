@@ -348,6 +348,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: req,
+		Service: svc,
 	})
 	if err != nil {
 		zap.L().Warn("Could not get AuthenticateAndAuthorize", zap.Error(err))

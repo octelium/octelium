@@ -327,6 +327,7 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: request,
+		Service: svc,
 	})
 	if err != nil {
 		zap.L().Debug("Could not authenticate/authorize SOCKS5 request", zap.Error(err))

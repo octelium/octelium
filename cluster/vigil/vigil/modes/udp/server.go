@@ -273,6 +273,7 @@ func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: req,
+		Service: svc,
 	})
 	if err != nil {
 		s.metricsStore.AtRequestStart()

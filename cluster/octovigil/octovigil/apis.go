@@ -80,6 +80,17 @@ func (s *internalService) AuthenticateAndAuthorize(
 		return nil, grpcutils.InternalWithErr(err)
 	}
 
+	if resp.RequestContext != nil {
+		if req.OmitRequest {
+			resp.RequestContext.Request = nil
+		}
+
+		if req.ServiceResourceVersion != "" &&
+			req.ServiceResourceVersion == svc.GetMetadata().GetResourceVersion() {
+			resp.RequestContext.Service = nil
+		}
+	}
+
 	/*
 		zap.L().Debug("AuthenticateAndAuthorize request done",
 			zap.Float32("time", float32(time.Since(startedAt).Nanoseconds())/1000000))

@@ -99,6 +99,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	auth, err := m.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: reqCtx.DownstreamRequest,
+		Service: reqCtx.Service,
 	})
 	if err != nil {
 		if ctx.Err() != nil || grpcerr.IsCanceled(err) ||

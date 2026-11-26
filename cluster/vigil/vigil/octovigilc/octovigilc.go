@@ -94,10 +94,22 @@ func NewClient(ctx context.Context, opts *Opts) (*Client, error) {
 
 func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *AuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
 	if c.isEmbedded {
-		return c.embeddedSrv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
-			Service: c.vCache.GetService(),
+		svc := c.vCache.GetService()
+		resp, err := c.embeddedSrv.AuthenticateAndAuthorize(ctx, &coctovigilv1.DoAuthenticateAndAuthorizeRequest{
+			Service: svc,
 			Request: req.Request,
 		})
+		if err != nil {
+			return nil, err
+		}
+
+		if reqCtx := resp.RequestContext; reqCtx != nil &&
+			req.Service.GetMetadata().GetResourceVersion() != "" &&
+			req.Service.GetMetadata().GetResourceVersion() == svc.GetMetadata().GetResourceVersion() {
+			reqCtx.Service = req.Service
+		}
+
+		return resp, nil
 	} else {
 		// zap.L().Debug("Starting a remote AuthenticateAndAuthorize")
 		ctx, cancel := context.WithTimeout(ctx, requestTimeout)
@@ -107,11 +119,23 @@ func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *Authenticate
 		defer setRequestBody(req.Request.GetRequest(), body)
 
 		resp, err := c.remoteC.InternalC().AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
-			ServiceUID: c.svcUID,
-			Request:    req.Request,
+			ServiceUID:             c.svcUID,
+			Request:                req.Request,
+			OmitRequest:            true,
+			ServiceResourceVersion: req.Service.GetMetadata().GetResourceVersion(),
 		})
 		if err != nil {
 			return nil, err
+		}
+
+		if reqCtx := resp.GetRequestContext(); reqCtx != nil {
+			if reqCtx.Request == nil {
+				reqCtx.Request = req.Request.GetRequest()
+			}
+
+			if reqCtx.Service == nil {
+				reqCtx.Service = req.Service
+			}
 		}
 
 		setRequestBody(resp.GetRequestContext().GetRequest(), body)
@@ -176,6 +200,7 @@ func setRequestBody(req *corev1.RequestContext_Request, body []byte) {
 
 type AuthenticateAndAuthorizeRequest struct {
 	Request *coctovigilv1.DownstreamRequest
+	Service *corev1.Service
 }
 
 func (c *Client) GetCache() *acache.Cache {

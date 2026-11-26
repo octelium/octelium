@@ -29,6 +29,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/vigil/vigil/loadbalancer"
@@ -701,5 +702,131 @@ func TestAnonymousDynamicConfigErrors(t *testing.T) {
 		if tc.code == http.StatusOK {
 			assert.Equal(t, tc.url, reqCtx.ServiceConfig.GetUpstream().GetUrl(), tc.condition)
 		}
+	}
+}
+
+func TestMiddlewareRequestContext(t *testing.T) {
+	ctx := context.Background()
+
+	tst, err := tests.Initialize(nil)
+	assert.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  tst.C.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(tst.C.OcteliumC)
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(6),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic: true,
+			Port:     uint32(tests.GetPort()),
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://www.google.com",
+					},
+				},
+			},
+			Mode: corev1.Service_Spec_HTTP,
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	assert.Nil(t, err)
+
+	vCache, err := vcache.NewCache(ctx)
+	assert.Nil(t, err)
+	vCache.SetService(svc)
+
+	octovigilC, err := octovigilc.NewClient(ctx, &octovigilc.Opts{
+		VCache:    vCache,
+		OcteliumC: tst.C.OcteliumC,
+	})
+	assert.Nil(t, err)
+
+	usr, err := tstuser.NewUserWorkloadClientless(tst.C.OcteliumC, adminSrv, usrSrv, nil)
+	assert.Nil(t, err)
+	assert.Nil(t, octovigilC.GetCache().SetSession(usr.Session))
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})
+
+	mdlwr, err := New(ctx, next, tst.C.OcteliumC, octovigilC, "example.com")
+	assert.Nil(t, err)
+
+	for _, isAuthenticated := range []bool{false, true} {
+		svc := vCache.GetService()
+		headers := map[string]string{}
+		if isAuthenticated {
+			headers["x-octelium-auth"] = usr.GetAccessToken().AccessToken
+		}
+		request := &corev1.RequestContext_Request{
+			Type: &corev1.RequestContext_Request_Http{
+				Http: &corev1.RequestContext_Request_HTTP{
+					Headers: headers,
+				},
+			},
+		}
+		reqCtx := &middlewares.RequestContext{
+			CreatedAt:     time.Now(),
+			Service:       svc,
+			ServiceConfig: svc.Spec.Config,
+			DownstreamRequest: &coctovigilv1.DownstreamRequest{
+				Source: &coctovigilv1.DownstreamRequest_Source{
+					Address: "192.0.2.1",
+					Port:    12345,
+				},
+				Request: request,
+			},
+			DownstreamInfo: &corev1.RequestContext{
+				Request: request,
+				Service: svc,
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req = req.WithContext(context.WithValue(context.Background(),
+			middlewares.CtxRequestContext, reqCtx))
+
+		rw := httptest.NewRecorder()
+		mdlwr.ServeHTTP(rw, req)
+
+		if !isAuthenticated {
+			assert.Equal(t, http.StatusUnauthorized, rw.Code)
+			assert.False(t, reqCtx.IsAuthenticated)
+			assert.Nil(t, reqCtx.DownstreamInfo)
+			continue
+		}
+
+		assert.Equal(t, http.StatusOK, rw.Code)
+		assert.True(t, reqCtx.IsAuthenticated)
+		assert.True(t, reqCtx.IsAuthorized)
+		assert.Same(t, svc, reqCtx.DownstreamInfo.Service)
+		assert.Same(t, request, reqCtx.DownstreamInfo.Request)
+		assert.Same(t, svc.Spec.Config, reqCtx.ServiceConfig)
+		assert.Equal(t, usr.Session.Metadata.Uid, reqCtx.DownstreamInfo.Session.Metadata.Uid)
 	}
 }

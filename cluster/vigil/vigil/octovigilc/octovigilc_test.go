@@ -18,14 +18,23 @@ package octovigilc
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
+	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
+	"github.com/octelium/octelium/cluster/common/tests"
+	"github.com/octelium/octelium/cluster/common/tests/tstuser"
+	"github.com/octelium/octelium/cluster/common/vutils"
+	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -285,4 +294,276 @@ func TestRequestBodyIsNotSentToOctovigil(t *testing.T) {
 		assert.Equal(t, body,
 			ucorev1.GetRequestHTTP(resp.GetRequestContext().GetRequest()).GetBody())
 	}
+}
+
+func TestRemoteOmittedRequestContext(t *testing.T) {
+	newRequest := func(typ string) *corev1.RequestContext_Request {
+		switch typ {
+		case "Nil":
+			return nil
+		case "BodyMap":
+			return &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{Http: &corev1.RequestContext_Request_HTTP{
+				Path: "/private", Headers: map[string]string{"x-tenant": "tenant"},
+				Body: []byte(`{"key":"value"}`), BodyMap: pbutils.MapToStructMust(map[string]any{"key": "value"}),
+			}}}
+		case "Body":
+			return &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{Http: &corev1.RequestContext_Request_HTTP{
+				Path: "/private", Body: []byte("raw"),
+			}}}
+		default:
+			return &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Postgres_{
+				Postgres: &corev1.RequestContext_Request_Postgres{},
+			}}
+		}
+	}
+	newService := func(resourceVersion string) *corev1.Service {
+		return &corev1.Service{
+			Metadata: &metav1.Metadata{Uid: "service", Name: "service.default", ResourceVersion: resourceVersion},
+			Spec: &corev1.Service_Spec{Config: &corev1.Service_Spec_Config{Upstream: &corev1.Service_Spec_Config_Upstream{
+				Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "http://" + resourceVersion},
+			}}},
+		}
+	}
+	user := &corev1.User{Metadata: &metav1.Metadata{Uid: "user", Name: "user"}}
+
+	for _, typ := range []string{"Nil", "BodyMap", "Body", "Postgres"} {
+		for _, resourceVersion := range []string{"None", "", "rv"} {
+			for _, octovigil := range []string{"Legacy", "Current", "Stale"} {
+				for _, isAuthenticated := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/%s/%s/%t", typ, resourceVersion, octovigil, isAuthenticated), func(t *testing.T) {
+						var svc *corev1.Service
+						if resourceVersion != "None" {
+							svc = newService(resourceVersion)
+						}
+						octovigilSvc := newService("rv")
+						if octovigil == "Stale" {
+							octovigilSvc = newService("stale")
+						}
+
+						request := newRequest(typ)
+						origRequest := pbutils.Clone(&coctovigilv1.DownstreamRequest{Request: request}).(*coctovigilv1.DownstreamRequest).Request
+						origService := pbutils.Clone(&corev1.RequestContext{Service: svc}).(*corev1.RequestContext).Service
+
+						var sent *coctovigilv1.AuthenticateAndAuthorizeRequest
+						internal := &tstInternalErrC{authenticate: func(ctx context.Context, in *coctovigilv1.AuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
+							sent = pbutils.Clone(in).(*coctovigilv1.AuthenticateAndAuthorizeRequest)
+							ret := &coctovigilv1.AuthenticateAndAuthorizeResponse{}
+							if !isAuthenticated {
+								return ret, nil
+							}
+							ret.IsAuthenticated = true
+							ret.IsAuthorized = true
+							ret.ServiceConfigName = "named"
+							ret.RequestContext = &corev1.RequestContext{
+								Request: sent.Request.GetRequest(),
+								Service: octovigilSvc,
+								User:    user,
+							}
+							if octovigil != "Legacy" {
+								if sent.OmitRequest {
+									ret.RequestContext.Request = nil
+								}
+								if sent.ServiceResourceVersion != "" &&
+									sent.ServiceResourceVersion == octovigilSvc.Metadata.ResourceVersion {
+									ret.RequestContext.Service = nil
+								}
+							}
+							return pbutils.Clone(ret).(*coctovigilv1.AuthenticateAndAuthorizeResponse), nil
+						}}
+						c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: internal}}
+						resp, err := c.AuthenticateAndAuthorize(t.Context(), &AuthenticateAndAuthorizeRequest{
+							Request: &coctovigilv1.DownstreamRequest{Request: request},
+							Service: svc,
+						})
+						require.Nil(t, err)
+						require.NotNil(t, sent)
+
+						assert.True(t, sent.OmitRequest)
+						assert.Equal(t, svc.GetMetadata().GetResourceVersion(), sent.ServiceResourceVersion)
+						assert.Equal(t, "service", sent.ServiceUID)
+						if typ == "BodyMap" {
+							assert.Empty(t, sent.Request.Request.GetHttp().Body)
+						} else {
+							assert.True(t, pbutils.IsEqual(origRequest, sent.Request.GetRequest()))
+						}
+						assert.True(t, pbutils.IsEqual(origRequest, request))
+						assert.True(t, pbutils.IsEqual(origService, svc))
+
+						want := &coctovigilv1.AuthenticateAndAuthorizeResponse{}
+						if isAuthenticated {
+							want.IsAuthenticated = true
+							want.IsAuthorized = true
+							want.ServiceConfigName = "named"
+							want.RequestContext = &corev1.RequestContext{
+								Request: origRequest,
+								Service: octovigilSvc,
+								User:    user,
+							}
+						}
+						assert.True(t, pbutils.IsEqual(want, resp))
+
+						if !isAuthenticated {
+							assert.Nil(t, resp.RequestContext)
+							return
+						}
+
+						switch {
+						case request == nil:
+							assert.Nil(t, resp.RequestContext.Request)
+						case octovigil == "Legacy":
+							assert.NotSame(t, request, resp.RequestContext.Request)
+						default:
+							assert.Same(t, request, resp.RequestContext.Request)
+						}
+						if octovigil == "Current" && resourceVersion == "rv" {
+							assert.Same(t, svc, resp.RequestContext.Service)
+						} else {
+							assert.NotSame(t, svc, resp.RequestContext.Service)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestEmbeddedRequestContext(t *testing.T) {
+	ctx := t.Context()
+
+	tst, err := tests.Initialize(nil)
+	require.Nil(t, err)
+	t.Cleanup(func() {
+		tst.Destroy()
+	})
+
+	adminSrv := admin.NewServer(&admin.Opts{
+		OcteliumC:  tst.C.OcteliumC,
+		IsEmbedded: true,
+	})
+	usrSrv := user.NewServer(tst.C.OcteliumC)
+
+	svc, err := adminSrv.CreateService(ctx, &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name: utilrand.GetRandomStringCanonical(8),
+		},
+		Spec: &corev1.Service_Spec{
+			IsPublic: true,
+			Port:     uint32(tests.GetPort()),
+			Mode:     corev1.Service_Spec_HTTP,
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{
+						Url: "https://example.com",
+					},
+				},
+			},
+			Authorization: &corev1.Service_Spec_Authorization{
+				InlinePolicies: []*corev1.InlinePolicy{
+					{
+						Spec: &corev1.Policy_Spec{
+							Rules: []*corev1.Policy_Spec_Rule{
+								{
+									Effect: corev1.Policy_Spec_Rule_ALLOW,
+									Condition: &corev1.Condition{
+										Type: &corev1.Condition_MatchAny{
+											MatchAny: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	require.Nil(t, err)
+	require.NotEmpty(t, svc.Metadata.ResourceVersion)
+
+	vCache, err := vcache.NewCache(ctx)
+	require.Nil(t, err)
+	vCache.SetService(svc)
+
+	c, err := NewClient(ctx, &Opts{
+		OcteliumC: tst.C.OcteliumC,
+		VCache:    vCache,
+	})
+	require.Nil(t, err)
+
+	usr, err := tstuser.NewUserWorkloadClientless(tst.C.OcteliumC, adminSrv, usrSrv, nil)
+	require.Nil(t, err)
+	require.Nil(t, c.GetCache().SetSession(usr.Session))
+
+	stale := vCache.GetService()
+	stale.Metadata.ResourceVersion = vutils.UUIDv7()
+	empty := vCache.GetService()
+	empty.Metadata.ResourceVersion = ""
+
+	for _, tc := range []struct {
+		name   string
+		svc    *corev1.Service
+		isSame bool
+	}{
+		{"None", nil, false},
+		{"Current", vCache.GetService(), true},
+		{"Stale", stale, false},
+		{"Empty", empty, false},
+	} {
+		for _, isAuthenticated := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%t", tc.name, isAuthenticated), func(t *testing.T) {
+				headers := map[string]string{}
+				if isAuthenticated {
+					headers["x-octelium-auth"] = usr.GetAccessToken().AccessToken
+				}
+				request := &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+					Http: &corev1.RequestContext_Request_HTTP{Path: "/", Method: "GET", Headers: headers},
+				}}
+				resp, err := c.AuthenticateAndAuthorize(ctx, &AuthenticateAndAuthorizeRequest{
+					Request: &coctovigilv1.DownstreamRequest{
+						Source:  &coctovigilv1.DownstreamRequest_Source{Address: "192.0.2.1", Port: 12345},
+						Request: request,
+					},
+					Service: tc.svc,
+				})
+				require.Nil(t, err)
+
+				if !isAuthenticated {
+					assert.False(t, resp.IsAuthenticated)
+					assert.Nil(t, resp.RequestContext)
+					return
+				}
+
+				assert.True(t, resp.IsAuthenticated)
+				assert.True(t, resp.IsAuthorized)
+				require.NotNil(t, resp.RequestContext)
+				assert.Same(t, request, resp.RequestContext.Request)
+				assert.Equal(t, usr.Session.Metadata.Uid, resp.RequestContext.Session.Metadata.Uid)
+				if tc.isSame {
+					assert.Same(t, tc.svc, resp.RequestContext.Service)
+				} else {
+					assert.NotSame(t, tc.svc, resp.RequestContext.Service)
+					assert.True(t, pbutils.IsEqual(vCache.GetService(), resp.RequestContext.Service))
+				}
+			})
+		}
+	}
+
+	vCache.SetService(empty)
+	request := &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+		Http: &corev1.RequestContext_Request_HTTP{Path: "/", Method: "GET", Headers: map[string]string{
+			"x-octelium-auth": usr.GetAccessToken().AccessToken,
+		}},
+	}}
+	resp, err := c.AuthenticateAndAuthorize(ctx, &AuthenticateAndAuthorizeRequest{
+		Request: &coctovigilv1.DownstreamRequest{
+			Source:  &coctovigilv1.DownstreamRequest_Source{Address: "192.0.2.1", Port: 12345},
+			Request: request,
+		},
+		Service: empty,
+	})
+	require.Nil(t, err)
+	assert.True(t, resp.IsAuthorized)
+	require.NotNil(t, resp.RequestContext)
+	assert.NotSame(t, empty, resp.RequestContext.Service)
+	assert.True(t, pbutils.IsEqual(empty, resp.RequestContext.Service))
 }

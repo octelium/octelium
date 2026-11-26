@@ -313,6 +313,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	authResp, err := s.octovigilC.AuthenticateAndAuthorize(ctx, &octovigilc.AuthenticateAndAuthorizeRequest{
 		Request: request,
+		Service: svc,
 	})
 	if err != nil {
 		zap.L().Debug("Could not auth conn. Closing...", zap.Error(err))
