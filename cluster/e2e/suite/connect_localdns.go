@@ -36,8 +36,7 @@ import (
 func requireClusterDNSViaTunnel(t *testing.T, h *harness.H) {
 	t.Helper()
 
-	local := h.LocalSessionAddrs(t)
-	require.True(t, len(local) > 0, "no Session address is set on the host")
+	local := h.WaitLocalSessionAddrs(t)
 
 	servers, _ := h.ClusterDNSAddrs(t)
 

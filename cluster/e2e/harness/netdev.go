@@ -17,6 +17,7 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"strconv"
@@ -100,6 +101,22 @@ func (h *H) LocalSessionAddrs(t *testing.T) []netip.Addr {
 			ret = append(ret, parsed)
 		}
 	}
+
+	return ret
+}
+
+func (h *H) WaitLocalSessionAddrs(t *testing.T) []netip.Addr {
+	t.Helper()
+
+	var ret []netip.Addr
+	h.Eventually(t, "a Session address to be set on the host", ConnectBudget,
+		func(_ context.Context) error {
+			ret = h.LocalSessionAddrs(t)
+			if len(ret) == 0 {
+				return errors.New("no Session address is set on the host")
+			}
+			return nil
+		})
 
 	return ret
 }
