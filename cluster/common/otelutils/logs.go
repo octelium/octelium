@@ -101,14 +101,18 @@ func GetLogger() log.Logger {
 }
 
 func EmitAccessLog(in *corev1.AccessLog) {
-	inMap, err := pbutils.ConvertToMap(in)
-	if err != nil {
-		in = pbutils.Clone(in).(*corev1.AccessLog)
-		vutils.ReplaceInvalidUTF8(in)
-		inMap, err = pbutils.ConvertToMap(in)
+	body, ok := convertProtoMessage(in)
+	if !ok {
+		inMap, err := pbutils.ConvertToMap(in)
 		if err != nil {
-			zap.L().Warn("Could not convert AccessLog to map", zap.Error(err))
+			in = pbutils.Clone(in).(*corev1.AccessLog)
+			vutils.ReplaceInvalidUTF8(in)
+			inMap, err = pbutils.ConvertToMap(in)
+			if err != nil {
+				zap.L().Warn("Could not convert AccessLog to map", zap.Error(err))
+			}
 		}
+		body = convertValue(inMap)
 	}
 
 	ret := log.Record{}
@@ -116,7 +120,7 @@ func EmitAccessLog(in *corev1.AccessLog) {
 	ret.SetObservedTimestamp(pbutils.Now().AsTime())
 	ret.SetSeverity(log.SeverityInfo)
 
-	ret.SetBody(convertValue(inMap))
+	ret.SetBody(body)
 
 	GetLogger().Emit(context.Background(), ret)
 }
