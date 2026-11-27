@@ -26,6 +26,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,6 +45,7 @@ import (
 	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func newCacheTestSigner(t testing.TB, kind string) crypto.Signer {
@@ -504,15 +506,130 @@ func TestVerifyAccessTokenCacheAliases(t *testing.T) {
 						assert.Equal(t, sess.Metadata.Uid, claims.SessionUID)
 						assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
 					}
-					assert.NotNil(t, c.accessTokenCache.get(alias))
+					assert.Equal(t, alias == tknStr, c.accessTokenCache.get(alias) != nil)
 				}
 			}
-			assert.Equal(t, len(aliases), c.accessTokenCache.len())
+			assert.Equal(t, 1, c.accessTokenCache.len())
 
 			assert.Nil(t, c.ctl.onDeleteSecret(context.Background(), secret))
 			for _, alias := range aliases {
 				assert.Nil(t, assertSameAccessTokenVerification(t, c, alias))
 				assert.Nil(t, c.accessTokenCache.get(alias))
+			}
+			assert.Equal(t, 0, c.accessTokenCache.len())
+		})
+	}
+}
+
+func TestVerifyAccessTokenCacheNonCanonical(t *testing.T) {
+	encode := func(fields ...[]byte) string {
+		return base64.RawURLEncoding.EncodeToString(append([]byte{0x1}, bytes.Join(fields, nil)...))
+	}
+	bytesField := func(num protowire.Number, v []byte) []byte {
+		return protowire.AppendBytes(protowire.AppendTag(nil, num, protowire.BytesType), v)
+	}
+	varintField := func(num protowire.Number, v uint64) []byte {
+		return protowire.AppendVarint(protowire.AppendTag(nil, num, protowire.VarintType), v)
+	}
+	nonMinimalVarint := func(v uint64) []byte {
+		ret := protowire.AppendVarint(nil, v)
+		ret[len(ret)-1] |= 0x80
+		return append(ret, 0)
+	}
+
+	for _, kind := range []string{KindEd25519, KindECDSAP256} {
+		t.Run(kind, func(t *testing.T) {
+			c, secret := newCacheTestController(t, kind)
+			sess := newSession()
+			tknStr := newCacheTestToken(t, c, sess)
+			tkn, err := c.parseToken(tknStr)
+			assert.Nil(t, err)
+			assert.True(t, isCanonicalToken(tknStr, tkn))
+
+			contentBytes, err := pbutils.Marshal(tkn.Content)
+			assert.Nil(t, err)
+			expiresAtBytes, err := pbutils.Marshal(tkn.Content.ExpiresAt)
+			assert.Nil(t, err)
+			signatureField := bytesField(1, tkn.Signature)
+			contentField := bytesField(2, contentBytes)
+			content := func(fields ...[]byte) []byte {
+				return bytesField(2, bytes.Join(fields, nil))
+			}
+			assert.Equal(t, tknStr, encode(signatureField, contentField))
+
+			variants := []string{
+				encode(signatureField, contentField, varintField(15, 0)),
+				encode(signatureField, contentField, varintField(15, 1)),
+				encode(signatureField, contentField, varintField(15, 1<<62)),
+				encode(signatureField, contentField, protowire.AppendFixed32(protowire.AppendTag(nil, 3, protowire.Fixed32Type), 1)),
+				encode(signatureField, contentField, protowire.AppendFixed64(protowire.AppendTag(nil, 100, protowire.Fixed64Type), 1)),
+				encode(signatureField, contentField, bytesField(4, []byte("unknown"))),
+				encode(varintField(15, 0), signatureField, contentField),
+				encode(signatureField, varintField(15, 0), contentField),
+				encode(contentField, signatureField),
+				encode(bytesField(1, []byte("signature")), signatureField, contentField),
+				encode(signatureField, bytesField(2, nil), contentField),
+				encode(signatureField, contentField, bytesField(2, nil)),
+				encode(nonMinimalVarint(uint64(protowire.EncodeTag(1, protowire.BytesType))),
+					protowire.AppendBytes(nil, tkn.Signature), contentField),
+				encode(signatureField, protowire.AppendTag(nil, 2, protowire.BytesType),
+					nonMinimalVarint(uint64(len(contentBytes))), contentBytes),
+				encode(signatureField, content(varintField(1, 0), contentBytes)),
+				encode(signatureField, content(bytesField(3, make([]byte, 16)), contentBytes)),
+				encode(signatureField, content(contentBytes, bytesField(5, varintField(2, 0)))),
+				encode(signatureField, content(bytesField(5, expiresAtBytes), bytesField(4, tkn.Content.TokenID),
+					bytesField(3, tkn.Content.Subject), bytesField(2, tkn.Content.KeyID), varintField(1, uint64(tkn.Content.Type)))),
+			}
+
+			for i, variant := range variants {
+				assert.NotEqual(t, tknStr, variant)
+				assert.NotContains(t, variants[:i], variant)
+				assert.LessOrEqual(t, len(variant), 220)
+				variantTkn, err := c.parseToken(variant)
+				if assert.Nil(t, err, variant) {
+					assert.False(t, isCanonicalToken(variant, variantTkn), variant)
+				}
+			}
+
+			assertVariants := func() {
+				t.Helper()
+				for range 2 {
+					for _, variant := range variants {
+						claims := assertSameAccessTokenVerification(t, c, variant)
+						if assert.NotNil(t, claims, variant) {
+							assert.Equal(t, sess.Metadata.Uid, claims.SessionUID)
+							assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
+						}
+						assert.Nil(t, c.accessTokenCache.get(variant))
+					}
+				}
+			}
+
+			assertVariants()
+			assert.Equal(t, 0, c.accessTokenCache.len())
+			assert.NotNil(t, assertSameAccessTokenVerification(t, c, tknStr))
+			e := c.accessTokenCache.get(tknStr)
+			assert.NotNil(t, e)
+			assertVariants()
+			assert.Equal(t, 1, c.accessTokenCache.len())
+			assert.Same(t, e, c.accessTokenCache.get(tknStr))
+
+			c.accessTokenCache = newAccessTokenCache(1)
+			assert.NotNil(t, assertSameAccessTokenVerification(t, c, tknStr))
+			e = c.accessTokenCache.get(tknStr)
+			assert.NotNil(t, e)
+			for i := range 64 {
+				assert.NotNil(t, assertSameAccessTokenVerification(t, c,
+					encode(signatureField, contentField, varintField(15, uint64(i)))))
+			}
+			assert.Equal(t, 1, c.accessTokenCache.len())
+			assert.Same(t, e, c.accessTokenCache.get(tknStr))
+
+			assert.Nil(t, c.ctl.onDeleteSecret(context.Background(), secret))
+			for _, variant := range append(variants, tknStr) {
+				assert.Nil(t, assertSameAccessTokenVerification(t, c, variant))
+				_, err := c.VerifyAccessToken(variant)
+				assert.ErrorContains(t, err, "Cannot find key of kid")
 			}
 			assert.Equal(t, 0, c.accessTokenCache.len())
 		})
@@ -874,6 +991,124 @@ func TestVerifyAccessTokenCacheConcurrent(t *testing.T) {
 			assert.Nil(t, c.ctl.onDeleteSecret(ctx, secret))
 			isDeleted.Store(true)
 			wg.Wait()
+			assert.Equal(t, 0, c.accessTokenCache.len())
+		})
+	}
+}
+
+func waitForKeyLockWaiters(deadline time.Time, funcNames ...string) bool {
+	buf := make([]byte, 1<<20)
+	for time.Now().Before(deadline) {
+		stacks := strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n")
+		waiting := 0
+		for _, funcName := range funcNames {
+			for _, stack := range stacks {
+				if strings.Contains(stack, "sync.(*RWMutex).RLock") && strings.Contains(stack, funcName) {
+					waiting++
+					break
+				}
+			}
+		}
+		if waiting == len(funcNames) {
+			return true
+		}
+		runtime.Gosched()
+	}
+
+	return false
+}
+
+func TestVerifyAccessTokenCacheKeyLockWait(t *testing.T) {
+	for _, kind := range []string{KindEd25519, KindECDSAP256} {
+		t.Run(kind, func(t *testing.T) {
+			c, secret := newCacheTestController(t, kind)
+			key, err := c.chooseJWK()
+			assert.Nil(t, err)
+			sess := newSession()
+			subject, err := c.uidToBytes(sess.Metadata.Uid)
+			assert.Nil(t, err)
+			tokenID, err := c.uidToBytes(sess.Status.Authentication.TokenID)
+			assert.Nil(t, err)
+			keyID, err := c.uidToBytes(key.uid)
+			assert.Nil(t, err)
+			expiresAt := time.Now().Add(500 * time.Millisecond)
+			expiring := signCacheTestToken(t, key, &authv1.TokenT0_Content{
+				Type: authv1.TokenT0_Content_ACCESS_TOKEN, KeyID: keyID, Subject: subject, TokenID: tokenID,
+				ExpiresAt: pbutils.Timestamp(expiresAt),
+			})
+			tknStr := newCacheTestToken(t, c, sess)
+
+			verifyWhileLocked := func(tknStr string, deadline time.Time, fn func()) error {
+				t.Helper()
+				assert.NotNil(t, assertSameAccessTokenVerification(t, c, tknStr))
+				_, ok := c.getCachedAccessToken(tknStr)
+				assert.True(t, ok)
+
+				var claims *AccessTokenClaims
+				var err, wantErr error
+				var wg sync.WaitGroup
+				c.ctl.Lock()
+				wg.Go(func() {
+					claims, err = c.VerifyAccessToken(tknStr)
+				})
+				wg.Go(func() {
+					_, wantErr = c.verifyToken(tknStr, authv1.TokenT0_Content_ACCESS_TOKEN)
+				})
+				isWaiting := waitForKeyLockWaiters(deadline, "getCachedAccessToken", "findKeyByUID")
+				if isWaiting {
+					fn()
+				}
+				c.ctl.Unlock()
+				wg.Wait()
+				if !isWaiting {
+					t.Fatal("Verifications did not wait for the key lock")
+				}
+
+				if wantErr == nil {
+					assert.Nil(t, err)
+					assert.Equal(t, &AccessTokenClaims{
+						SessionUID: sess.Metadata.Uid,
+						TokenID:    sess.Status.Authentication.TokenID,
+					}, claims)
+					return nil
+				}
+
+				assert.Nil(t, claims)
+				if assert.NotNil(t, err) {
+					assert.Equal(t, wantErr.Error(), err.Error())
+				}
+				assert.Nil(t, c.accessTokenCache.get(tknStr))
+				return err
+			}
+
+			assert.ErrorContains(t, verifyWhileLocked(expiring, expiresAt, func() {
+				time.Sleep(time.Until(expiresAt) + 10*time.Millisecond)
+			}), "Token is expired")
+
+			deadline := time.Now().Add(time.Minute)
+			assert.Nil(t, verifyWhileLocked(tknStr, deadline, func() {}))
+			e := c.accessTokenCache.get(tknStr)
+			assert.Nil(t, verifyWhileLocked(tknStr, deadline, func() {}))
+			assert.Same(t, e, c.accessTokenCache.get(tknStr))
+
+			reset := &jwtKey{kind: key.kind, key: key.key, publicKey: key.publicKey, createdAt: key.createdAt, uid: key.uid}
+			assert.Nil(t, verifyWhileLocked(tknStr, deadline, func() {
+				c.ctl.keyMap[key.uid] = reset
+			}))
+			assert.NotSame(t, e, c.accessTokenCache.get(tknStr))
+			assert.Same(t, reset, c.accessTokenCache.get(tknStr).key)
+
+			replacement := newCacheTestSigner(t, kind)
+			assert.ErrorContains(t, verifyWhileLocked(tknStr, deadline, func() {
+				c.ctl.keyMap[key.uid] = &jwtKey{
+					kind: kind, key: replacement, publicKey: replacement.Public(), createdAt: key.createdAt, uid: key.uid,
+				}
+			}), "Invalid signature")
+
+			assert.Nil(t, c.ctl.setKey(secret))
+			assert.ErrorContains(t, verifyWhileLocked(tknStr, deadline, func() {
+				delete(c.ctl.keyMap, key.uid)
+			}), "Cannot find key of kid")
 			assert.Equal(t, 0, c.accessTokenCache.len())
 		})
 	}

@@ -17,9 +17,13 @@
 package jwkctl
 
 import (
+	"encoding/base64"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/octelium/octelium/apis/main/authv1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 )
 
 const (
@@ -119,19 +123,30 @@ func (c *Controller) getCachedAccessToken(tknStr string) (*accessTokenCacheEntry
 		return nil, false
 	}
 
-	if e.isExpired(time.Now()) {
-		return e, false
+	c.ctl.RLock()
+	key, ok := c.ctl.keyMap[e.keyUID]
+	c.ctl.RUnlock()
+
+	return e, ok && key == e.key && !e.isExpired(time.Now())
+}
+
+func isCanonicalToken(tknStr string, tkn *authv1.TokenT0) bool {
+	tknBytes, err := pbutils.Marshal(&authv1.TokenT0{
+		Signature: tkn.Signature,
+		Content:   tkn.Content,
+	})
+	if err != nil {
+		return false
 	}
 
-	c.ctl.RLock()
-	defer c.ctl.RUnlock()
-
-	key, ok := c.ctl.keyMap[e.keyUID]
-
-	return e, ok && key == e.key
+	return base64.RawURLEncoding.EncodeToString(append([]byte{0x1}, tknBytes...)) == tknStr
 }
 
 func (c *Controller) setCachedAccessToken(tknStr string, claims *tokenClaims) {
+	if !isCanonicalToken(tknStr, claims.tkn) {
+		return
+	}
+
 	keyUID, err := c.getUID(claims.tkn.Content.KeyID)
 	if err != nil {
 		return
