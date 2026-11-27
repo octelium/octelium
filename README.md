@@ -36,7 +36,7 @@ Octelium provides a scalable zero trust architecture (ZTA) for identity-based, a
 >
 > Explore the [interactive demo](https://demo.octelium.com), including the User Portal, Management Console, Cordium Sandbox Portal and CLI Playground.
 
-![Octelium](https://octelium.com/assets/ztna-CrAF5Ft7.webp)
+![Octelium](https://octelium.com/assets/octelium-intro-dark-Dyf8iVCe.webp)
 
 ## Use Cases
 
