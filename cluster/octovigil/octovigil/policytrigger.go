@@ -30,15 +30,21 @@ func (s *Server) getRulesFromPolicyTriggers(ctx context.Context,
 	i *corev1.RequestContext, reqCtxMap map[string]any, usedPolicies *[]string) ([]*policyRule, error) {
 	var ret []*policyRule
 
-	s.policyTriggerCtl.RLock()
-	defer s.policyTriggerCtl.RUnlock()
+	pts := s.policyTriggerCtl.getPolicyTriggers()
+	if len(pts) == 0 {
+		return nil, nil
+	}
 
-	for _, pt := range s.policyTriggerCtl.ptMap {
+	inputMap := map[string]any{
+		"ctx": reqCtxMap,
+	}
+
+	for _, pt := range pts {
 		if pt.Status.IsDisabled {
 			continue
 		}
 
-		rules, err := s.getRulesFromPolicyTrigger(ctx, i, reqCtxMap, pt, usedPolicies)
+		rules, err := s.getRulesFromPolicyTrigger(ctx, i, reqCtxMap, inputMap, pt, usedPolicies)
 		if err != nil {
 			return nil, err
 		}
@@ -53,15 +59,14 @@ func (s *Server) getRulesFromPolicyTriggers(ctx context.Context,
 }
 
 func (s *Server) getRulesFromPolicyTrigger(ctx context.Context,
-	i *corev1.RequestContext, reqCtxMap map[string]any, pt *corev1.PolicyTrigger, usedPolicies *[]string) ([]*policyRule, error) {
+	i *corev1.RequestContext, reqCtxMap, inputMap map[string]any,
+	pt *corev1.PolicyTrigger, usedPolicies *[]string) ([]*policyRule, error) {
 
 	if isBodyOmitted(i) && isBodyPreCondition(pt.Status.PreCondition) {
 		return nil, errors.Errorf("Cannot evaluate the PolicyTrigger preCondition without the request body")
 	}
 
-	isMatched, err := s.doEvalPreCondition(ctx, i, map[string]any{
-		"ctx": reqCtxMap,
-	}, pt.Status.PreCondition)
+	isMatched, err := s.doEvalPreCondition(ctx, i, inputMap, pt.Status.PreCondition)
 	if err != nil {
 		zap.L().Error("Could not getRulesFromPolicyTrigger. Ignoring it...",
 			zap.Any("trigger", pt), zap.Error(err))

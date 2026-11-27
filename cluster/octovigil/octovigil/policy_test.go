@@ -2891,12 +2891,14 @@ func TestPolicyBodyOmitted(t *testing.T) {
 		}}}
 
 		var usedPolicies []string
-		rules, err := srv.s.getRulesFromPolicyTrigger(t.Context(), i, withoutBody, pt, &usedPolicies)
+		rules, err := srv.s.getRulesFromPolicyTrigger(t.Context(), i, withoutBody,
+			map[string]any{"ctx": withoutBody}, pt, &usedPolicies)
 		assert.NotNil(t, err)
 		assert.Nil(t, rules)
 
 		i.Request.GetHttp().IsBodyOmitted = false
-		rules, err = srv.s.getRulesFromPolicyTrigger(t.Context(), i, withBody, pt, &usedPolicies)
+		rules, err = srv.s.getRulesFromPolicyTrigger(t.Context(), i, withBody,
+			map[string]any{"ctx": withBody}, pt, &usedPolicies)
 		assert.Nil(t, err)
 		assert.Nil(t, rules)
 	}

@@ -104,6 +104,18 @@ func (c *policyTriggerCtl) DeletePolicyTrigger(i *corev1.PolicyTrigger) error {
 	return nil
 }
 
+func (c *policyTriggerCtl) getPolicyTriggers() []*corev1.PolicyTrigger {
+	c.RLock()
+	defer c.RUnlock()
+
+	ret := make([]*corev1.PolicyTrigger, 0, len(c.ptMap))
+	for _, pt := range c.ptMap {
+		ret = append(ret, pt)
+	}
+
+	return ret
+}
+
 func New(ctx context.Context, octeliumC octeliumc.ClientInterface) (*Server, error) {
 
 	aCache, err := acache.NewCache()
