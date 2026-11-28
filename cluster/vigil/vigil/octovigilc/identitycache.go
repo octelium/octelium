@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"hash/maphash"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/cluster/common/jwkctl"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/pkg/errors"
 )
@@ -118,14 +120,63 @@ func (c *identityCache) len() int {
 	return len(c.m)
 }
 
-func getIdentityCacheKey(req *coctovigilv1.DownstreamRequest) uint64 {
+func (c *Client) setClusterNetwork(cc *corev1.ClusterConfig) error {
+	clusterNet := cc.GetStatus().GetNetwork().GetClusterNetwork()
+	if clusterNet == nil {
+		return nil
+	}
+
+	if clusterNet.V4 != "" {
+		v4Prefix, err := netip.ParsePrefix(clusterNet.V4)
+		if err != nil {
+			return err
+		}
+		c.v4Prefix = &v4Prefix
+	}
+
+	if clusterNet.V6 != "" {
+		v6Prefix, err := netip.ParsePrefix(clusterNet.V6)
+		if err != nil {
+			return err
+		}
+		c.v6Prefix = &v6Prefix
+	}
+
+	return nil
+}
+
+func (c *Client) isAddressFromClient(addrStr string) bool {
+	addr, err := netip.ParseAddr(addrStr)
+	if err != nil {
+		return false
+	}
+
+	if c.v6Prefix != nil && c.v6Prefix.Contains(addr) {
+		return true
+	}
+
+	if c.v4Prefix != nil && c.v4Prefix.Contains(addr) {
+		return true
+	}
+
+	return false
+}
+
+func (c *Client) getIdentityCacheKey(req *coctovigilv1.DownstreamRequest) (uint64, string) {
 	var h maphash.Hash
 	h.SetSeed(identityCacheSeed)
-	h.WriteString(req.GetSource().GetAddress())
-	h.WriteByte(0)
-	h.WriteString(getAccessToken(ucorev1.GetRequestHTTP(req.GetRequest()).GetHeaders()))
 
-	return h.Sum64()
+	if address := req.GetSource().GetAddress(); c.isAddressFromClient(address) {
+		h.WriteByte(1)
+		h.WriteString(address)
+		return h.Sum64(), ""
+	}
+
+	accessToken := getAccessToken(ucorev1.GetRequestHTTP(req.GetRequest()).GetHeaders())
+	h.WriteByte(2)
+	h.WriteString(accessToken)
+
+	return h.Sum64(), accessToken
 }
 
 func getAccessToken(hdr map[string]string) string {
@@ -151,7 +202,7 @@ func getAccessToken(hdr map[string]string) string {
 	return ""
 }
 
-func (c *Client) setIdentity(key uint64, cached *identity, resp *coctovigilv1.AuthenticateAndAuthorizeResponse) error {
+func (c *Client) setIdentity(key uint64, accessToken string, cached *identity, resp *coctovigilv1.AuthenticateAndAuthorizeResponse) error {
 	fingerprint := resp.IdentityFingerprint
 	isOmitted := resp.IsIdentityOmitted
 	resp.IdentityFingerprint = nil
@@ -174,6 +225,10 @@ func (c *Client) setIdentity(key uint64, cached *identity, resp *coctovigilv1.Au
 	}
 
 	if len(fingerprint) == 0 || reqCtx.GetSession() == nil {
+		return nil
+	}
+
+	if accessToken != "" && !jwkctl.IsCanonicalToken(accessToken) {
 		return nil
 	}
 

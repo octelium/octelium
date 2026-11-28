@@ -142,6 +142,20 @@ func isCanonicalToken(tknStr string, tkn *authv1.TokenT0) bool {
 	return base64.RawURLEncoding.EncodeToString(append([]byte{0x1}, tknBytes...)) == tknStr
 }
 
+func IsCanonicalToken(tknStr string) bool {
+	tknBytes, err := base64.RawURLEncoding.DecodeString(tknStr)
+	if err != nil || len(tknBytes) == 0 || tknBytes[0] != 0x1 {
+		return false
+	}
+
+	tkn := &authv1.TokenT0{}
+	if err := pbutils.Unmarshal(tknBytes[1:], tkn); err != nil {
+		return false
+	}
+
+	return isCanonicalToken(tknStr, tkn)
+}
+
 func (c *Controller) setCachedAccessToken(tknStr string, claims *tokenClaims) {
 	if !isCanonicalToken(tknStr, claims.tkn) {
 		return

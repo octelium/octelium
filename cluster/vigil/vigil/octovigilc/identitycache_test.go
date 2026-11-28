@@ -20,16 +20,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"math/rand/v2"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
+	"github.com/octelium/octelium/apis/main/authv1"
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
@@ -48,6 +51,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -151,6 +155,47 @@ func TestGetAccessToken(t *testing.T) {
 	}
 }
 
+func TestSetClusterNetwork(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cc      *corev1.ClusterConfig
+		isErr   bool
+		clients []string
+	}{
+		{"NilConfig", nil, false, nil},
+		{"NilStatus", &corev1.ClusterConfig{}, false, nil},
+		{"NilNetwork", &corev1.ClusterConfig{Status: &corev1.ClusterConfig_Status{}}, false, nil},
+		{"NilClusterNetwork", &corev1.ClusterConfig{Status: &corev1.ClusterConfig_Status{
+			Network: &corev1.ClusterConfig_Status_Network{},
+		}}, false, nil},
+		{"Empty", newTestClusterConfig("", ""), false, nil},
+		{"V4", newTestClusterConfig("10.0.0.0/16", ""), false, []string{"10.0.0.0", "10.0.0.1", "10.0.255.255"}},
+		{"V6", newTestClusterConfig("", "fd00::/64"), false, []string{"fd00::", "fd00::1", "fd00::ffff:ffff:ffff:ffff"}},
+		{"DualStack", newTestClusterConfig("10.0.0.0/16", "fd00::/64"), false,
+			[]string{"10.0.0.0", "10.0.0.1", "10.0.255.255", "fd00::", "fd00::1", "fd00::ffff:ffff:ffff:ffff"}},
+		{"InvalidV4", newTestClusterConfig("10.0.0.1", "fd00::/64"), true, nil},
+		{"InvalidV6", newTestClusterConfig("10.0.0.0/16", "fd00::/129"), true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Client{}
+			err := c.setClusterNetwork(tc.cc)
+			if tc.isErr {
+				assert.NotNil(t, err)
+				return
+			}
+			assert.Nil(t, err)
+
+			for _, address := range []string{
+				"10.0.0.0", "10.0.0.1", "10.0.255.255", "10.1.0.1", "9.255.255.255",
+				"fd00::", "fd00::1", "fd00::ffff:ffff:ffff:ffff", "fd00:0:0:1::1", "fc00::1",
+				"::ffff:10.0.0.1", "10.0.0.1:1234", "[fd00::1]", "", "invalid",
+			} {
+				assert.Equal(t, slices.Contains(tc.clients, address), c.isAddressFromClient(address), address)
+			}
+		})
+	}
+}
+
 func TestGetIdentityCacheKey(t *testing.T) {
 	newRequest := func(address string, headers map[string]string) *coctovigilv1.DownstreamRequest {
 		return &coctovigilv1.DownstreamRequest{
@@ -160,54 +205,99 @@ func TestGetIdentityCacheKey(t *testing.T) {
 			}},
 		}
 	}
-
-	base := getIdentityCacheKey(newRequest("10.0.0.1", map[string]string{"x-octelium-auth": "token"}))
-	for _, req := range []*coctovigilv1.DownstreamRequest{
-		newRequest("10.0.0.1", map[string]string{"x-octelium-auth": "token"}),
-		newRequest("10.0.0.1", map[string]string{"cookie": "a=b; octelium_auth=token"}),
-		newRequest("10.0.0.1", map[string]string{"authorization": "Bearer token"}),
-		newRequest("10.0.0.1", map[string]string{"x-octelium-auth": "token", "x-other": "value", "cookie": "a=b"}),
-		{
-			Source: &coctovigilv1.DownstreamRequest_Source{Address: "10.0.0.1", Port: 5678},
+	newGRPCRequest := func(address string, headers map[string]string) *coctovigilv1.DownstreamRequest {
+		return &coctovigilv1.DownstreamRequest{
+			Source: &coctovigilv1.DownstreamRequest_Source{Address: address, Port: 5678},
 			Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Grpc{
 				Grpc: &corev1.RequestContext_Request_GRPC{Http: &corev1.RequestContext_Request_HTTP{
-					Path: "/pkg.Service/Method", Headers: map[string]string{"x-octelium-auth": "token"},
+					Path: "/pkg.Service/Method", Headers: headers,
 				}},
 			}},
-		},
-	} {
-		assert.Equal(t, base, getIdentityCacheKey(req))
+		}
 	}
 
-	address := getIdentityCacheKey(newRequest("10.0.0.1", nil))
-	for _, req := range []*coctovigilv1.DownstreamRequest{
+	c := newTestIdentityClient(nil)
+	assertKey := func(want uint64, wantToken string, reqs ...*coctovigilv1.DownstreamRequest) {
+		t.Helper()
+		for _, req := range reqs {
+			key, accessToken := c.getIdentityCacheKey(req)
+			assert.Equal(t, want, key, "%v", req)
+			assert.Equal(t, wantToken, accessToken, "%v", req)
+		}
+	}
+
+	client, accessToken := c.getIdentityCacheKey(newRequest("10.0.0.1", nil))
+	assert.Empty(t, accessToken)
+	assertKey(client, "",
 		newRequest("10.0.0.1", map[string]string{}),
-		newRequest("10.0.0.1", map[string]string{"cookie": "a=b", "authorization": "Basic dXNlcjpwYXNz"}),
-		{Source: &coctovigilv1.DownstreamRequest_Source{Address: "10.0.0.1"}},
-		{
+		newRequest("10.0.0.1", map[string]string{"authorization": "Bearer application"}),
+		newRequest("10.0.0.1", map[string]string{"authorization": "Bearer other"}),
+		newRequest("10.0.0.1", map[string]string{"x-octelium-auth": "token"}),
+		newRequest("10.0.0.1", map[string]string{"cookie": "a=b; octelium_auth=token"}),
+		newGRPCRequest("10.0.0.1", map[string]string{"authorization": "Bearer application"}),
+		&coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "10.0.0.1"}},
+		&coctovigilv1.DownstreamRequest{
 			Source: &coctovigilv1.DownstreamRequest_Source{Address: "10.0.0.1"},
 			Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Postgres_{
 				Postgres: &corev1.RequestContext_Request_Postgres{},
 			}},
 		},
-	} {
-		assert.Equal(t, address, getIdentityCacheKey(req))
-	}
+	)
 
-	keys := map[uint64]string{base: "Base", address: "Address"}
+	clientV6, accessToken := c.getIdentityCacheKey(newRequest("fd00::1", nil))
+	assert.Empty(t, accessToken)
+	assertKey(clientV6, "",
+		newRequest("fd00::1", map[string]string{"authorization": "Bearer application"}),
+		newGRPCRequest("fd00::1", map[string]string{"x-octelium-auth": "token"}),
+	)
+
+	token, accessToken := c.getIdentityCacheKey(newRequest("192.0.2.1", map[string]string{"x-octelium-auth": "token"}))
+	assert.Equal(t, "token", accessToken)
+	assertKey(token, "token",
+		newRequest("192.0.2.1", map[string]string{"cookie": "a=b; octelium_auth=token"}),
+		newRequest("192.0.2.1", map[string]string{"authorization": "Bearer token"}),
+		newRequest("192.0.2.1", map[string]string{"x-octelium-auth": "token", "x-other": "value", "cookie": "a=b"}),
+		newRequest("192.0.2.2", map[string]string{"x-octelium-auth": "token"}),
+		newRequest("10.1.0.1", map[string]string{"x-octelium-auth": "token"}),
+		newRequest("fd00:0:0:1::1", map[string]string{"x-octelium-auth": "token"}),
+		newRequest("::ffff:10.0.0.1", map[string]string{"x-octelium-auth": "token"}),
+		newRequest("", map[string]string{"x-octelium-auth": "token"}),
+		newRequest("invalid", map[string]string{"x-octelium-auth": "token"}),
+		newGRPCRequest("192.0.2.3", map[string]string{"x-octelium-auth": "token"}),
+	)
+
+	noToken, accessToken := c.getIdentityCacheKey(newRequest("192.0.2.1", nil))
+	assert.Empty(t, accessToken)
+	assertKey(noToken, "",
+		newRequest("192.0.2.1", map[string]string{"cookie": "a=b", "authorization": "Basic dXNlcjpwYXNz"}),
+		newRequest("192.0.2.2", nil),
+		nil,
+		&coctovigilv1.DownstreamRequest{},
+		&coctovigilv1.DownstreamRequest{Source: &coctovigilv1.DownstreamRequest_Source{Address: "192.0.2.1"}},
+	)
+
+	keys := map[uint64]string{client: "Client", clientV6: "ClientV6", token: "Token", noToken: "NoToken"}
 	for name, req := range map[string]*coctovigilv1.DownstreamRequest{
-		"OtherAddress":       newRequest("10.0.0.2", map[string]string{"x-octelium-auth": "token"}),
-		"OtherToken":         newRequest("10.0.0.1", map[string]string{"x-octelium-auth": "other"}),
-		"OtherAddressNoAuth": newRequest("10.0.0.2", nil),
-		"Nil":                nil,
-		"TokenOnly":          newRequest("", map[string]string{"x-octelium-auth": "token"}),
+		"OtherClient":                  newRequest("10.0.0.2", map[string]string{"x-octelium-auth": "token"}),
+		"OtherClientV6":                newRequest("fd00::2", nil),
+		"OtherToken":                   newRequest("192.0.2.1", map[string]string{"x-octelium-auth": "other"}),
+		"ClientAddressAsToken":         newRequest("192.0.2.1", map[string]string{"x-octelium-auth": "10.0.0.1"}),
+		"PrefixedClientAddressAsToken": newRequest("192.0.2.1", map[string]string{"x-octelium-auth": "\x0110.0.0.1"}),
+		"ClientAddressAndToken":        newRequest("10.0.0.4", map[string]string{"x-octelium-auth": "token"}),
 	} {
-		key := getIdentityCacheKey(req)
+		key, _ := c.getIdentityCacheKey(req)
 		prev, ok := keys[key]
 		assert.False(t, ok, "%s has the key of %s", name, prev)
 		keys[key] = name
 	}
-	assert.Equal(t, getIdentityCacheKey(nil), getIdentityCacheKey(&coctovigilv1.DownstreamRequest{}))
+
+	unconfigured := &Client{}
+	key, accessToken := unconfigured.getIdentityCacheKey(newRequest("10.0.0.1", map[string]string{"x-octelium-auth": "token"}))
+	assert.Equal(t, token, key)
+	assert.Equal(t, "token", accessToken)
+	key, accessToken = unconfigured.getIdentityCacheKey(newRequest("10.0.0.1", nil))
+	assert.Equal(t, noToken, key)
+	assert.Empty(t, accessToken)
 }
 
 type tstIdentityServer struct {
@@ -238,8 +328,7 @@ func (s *tstIdentityServer) authenticate(ctx context.Context, in *coctovigilv1.A
 
 	s.sent = append(s.sent, pbutils.Clone(in).(*coctovigilv1.AuthenticateAndAuthorizeRequest))
 	ret := &coctovigilv1.AuthenticateAndAuthorizeResponse{}
-	identity := s.identities[in.Request.GetSource().GetAddress()+"/"+getAccessToken(
-		in.Request.GetRequest().GetHttp().GetHeaders())]
+	identity := s.identities[getTestIdentityKey(in.Request)]
 	if identity != nil {
 		ret.IsAuthenticated = true
 		ret.IsAuthorized = true
@@ -302,6 +391,56 @@ func newTestIdentity(name string, version int) *corev1.RequestContext {
 	}
 }
 
+func newTestClusterConfig(v4, v6 string) *corev1.ClusterConfig {
+	return &corev1.ClusterConfig{Status: &corev1.ClusterConfig_Status{
+		Network: &corev1.ClusterConfig_Status_Network{
+			ClusterNetwork: &metav1.DualStackNetwork{V4: v4, V6: v6},
+		},
+	}}
+}
+
+func newTestIdentityClient(internalC coctovigilv1.InternalServiceClient) *Client {
+	c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: internalC}}
+	if err := c.setClusterNetwork(newTestClusterConfig("10.0.0.0/16", "fd00::/64")); err != nil {
+		panic(err)
+	}
+	return c
+}
+
+func getTestIdentityKey(req *coctovigilv1.DownstreamRequest) string {
+	if addr, err := netip.ParseAddr(req.GetSource().GetAddress()); err == nil &&
+		(netip.MustParsePrefix("10.0.0.0/16").Contains(addr) || netip.MustParsePrefix("fd00::/64").Contains(addr)) {
+		return req.GetSource().GetAddress() + "/"
+	}
+	return "/" + getAccessToken(req.GetRequest().GetHttp().GetHeaders())
+}
+
+func newTestToken(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	b, err := pbutils.Marshal(&authv1.TokenT0{
+		Signature: append(sum[:], sum[:]...),
+		Content: &authv1.TokenT0_Content{
+			Type:    authv1.TokenT0_Content_ACCESS_TOKEN,
+			KeyID:   sum[:16],
+			Subject: sum[16:],
+			TokenID: sum[8:24],
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(append([]byte{0x1}, b...))
+}
+
+func newTestTokenAlias(token string, i int) string {
+	b, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		panic(err)
+	}
+	b = protowire.AppendVarint(protowire.AppendTag(b, 15, protowire.VarintType), uint64(i))
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 func newTestIdentityRequest(address, token string) *AuthenticateAndAuthorizeRequest {
 	headers := map[string]string{"x-tenant": "tenant"}
 	if token != "" {
@@ -319,25 +458,26 @@ func newTestIdentityRequest(address, token string) *AuthenticateAndAuthorizeRequ
 }
 
 func TestRemoteIdentity(t *testing.T) {
+	tokenA, tokenB := newTestToken("a"), newTestToken("b")
 	for _, isLegacy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("Legacy%t", isLegacy), func(t *testing.T) {
 			srv := &tstIdentityServer{isLegacy: isLegacy, identities: map[string]*corev1.RequestContext{
-				"10.0.0.1/":      newTestIdentity("client", 1),
-				"10.0.0.2/":      newTestIdentity("other", 1),
-				"10.0.0.9/a":     newTestIdentity("tokenA", 1),
-				"10.0.0.9/b":     newTestIdentity("tokenB", 1),
-				"10.0.0.8/a":     newTestIdentity("tokenA", 1),
-				"10.0.0.3/":      {Namespace: newTestIdentity("anonymous", 1).Namespace},
-				"192.0.2.1/none": nil,
+				"10.0.0.1/":  newTestIdentity("client", 1),
+				"10.0.0.2/":  newTestIdentity("other", 1),
+				"fd00::1/":   newTestIdentity("v6", 1),
+				"/" + tokenA: newTestIdentity("tokenA", 1),
+				"/" + tokenB: newTestIdentity("tokenB", 1),
+				"10.0.0.3/":  {Namespace: newTestIdentity("anonymous", 1).Namespace},
+				"/none":      nil,
 			}}
-			c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: &tstInternalErrC{authenticate: srv.authenticate}}}
+			c := newTestIdentityClient(&tstInternalErrC{authenticate: srv.authenticate})
 
 			prevResps := make(map[string]*coctovigilv1.AuthenticateAndAuthorizeResponse)
 			do := func(address, token string, isOmitted bool, fingerprint []byte) *coctovigilv1.AuthenticateAndAuthorizeResponse {
 				t.Helper()
 				req := newTestIdentityRequest(address, token)
 				orig := pbutils.Clone(req.Request).(*coctovigilv1.DownstreamRequest)
-				prevResp := prevResps[address+"/"+token]
+				prevResp := prevResps[getTestIdentityKey(req.Request)]
 				omittedBefore := srv.omitted
 				resp, err := c.AuthenticateAndAuthorize(t.Context(), req)
 				require.Nil(t, err)
@@ -366,7 +506,7 @@ func TestRemoteIdentity(t *testing.T) {
 					assert.NotSame(t, &prevResp.RequestContext.Groups[0], &resp.RequestContext.Groups[0])
 				}
 				if resp.RequestContext.GetSession() != nil {
-					prevResps[address+"/"+token] = resp
+					prevResps[getTestIdentityKey(req.Request)] = resp
 				}
 				return resp
 			}
@@ -380,9 +520,13 @@ func TestRemoteIdentity(t *testing.T) {
 			do("10.0.0.1", "", false, nil)
 			do("10.0.0.1", "", !isLegacy, fp("client", 1))
 			do("10.0.0.1", "", !isLegacy, fp("client", 1))
+			do("10.0.0.1", "application", !isLegacy, fp("client", 1))
+			do("10.0.0.1", tokenB, !isLegacy, fp("client", 1))
 			do("10.0.0.2", "", false, nil)
 			do("10.0.0.2", "", !isLegacy, fp("other", 1))
 			do("10.0.0.1", "", !isLegacy, fp("client", 1))
+			do("fd00::1", "application", false, nil)
+			do("fd00::1", "other", !isLegacy, fp("v6", 1))
 
 			srv.setIdentity("10.0.0.1/", newTestIdentity("client", 2))
 			do("10.0.0.1", "", false, fp("client", 1))
@@ -398,13 +542,15 @@ func TestRemoteIdentity(t *testing.T) {
 			srv.setIdentity("10.0.0.1/", newTestIdentity("other", 1))
 			do("10.0.0.1", "", !isLegacy, fp("other", 1))
 
-			do("10.0.0.9", "a", false, nil)
-			do("10.0.0.9", "a", !isLegacy, fp("tokenA", 1))
-			do("10.0.0.9", "b", false, nil)
-			do("10.0.0.9", "b", !isLegacy, fp("tokenB", 1))
-			do("10.0.0.9", "a", !isLegacy, fp("tokenA", 1))
-			do("10.0.0.8", "a", false, nil)
-			do("10.0.0.9", "", false, nil)
+			do("192.0.2.9", tokenA, false, nil)
+			do("192.0.2.9", tokenA, !isLegacy, fp("tokenA", 1))
+			do("192.0.2.9", tokenB, false, nil)
+			do("192.0.2.9", tokenB, !isLegacy, fp("tokenB", 1))
+			do("192.0.2.9", tokenA, !isLegacy, fp("tokenA", 1))
+			do("192.0.2.8", tokenA, !isLegacy, fp("tokenA", 1))
+			do("10.1.0.1", tokenA, !isLegacy, fp("tokenA", 1))
+			do("fd00:0:0:1::1", tokenB, !isLegacy, fp("tokenB", 1))
+			do("192.0.2.9", "", false, nil)
 
 			do("10.0.0.3", "", false, nil)
 			do("10.0.0.3", "", false, nil)
@@ -425,7 +571,7 @@ func TestRemoteIdentityTTL(t *testing.T) {
 		srv := &tstIdentityServer{identities: map[string]*corev1.RequestContext{
 			"10.0.0.1/": newTestIdentity("client", 1),
 		}}
-		c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: &tstInternalErrC{authenticate: srv.authenticate}}}
+		c := newTestIdentityClient(&tstInternalErrC{authenticate: srv.authenticate})
 		fingerprint := getTestIdentityFingerprint(newTestIdentity("client", 1))
 		do := func() []byte {
 			_, err := c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("10.0.0.1", ""))
@@ -467,7 +613,7 @@ func TestRemoteIdentityInvalidResponses(t *testing.T) {
 			srv := &tstIdentityServer{identities: map[string]*corev1.RequestContext{
 				"10.0.0.1/": newTestIdentity("client", 1),
 			}}
-			c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: &tstInternalErrC{authenticate: srv.authenticate}}}
+			c := newTestIdentityClient(&tstInternalErrC{authenticate: srv.authenticate})
 			if tc.isCached {
 				_, err := c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("10.0.0.1", ""))
 				require.Nil(t, err)
@@ -489,45 +635,52 @@ func TestRemoteIdentityInvalidResponses(t *testing.T) {
 		"10.0.0.1/": newTestIdentity("client", 1),
 	}}
 	internal := &tstInternalErrC{authenticate: srv.authenticate}
-	c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: internal}}
+	c := newTestIdentityClient(internal)
 	_, err := c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("10.0.0.1", ""))
 	require.Nil(t, err)
-	cached := c.identities.get(getIdentityCacheKey(newTestIdentityRequest("10.0.0.1", "").Request), time.Now())
+	key, _ := c.getIdentityCacheKey(newTestIdentityRequest("10.0.0.1", "").Request)
+	cached := c.identities.get(key, time.Now())
 	require.NotNil(t, cached)
 	internal.authenticate = func(ctx context.Context, in *coctovigilv1.AuthenticateAndAuthorizeRequest) (*coctovigilv1.AuthenticateAndAuthorizeResponse, error) {
 		return nil, status.Error(codes.Unavailable, "unavailable")
 	}
 	_, err = c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("10.0.0.1", ""))
 	assert.Equal(t, codes.Unavailable, status.Code(err))
-	assert.Same(t, cached, c.identities.get(getIdentityCacheKey(newTestIdentityRequest("10.0.0.1", "").Request), time.Now()))
+	assert.Same(t, cached, c.identities.get(key, time.Now()))
 }
 
 func TestRemoteIdentityConcurrent(t *testing.T) {
 	srv := &tstIdentityServer{identities: make(map[string]*corev1.RequestContext)}
 	var mu sync.Mutex
 	versions := make(map[string]int)
-	addresses := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"}
-	for _, address := range addresses {
-		versions[address] = 1
-		srv.identities[address+"/"] = newTestIdentity(address, 1)
+	keys := []string{"10.0.0.1/", "10.0.0.2/", "fd00::1/", "fd00::2/", "/" + newTestToken("a"), "/" + newTestToken("b")}
+	for _, key := range keys {
+		versions[key] = 1
+		srv.identities[key] = newTestIdentity(key, 1)
 	}
 
-	c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: &tstInternalErrC{authenticate: srv.authenticate}}}
+	c := newTestIdentityClient(&tstInternalErrC{authenticate: srv.authenticate})
 
 	var wg sync.WaitGroup
 	for i := range 32 {
 		wg.Go(func() {
 			r := rand.New(rand.NewPCG(uint64(i), 2))
 			for j := range 200 {
-				address := addresses[r.IntN(len(addresses))]
+				key := keys[r.IntN(len(keys))]
 				if r.IntN(20) == 0 {
 					mu.Lock()
-					versions[address]++
-					srv.setIdentity(address+"/", newTestIdentity(address, versions[address]))
+					versions[key]++
+					srv.setIdentity(key, newTestIdentity(key, versions[key]))
 					mu.Unlock()
 				}
 				id := fmt.Sprintf("%d-%d", i, j)
-				req := newTestIdentityRequest(address, "")
+				address, token, _ := strings.Cut(key, "/")
+				if address == "" {
+					address = []string{"192.0.2.1", "192.0.2.2"}[r.IntN(2)]
+				} else if r.IntN(2) == 0 {
+					token = fmt.Sprintf("application-%d", r.IntN(1000))
+				}
+				req := newTestIdentityRequest(address, token)
 				req.Request.Request.GetHttp().Headers["x-request-id"] = id
 				resp, err := c.AuthenticateAndAuthorize(t.Context(), req)
 				if !assert.Nil(t, err) {
@@ -547,6 +700,116 @@ func TestRemoteIdentityConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 	assert.Greater(t, srv.omitted, 32*200/2)
+}
+
+func TestRemoteIdentityApplicationTokens(t *testing.T) {
+	srv := &tstIdentityServer{identities: map[string]*corev1.RequestContext{
+		"10.0.0.1/": newTestIdentity("client", 1),
+		"fd00::1/":  newTestIdentity("v6", 1),
+		"10.0.0.2/": newTestIdentity("other", 1),
+	}}
+	c := newTestIdentityClient(&tstInternalErrC{authenticate: srv.authenticate})
+
+	_, err := c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("10.0.0.2", ""))
+	require.Nil(t, err)
+	otherKey, _ := c.getIdentityCacheKey(newTestIdentityRequest("10.0.0.2", "").Request)
+	other := c.identities.get(otherKey, time.Now())
+	require.NotNil(t, other)
+
+	for _, address := range []string{"10.0.0.1", "fd00::1"} {
+		for i := range identityCacheMaxEntries + 1 {
+			token := fmt.Sprintf("application-%d", i)
+			req := newTestIdentityRequest(address, "")
+			headers := req.Request.Request.GetHttp().Headers
+			switch i % 4 {
+			case 0:
+				headers["authorization"] = "Bearer " + token
+			case 1:
+				headers["x-octelium-auth"] = token
+			case 2:
+				headers["cookie"] = "other=value; octelium_auth=" + token
+			default:
+				headers["authorization"] = "Bearer " + newTestToken(token)
+			}
+			omittedBefore := srv.omitted
+			resp, err := c.AuthenticateAndAuthorize(t.Context(), req)
+			require.Nil(t, err)
+			assert.Equal(t, i > 0, srv.omitted == omittedBefore+1)
+			assert.True(t, pbutils.IsEqual(srv.identities[address+"/"].Session, resp.RequestContext.Session))
+		}
+	}
+
+	assert.Equal(t, 2*identityCacheMaxEntries, srv.omitted)
+	assert.Equal(t, 3, c.identities.len())
+	assert.Same(t, other, c.identities.get(otherKey, time.Now()))
+}
+
+func TestRemoteIdentityTokenAliases(t *testing.T) {
+	token := newTestToken("clientless")
+	data, err := base64.RawURLEncoding.DecodeString(token)
+	require.Nil(t, err)
+
+	var aliases []string
+	for i := range identityCacheMaxEntries + 1 {
+		aliases = append(aliases, newTestTokenAlias(token, i))
+	}
+	for _, ch := range "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" {
+		alias := token[:len(token)-1] + string(ch)
+		if decoded, err := base64.RawURLEncoding.DecodeString(alias); err == nil && bytes.Equal(data, decoded) && alias != token {
+			aliases = append(aliases, alias)
+		}
+	}
+	assert.Len(t, aliases, identityCacheMaxEntries+1+map[int]int{0: 0, 1: 15, 2: 3}[len(data)%3])
+
+	want := newTestIdentity("clientless", 1)
+	srv := &tstIdentityServer{identities: map[string]*corev1.RequestContext{"/" + token: want}}
+	for _, alias := range aliases {
+		srv.identities["/"+alias] = want
+	}
+	c := newTestIdentityClient(&tstInternalErrC{authenticate: srv.authenticate})
+
+	now := time.Now()
+	for key := range uint64(identityCacheMaxEntries - 1) {
+		c.identities.set(key, &identity{fingerprint: []byte("other"), expiresAt: now.Add(identityCacheTTL)}, now)
+	}
+
+	doAliases := func() {
+		t.Helper()
+		for _, alias := range aliases {
+			omittedBefore := srv.omitted
+			resp, err := c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("192.0.2.1", alias))
+			require.Nil(t, err)
+			sent, full := srv.last()
+			assert.Nil(t, sent.IdentityFingerprint)
+			assert.Equal(t, omittedBefore, srv.omitted)
+			assert.True(t, pbutils.IsEqual(full.RequestContext.Session, resp.RequestContext.Session))
+			assert.True(t, pbutils.IsEqual(want.Session, resp.RequestContext.Session))
+		}
+	}
+
+	doAliases()
+	assert.Equal(t, identityCacheMaxEntries-1, c.identities.len())
+
+	_, err = c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("192.0.2.1", token))
+	require.Nil(t, err)
+	key, accessToken := c.getIdentityCacheKey(newTestIdentityRequest("192.0.2.1", token).Request)
+	assert.Equal(t, token, accessToken)
+	entry := c.identities.get(key, time.Now())
+	require.NotNil(t, entry)
+	assert.Equal(t, identityCacheMaxEntries, c.identities.len())
+
+	doAliases()
+	assert.Equal(t, identityCacheMaxEntries, c.identities.len())
+	assert.Same(t, entry, c.identities.get(key, time.Now()))
+	for key := range uint64(identityCacheMaxEntries - 1) {
+		assert.NotNil(t, c.identities.get(key, time.Now()))
+	}
+
+	omittedBefore := srv.omitted
+	resp, err := c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("192.0.2.2", token))
+	require.Nil(t, err)
+	assert.Equal(t, omittedBefore+1, srv.omitted)
+	assert.Same(t, entry.session, resp.RequestContext.Session)
 }
 
 type tstRecordingC struct {
@@ -657,6 +920,7 @@ func TestRemoteIdentityOctovigil(t *testing.T) {
 
 	cc, err := octeliumC.CoreV1Utils().GetClusterConfig(ctx)
 	require.Nil(t, err)
+	require.Nil(t, c.setClusterNetwork(cc))
 	clientAddr := netip.MustParsePrefix(cc.Status.Network.ClusterNetwork.V4).Addr()
 	clientAddrs := make(map[string]string)
 	setClientSession := func(sess *corev1.Session) {
@@ -740,15 +1004,24 @@ func TestRemoteIdentityOctovigil(t *testing.T) {
 		}
 	}
 
-	var authorized, unauthorized int
+	var authorized, unauthorized, aliases int
 	for range 400 {
 		usr := usrs[r.IntN(len(usrs))]
 		headers := map[string]string{"x-tenant": utilrand.GetRandomStringCanonical(4)}
 		address := []string{"10.200.0.1", "10.200.0.2"}[r.IntN(2)]
+		isAlias := false
 		if addr, ok := clientAddrs[usr.Session.Metadata.Uid]; ok {
 			address = addr
+			if r.IntN(2) == 0 {
+				headers["authorization"] = "Bearer " + utilrand.GetRandomStringCanonical(32)
+			}
 		} else {
 			token := usr.GetAccessToken().AccessToken
+			if r.IntN(8) == 0 {
+				token = newTestTokenAlias(token, r.IntN(1<<20))
+				isAlias = true
+				aliases++
+			}
 			switch r.IntN(3) {
 			case 0:
 				headers["x-octelium-auth"] = token
@@ -773,8 +1046,13 @@ func TestRemoteIdentityOctovigil(t *testing.T) {
 			Request:    req.Request,
 		})
 		require.Nil(t, err)
+		omittedBefore, fullBefore := recorder.omitted, recorder.full
 		resp, err := c.AuthenticateAndAuthorize(ctx, req)
 		require.Nil(t, err)
+		if isAlias {
+			assert.Equal(t, omittedBefore, recorder.omitted)
+			assert.Equal(t, fullBefore+1, recorder.full)
+		}
 
 		assert.True(t, legacy.IsAuthenticated)
 		assert.Equal(t, usr.Session.Metadata.Uid, legacy.RequestContext.GetSession().GetMetadata().GetUid())
@@ -790,12 +1068,13 @@ func TestRemoteIdentityOctovigil(t *testing.T) {
 		}
 	}
 
-	t.Logf("mutations: %v, omitted: %d, full: %d, authorized: %d, unauthorized: %d",
-		mutations, recorder.omitted, recorder.full, authorized, unauthorized)
+	t.Logf("mutations: %v, omitted: %d, full: %d, authorized: %d, unauthorized: %d, aliases: %d",
+		mutations, recorder.omitted, recorder.full, authorized, unauthorized, aliases)
 	assert.Equal(t, 400, recorder.omitted+recorder.full)
 	assert.Greater(t, recorder.omitted, 200)
 	assert.Greater(t, recorder.full, 50)
 	assert.Greater(t, unauthorized, 0)
+	assert.Greater(t, aliases, 0)
 	assert.Len(t, mutations, 7)
 }
 
@@ -806,7 +1085,7 @@ func TestRemoteIdentityWithoutSession(t *testing.T) {
 	srv.override = func(resp *coctovigilv1.AuthenticateAndAuthorizeResponse) {
 		resp.IdentityFingerprint = []byte("fingerprint")
 	}
-	c := &Client{svcUID: "service", remoteC: &tstRemoteC{internalC: &tstInternalErrC{authenticate: srv.authenticate}}}
+	c := newTestIdentityClient(&tstInternalErrC{authenticate: srv.authenticate})
 	for range 2 {
 		resp, err := c.AuthenticateAndAuthorize(t.Context(), newTestIdentityRequest("10.0.0.1", ""))
 		require.Nil(t, err)

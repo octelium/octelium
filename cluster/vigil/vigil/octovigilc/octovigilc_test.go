@@ -19,6 +19,7 @@ package octovigilc
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -28,12 +29,14 @@ import (
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/admin"
 	"github.com/octelium/octelium/cluster/apiserver/apiserver/user"
+	"github.com/octelium/octelium/cluster/common/octeliumc"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/cluster/common/tests/tstuser"
 	"github.com/octelium/octelium/cluster/common/vutils"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +74,65 @@ func TestNewClientMissingOptions(t *testing.T) {
 		c, err := NewClient(t.Context(), opts)
 		assert.NotNil(t, err)
 		assert.Nil(t, c)
+	}
+}
+
+type tstClusterConfigC struct {
+	octeliumc.ClientInterface
+	cc  *corev1.ClusterConfig
+	err error
+}
+
+func (c *tstClusterConfigC) CoreV1Utils() octeliumc.CoreV1Utils {
+	return c
+}
+
+func (c *tstClusterConfigC) GetClusterConfig(ctx context.Context) (*corev1.ClusterConfig, error) {
+	return c.cc, c.err
+}
+
+func TestNewClientRemote(t *testing.T) {
+	testMode := ldflags.TestMode
+	ldflags.TestMode = "false"
+	t.Cleanup(func() {
+		ldflags.TestMode = testMode
+	})
+
+	vCache, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	vCache.SetService(&corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}})
+
+	c, err := NewClient(t.Context(), &Opts{VCache: vCache})
+	assert.NotNil(t, err)
+	assert.Nil(t, c)
+
+	for _, tc := range []struct {
+		name    string
+		octC    *tstClusterConfigC
+		isErr   bool
+		clients []string
+	}{
+		{"DualStack", &tstClusterConfigC{cc: newTestClusterConfig("10.0.0.0/16", "fd00::/64")}, false, []string{"10.0.0.1", "fd00::1"}},
+		{"V4", &tstClusterConfigC{cc: newTestClusterConfig("10.0.0.0/16", "")}, false, []string{"10.0.0.1"}},
+		{"NoNetwork", &tstClusterConfigC{cc: &corev1.ClusterConfig{}}, false, nil},
+		{"Error", &tstClusterConfigC{err: status.Error(codes.Unavailable, "unavailable")}, true, nil},
+		{"InvalidNetwork", &tstClusterConfigC{cc: newTestClusterConfig("invalid", "")}, true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := NewClient(t.Context(), &Opts{OcteliumC: tc.octC, VCache: vCache})
+			if tc.isErr {
+				assert.NotNil(t, err)
+				assert.Nil(t, c)
+				return
+			}
+			require.Nil(t, err)
+			assert.False(t, c.isEmbedded)
+			assert.NotNil(t, c.remoteC)
+			assert.Equal(t, "service", c.svcUID)
+			for _, address := range []string{"10.0.0.1", "fd00::1", "192.0.2.1"} {
+				assert.Equal(t, slices.Contains(tc.clients, address), c.isAddressFromClient(address), address)
+			}
+		})
 	}
 }
 

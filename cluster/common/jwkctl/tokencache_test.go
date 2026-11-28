@@ -507,6 +507,7 @@ func TestVerifyAccessTokenCacheAliases(t *testing.T) {
 						assert.Equal(t, sess.Status.Authentication.TokenID, claims.TokenID)
 					}
 					assert.Equal(t, alias == tknStr, c.accessTokenCache.get(alias) != nil)
+					assert.Equal(t, alias == tknStr, IsCanonicalToken(alias))
 				}
 			}
 			assert.Equal(t, 1, c.accessTokenCache.len())
@@ -545,6 +546,7 @@ func TestVerifyAccessTokenCacheNonCanonical(t *testing.T) {
 			tkn, err := c.parseToken(tknStr)
 			assert.Nil(t, err)
 			assert.True(t, isCanonicalToken(tknStr, tkn))
+			assert.True(t, IsCanonicalToken(tknStr))
 
 			contentBytes, err := pbutils.Marshal(tkn.Content)
 			assert.Nil(t, err)
@@ -589,6 +591,7 @@ func TestVerifyAccessTokenCacheNonCanonical(t *testing.T) {
 				if assert.Nil(t, err, variant) {
 					assert.False(t, isCanonicalToken(variant, variantTkn), variant)
 				}
+				assert.False(t, IsCanonicalToken(variant), variant)
 			}
 
 			assertVariants := func() {
@@ -632,6 +635,33 @@ func TestVerifyAccessTokenCacheNonCanonical(t *testing.T) {
 				assert.ErrorContains(t, err, "Cannot find key of kid")
 			}
 			assert.Equal(t, 0, c.accessTokenCache.len())
+		})
+	}
+}
+
+func TestIsCanonicalToken(t *testing.T) {
+	for _, kind := range []string{KindEd25519, KindECDSAP256} {
+		t.Run(kind, func(t *testing.T) {
+			c, _ := newCacheTestController(t, kind)
+			tknStr := newCacheTestToken(t, c, newSession())
+			assert.True(t, IsCanonicalToken(tknStr))
+			data, err := base64.RawURLEncoding.DecodeString(tknStr)
+			assert.Nil(t, err)
+
+			for _, invalid := range []string{
+				"",
+				"!" + tknStr[1:],
+				tknStr + "=",
+				tknStr[:len(tknStr)-1],
+				base64.RawURLEncoding.EncodeToString(append([]byte{0x2}, data[1:]...)),
+				base64.RawURLEncoding.EncodeToString(data[1:]),
+				base64.RawURLEncoding.EncodeToString(data[:len(data)-1]),
+				base64.RawURLEncoding.EncodeToString(append(bytes.Clone(data), 0)),
+				base64.RawURLEncoding.EncodeToString([]byte{0x1, 0xff}),
+				base64.URLEncoding.EncodeToString(data) + "=",
+			} {
+				assert.False(t, IsCanonicalToken(invalid), invalid)
+			}
 		})
 	}
 }

@@ -18,6 +18,7 @@ package octovigilc
 
 import (
 	"context"
+	"net/netip"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
@@ -43,6 +44,8 @@ type Client struct {
 
 	remoteC    octovigilc.ClientInterface
 	identities identityCache
+	v4Prefix   *netip.Prefix
+	v6Prefix   *netip.Prefix
 }
 
 type Opts struct {
@@ -80,16 +83,31 @@ func NewClient(ctx context.Context, opts *Opts) (*Client, error) {
 
 	zap.L().Debug("Creating a new Octovigil client to a remote server")
 
+	if opts.OcteliumC == nil {
+		return nil, errors.Errorf("Nil octeliumC")
+	}
+
+	cc, err := opts.OcteliumC.CoreV1Utils().GetClusterConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := octovigilc.NewClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{
+	ret := &Client{
 		vCache:  opts.VCache,
 		svcUID:  opts.VCache.GetService().Metadata.Uid,
 		remoteC: client,
-	}, nil
+	}
+
+	if err := ret.setClusterNetwork(cc); err != nil {
+		return nil, err
+	}
+
+	return ret, nil
 
 }
 
@@ -119,7 +137,7 @@ func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *Authenticate
 		body := unsetRequestBody(req.Request.GetRequest())
 		defer setRequestBody(req.Request.GetRequest(), body)
 
-		identityKey := getIdentityCacheKey(req.Request)
+		identityKey, accessToken := c.getIdentityCacheKey(req.Request)
 		cached := c.identities.get(identityKey, time.Now())
 
 		resp, err := c.remoteC.InternalC().AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
@@ -134,7 +152,7 @@ func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *Authenticate
 			return nil, err
 		}
 
-		if err := c.setIdentity(identityKey, cached, resp); err != nil {
+		if err := c.setIdentity(identityKey, accessToken, cached, resp); err != nil {
 			return nil, err
 		}
 
