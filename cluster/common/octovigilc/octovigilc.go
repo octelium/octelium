@@ -28,6 +28,15 @@ import (
 	"github.com/octelium/octelium/pkg/utils/ldflags"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
+)
+
+const (
+	keepaliveTime         = 30 * time.Second
+	keepaliveTimeout      = 10 * time.Second
+	keepaliveMinTime      = 15 * time.Second
+	maxConnectionAge      = 5 * time.Minute
+	maxConnectionAgeGrace = 30 * time.Second
 )
 
 type Client struct {
@@ -36,39 +45,12 @@ type Client struct {
 
 func NewClient(ctx context.Context) (*Client, error) {
 
-	unaryTries := uint(3)
-
 	host := fmt.Sprintf("octelium-octovigil.octelium.svc:%d", GetPort())
 	if ldflags.IsTest() {
 		host = fmt.Sprintf("localhost:%d", GetPort())
 	}
 
-	retryCodes := []codes.Code{
-		codes.Unavailable,
-	}
-
-	unaryMiddlewares := []grpc.UnaryClientInterceptor{
-		grpc_retry.UnaryClientInterceptor(
-			grpc_retry.WithMax(unaryTries),
-			grpc_retry.WithBackoff(grpc_retry.BackoffLinearWithJitter(100*time.Millisecond, 0.2)),
-			grpc_retry.WithCodes(retryCodes...)),
-	}
-
-	streamMiddlewares := []grpc.StreamClientInterceptor{
-		grpc_retry.StreamClientInterceptor(
-			grpc_retry.WithMax(math.MaxUint32),
-			grpc_retry.WithBackoff(grpc_retry.BackoffLinear(1000*time.Millisecond)),
-			grpc_retry.WithCodes(retryCodes...)),
-	}
-
-	opts := []grpc.DialOption{
-		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(16*1024*1024),
-			grpc.MaxCallSendMsgSize(16*1024*1024),
-		),
-		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
-		grpc.WithChainStreamInterceptor(streamMiddlewares...),
-	}
+	opts := getDialOpts()
 
 	cred, err := spiffec.GetGRPCClientCred(ctx, nil)
 	if err != nil {
@@ -90,6 +72,56 @@ func NewClient(ctx context.Context) (*Client, error) {
 	}
 
 	return ret, nil
+}
+
+func getDialOpts() []grpc.DialOption {
+
+	unaryTries := uint(3)
+
+	retryCodes := []codes.Code{
+		codes.Unavailable,
+	}
+
+	unaryMiddlewares := []grpc.UnaryClientInterceptor{
+		grpc_retry.UnaryClientInterceptor(
+			grpc_retry.WithMax(unaryTries),
+			grpc_retry.WithBackoff(grpc_retry.BackoffLinearWithJitter(100*time.Millisecond, 0.2)),
+			grpc_retry.WithCodes(retryCodes...)),
+	}
+
+	streamMiddlewares := []grpc.StreamClientInterceptor{
+		grpc_retry.StreamClientInterceptor(
+			grpc_retry.WithMax(math.MaxUint32),
+			grpc_retry.WithBackoff(grpc_retry.BackoffLinear(1000*time.Millisecond)),
+			grpc_retry.WithCodes(retryCodes...)),
+	}
+
+	return []grpc.DialOption{
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(16*1024*1024),
+			grpc.MaxCallSendMsgSize(16*1024*1024),
+		),
+		grpc.WithChainUnaryInterceptor(unaryMiddlewares...),
+		grpc.WithChainStreamInterceptor(streamMiddlewares...),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                keepaliveTime,
+			Timeout:             keepaliveTimeout,
+			PermitWithoutStream: true,
+		}),
+	}
+}
+
+func GetServerKeepaliveOpts() []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      maxConnectionAge,
+			MaxConnectionAgeGrace: maxConnectionAgeGrace,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             keepaliveMinTime,
+			PermitWithoutStream: true,
+		}),
+	}
 }
 
 func (c *Client) InternalC() coctovigilv1.InternalServiceClient {

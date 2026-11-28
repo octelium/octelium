@@ -909,12 +909,15 @@ func (s *Server) run(ctx context.Context) error {
 		return err
 	}
 
-	s.grpcSrv = grpc.NewServer(
+	opts := []grpc.ServerOption{
 		cred,
-		grpc.MaxConcurrentStreams(100*1000),
-		grpc.MaxRecvMsgSize(33*1024*1024),
-		grpc.MaxSendMsgSize(33*1024*1024),
-	)
+		grpc.MaxConcurrentStreams(100 * 1000),
+		grpc.MaxRecvMsgSize(33 * 1024 * 1024),
+		grpc.MaxSendMsgSize(33 * 1024 * 1024),
+	}
+	opts = append(opts, octovigilc.GetServerKeepaliveOpts()...)
+
+	s.grpcSrv = grpc.NewServer(opts...)
 	coctovigilv1.RegisterInternalServiceServer(s.grpcSrv, &internalService{
 		s: s,
 	})
