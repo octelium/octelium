@@ -58,6 +58,7 @@ type Server struct {
 
 	redisC  *redis.Client
 	grpcSrv *grpc.Server
+	grpcLis net.Listener
 
 	eventHub *eventHub
 
@@ -365,6 +366,8 @@ func (s *Server) Run(ctx context.Context) error {
 		lis.Close()
 		return err
 	}
+
+	s.grpcLis = lis
 
 	go func() {
 		s.grpcSrv.Serve(lis)
