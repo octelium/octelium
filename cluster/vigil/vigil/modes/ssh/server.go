@@ -283,7 +283,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	startTime := time.Now()
 
-	svc := s.vCache.GetService()
+	svc := s.vCache.GetServiceReadOnly()
 	if svc == nil {
 		c.Close()
 		return

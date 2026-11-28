@@ -253,6 +253,77 @@ func TestSessionUpdate(t *testing.T) {
 	assert.Nil(t, lb.cache.getByUserName("user", svc))
 }
 
+func TestSessionUpdateDecisions(t *testing.T) {
+	vc, err := vcache.NewCache(t.Context())
+	require.Nil(t, err)
+	vc.SetService(&corev1.Service{Metadata: &metav1.Metadata{Uid: "service"}, Spec: &corev1.Service_Spec{}})
+	svc := vc.GetServiceReadOnly()
+	expected := pbutils.Clone(svc).(*corev1.Service)
+
+	served := newTestSession("session", "user", "service", 80)
+	servedCopy := newTestSession("session", "user", "service", 80)
+	servedOtherPort := newTestSession("session", "user", "service", 81)
+	servedOtherStatus := newTestSession("session", "user", "service", 80)
+	servedOtherStatus.Status.TotalConnections = 2
+	unserved := newTestSession("session", "user", "other-service", 80)
+	unservedCopy := newTestSession("session", "user", "other-service", 80)
+	unservedOtherPort := newTestSession("session", "user", "other-service", 81)
+	disconnected := newTestSession("session", "user", "service", 80)
+	disconnected.Status.Connection = nil
+	disconnectedCopy := newTestSession("session", "user", "service", 80)
+	disconnectedCopy.Status.Connection = nil
+
+	for _, tc := range []struct {
+		name   string
+		cached []*corev1.Session
+		new    *corev1.Session
+		old    *corev1.Session
+		want   []*corev1.Session
+	}{
+		{"UnchangedNotCached", nil, servedCopy, served, nil},
+		{"UnchangedCached", []*corev1.Session{served}, servedCopy, served, []*corev1.Session{served}},
+		{"UnchangedConnectionNotCached", nil, servedOtherStatus, served, nil},
+		{"UnchangedUnservedCached", []*corev1.Session{unserved}, unservedCopy, unserved, []*corev1.Session{unserved}},
+		{"UnchangedDisconnectedCached", []*corev1.Session{served}, disconnectedCopy, disconnected, []*corev1.Session{served}},
+		{"Changed", nil, servedOtherPort, served, []*corev1.Session{servedOtherPort}},
+		{"ChangedCached", []*corev1.Session{served}, servedOtherPort, served, []*corev1.Session{servedOtherPort}},
+		{"StopsServing", []*corev1.Session{served}, unserved, served, nil},
+		{"Disconnects", []*corev1.Session{served}, disconnected, served, nil},
+		{"StartsServing", nil, served, unserved, []*corev1.Session{served}},
+		{"Connects", nil, served, disconnected, []*corev1.Session{served}},
+		{"NeverServes", nil, unservedOtherPort, unserved, nil},
+		{"NeverServesCached", []*corev1.Session{unserved}, unservedOtherPort, unserved, []*corev1.Session{unserved}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lb := NewLbManager(nil, vc)
+			for _, sess := range tc.cached {
+				lb.cache.setSession(sess)
+			}
+			require.Nil(t, lb.OnUpdate(t.Context(), tc.new, tc.old))
+			if len(tc.want) == 0 {
+				assert.Empty(t, lb.cache.sMap)
+				return
+			}
+			require.Len(t, lb.cache.sMap["user"], len(tc.want))
+			for i, sess := range tc.want {
+				assert.Same(t, sess, lb.cache.sMap["user"][i])
+			}
+		})
+	}
+
+	lb := NewLbManager(nil, vc)
+	lb.SetSession(unserved)
+	require.Nil(t, lb.onAdd(t.Context(), unservedOtherPort))
+	assert.Empty(t, lb.cache.sMap)
+	lb.SetSession(served)
+	assert.Same(t, served, lb.cache.getByUserName("user", svc))
+	require.Nil(t, lb.onAdd(t.Context(), servedOtherPort))
+	assert.Same(t, servedOtherPort, lb.cache.getByUserName("user", svc))
+
+	assert.Same(t, svc, vc.GetServiceReadOnly())
+	assert.True(t, pbutils.IsEqual(expected, svc))
+}
+
 func TestGetUpstreamMissing(t *testing.T) {
 	lb := NewLbManager(nil, nil)
 	for _, resp := range []*coctovigilv1.AuthenticateAndAuthorizeResponse{

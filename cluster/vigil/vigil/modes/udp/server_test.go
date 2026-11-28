@@ -40,6 +40,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -181,6 +182,8 @@ func TestConcurrentDatagrams(t *testing.T) {
 	}()
 	t.Cleanup(func() { upstream.Close(); <-done })
 	srv := newTestUDPServer(t, upstream.LocalAddr().String())
+	svc := srv.vCache.GetServiceReadOnly()
+	expected := pbutils.Clone(svc).(*corev1.Service)
 	addr := fmt.Sprintf("127.0.0.1:%d", srv.lis.LocalAddr().(*net.UDPAddr).Port)
 	var wg sync.WaitGroup
 	for i := range 16 {
@@ -206,6 +209,8 @@ func TestConcurrentDatagrams(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	assert.Same(t, svc, srv.vCache.GetServiceReadOnly())
+	assert.True(t, pbutils.IsEqual(expected, svc))
 }
 
 func TestPacketServiceUnavailable(t *testing.T) {

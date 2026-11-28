@@ -298,7 +298,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}()
 
-	svc := s.vCache.GetService()
+	svc := s.vCache.GetServiceReadOnly()
 	if svc == nil || svc.Spec.IsDisabled {
 		if svc == nil {
 			zap.L().Warn("Could not get the Service from cache")

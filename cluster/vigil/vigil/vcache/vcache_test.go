@@ -154,3 +154,95 @@ func TestServiceConcurrentAccess(t *testing.T) {
 	got := c.GetService()
 	assert.Equal(t, got.Metadata.Name, got.Spec.Config.Name)
 }
+
+func TestServiceReadOnly(t *testing.T) {
+	c, err := NewCache(t.Context())
+	require.Nil(t, err)
+	assert.Nil(t, c.GetServiceReadOnly())
+
+	svc := &corev1.Service{
+		Metadata: &metav1.Metadata{
+			Name:   "test.default",
+			Labels: map[string]string{"owner": "original"},
+		},
+		Spec: &corev1.Service_Spec{
+			Config: &corev1.Service_Spec_Config{
+				Upstream: &corev1.Service_Spec_Config_Upstream{
+					Type: &corev1.Service_Spec_Config_Upstream_Url{Url: "https://example.com"},
+				},
+			},
+		},
+	}
+	c.SetService(svc)
+	got := c.GetServiceReadOnly()
+	assert.NotSame(t, svc, got)
+	assert.True(t, pbutils.IsEqual(svc, got))
+	assert.Same(t, got, c.GetServiceReadOnly())
+	assert.Same(t, got.Spec.Config, c.GetServiceReadOnly().Spec.Config)
+
+	svc.Metadata.Labels["owner"] = "changed"
+	svc.Spec.Config.Upstream.Type = &corev1.Service_Spec_Config_Upstream_Url{Url: "https://other.example.com"}
+	assert.Equal(t, "original", got.Metadata.Labels["owner"])
+	assert.Equal(t, "https://example.com", got.Spec.Config.Upstream.GetUrl())
+
+	clone := c.GetService()
+	assert.NotSame(t, got, clone)
+	assert.NotSame(t, got.Spec.Config, clone.Spec.Config)
+	assert.True(t, pbutils.IsEqual(got, clone))
+	clone.Metadata.Labels["owner"] = "reader"
+	clone.Spec.IsDisabled = true
+	assert.Equal(t, "original", got.Metadata.Labels["owner"])
+	assert.False(t, got.Spec.IsDisabled)
+	assert.Same(t, got, c.GetServiceReadOnly())
+
+	updated := pbutils.Clone(got).(*corev1.Service)
+	updated.Spec.IsDisabled = true
+	c.SetService(updated)
+	current := c.GetServiceReadOnly()
+	assert.NotSame(t, got, current)
+	assert.NotSame(t, updated, current)
+	assert.True(t, current.Spec.IsDisabled)
+	assert.True(t, pbutils.IsEqual(current, c.GetService()))
+	assert.False(t, got.Spec.IsDisabled)
+	assert.Equal(t, "original", got.Metadata.Labels["owner"])
+}
+
+func TestServiceReadOnlyConcurrentAccess(t *testing.T) {
+	c, err := NewCache(t.Context())
+	require.Nil(t, err)
+	c.SetService(&corev1.Service{
+		Metadata: &metav1.Metadata{Name: "initial"},
+		Spec:     &corev1.Service_Spec{Config: &corev1.Service_Spec_Config{Name: "initial"}},
+	})
+
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Go(func() {
+			for j := range 64 {
+				name := fmt.Sprintf("service-%d-%d", i, j)
+				c.SetService(&corev1.Service{
+					Metadata: &metav1.Metadata{Name: name},
+					Spec:     &corev1.Service_Spec{Config: &corev1.Service_Spec_Config{Name: name}},
+				})
+			}
+		})
+	}
+	for range 16 {
+		wg.Go(func() {
+			for range 64 {
+				got := c.GetServiceReadOnly()
+				assert.Equal(t, got.Metadata.Name, got.Spec.Config.Name)
+				_, err := pbutils.Marshal(got)
+				assert.Nil(t, err)
+				clone := c.GetService()
+				assert.Equal(t, clone.Metadata.Name, clone.Spec.Config.Name)
+				clone.Metadata.Name = "reader"
+				clone.Spec.Config.Name = "reader"
+			}
+		})
+	}
+	wg.Wait()
+	got := c.GetServiceReadOnly()
+	assert.Equal(t, got.Metadata.Name, got.Spec.Config.Name)
+	assert.NotEqual(t, "reader", got.Metadata.Name)
+}

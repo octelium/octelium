@@ -44,3 +44,7 @@ func (c *Cache) GetService() *corev1.Service {
 	}
 	return pbutils.Clone(svc).(*corev1.Service)
 }
+
+func (c *Cache) GetServiceReadOnly() *corev1.Service {
+	return c.svc.Load()
+}

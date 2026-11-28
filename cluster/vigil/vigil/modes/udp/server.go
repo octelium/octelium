@@ -250,7 +250,7 @@ func readUDPDatagram(conn *net.UDPConn, buf []byte) (int, *net.UDPAddr, error) {
 }
 
 func (s *Server) handlePacket(ctx context.Context, buf []byte, n int, addr *net.UDPAddr) error {
-	svc := s.vCache.GetService()
+	svc := s.vCache.GetServiceReadOnly()
 	if svc == nil {
 		zap.L().Warn("Could not get the Service from cache")
 		return errors.Errorf("Cannot find svc in cache")

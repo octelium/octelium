@@ -4868,3 +4868,51 @@ func TestHTTPLoginRedirectEncodedTargets(t *testing.T) {
 	}
 	assert.Zero(t, calls.Load())
 }
+
+func TestHTTPServiceReadOnly(t *testing.T) {
+	srv, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Upstream-Service", r.Header.Get("X-Service"))
+		w.Write([]byte("ok"))
+	}), &corev1.Service_Spec_Config_HTTP{
+		Header: &corev1.Service_Spec_Config_HTTP_Header{
+			AddRequestHeaders: []*corev1.Service_Spec_Config_HTTP_Header_KeyValue{
+				{
+					Key:  "X-Service",
+					Type: &corev1.Service_Spec_Config_HTTP_Header_KeyValue_Eval{Eval: `ctx.service.metadata.name`},
+				},
+			},
+		},
+		Visibility: &corev1.Service_Spec_Config_HTTP_Visibility{
+			EnableResponseBody:       true,
+			IncludeAllRequestHeaders: true,
+			ExcludeRequestHeaders:    []string{"Authorization"},
+		},
+	})
+	svc := srv.vCache.GetServiceReadOnly()
+	expected := pbutils.Clone(svc).(*corev1.Service)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			resp, err := client.Get(addr + "/path")
+			if !assert.Nil(t, err) {
+				return
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			assert.Nil(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, "ok", string(body))
+			assert.Equal(t, svc.Metadata.Name, resp.Header.Get("X-Upstream-Service"))
+		})
+	}
+	wg.Wait()
+
+	assert.Same(t, svc, srv.vCache.GetServiceReadOnly())
+	assert.True(t, pbutils.IsEqual(expected, svc))
+
+	srv.transports.cfgHasher.mu.Lock()
+	defer srv.transports.cfgHasher.mu.Unlock()
+	assert.Same(t, svc.Spec.Config, srv.transports.cfgHasher.last)
+}

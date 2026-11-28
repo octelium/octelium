@@ -201,7 +201,7 @@ func getSNIHost(arg string) string {
 
 func (c *LBManager) onAdd(ctx context.Context, sess *corev1.Session) error {
 
-	svc := c.vCache.GetService()
+	svc := c.vCache.GetServiceReadOnly()
 
 	if ucorev1.ToService(svc).IsServedBySession(ucorev1.ToSession(sess)) {
 		c.cache.setSession(sess)
@@ -223,11 +223,12 @@ func (c *LBManager) onDelete(ctx context.Context, sess *corev1.Session) error {
 }
 
 func (s *LBManager) onSessionUpdate(ctx context.Context, new, old *corev1.Session) error {
-	svc := s.vCache.GetService()
 	if pbutils.IsEqual(new.Status.Connection, old.Status.Connection) {
 		// zap.L().Debug("No need to change lb upstreams", zap.String("sessUID", new.Metadata.Uid))
 		return nil
 	}
+
+	svc := s.vCache.GetServiceReadOnly()
 
 	switch {
 	case ucorev1.ToService(svc).IsServedBySession(ucorev1.ToSession(new)):
@@ -253,7 +254,7 @@ func (s *LBManager) Run(ctx context.Context) error {
 }
 
 func (c *LBManager) SetSession(sess *corev1.Session) {
-	svc := c.vCache.GetService()
+	svc := c.vCache.GetServiceReadOnly()
 
 	if ucorev1.ToService(svc).IsServedBySession(ucorev1.ToSession(sess)) {
 		c.cache.setSession(sess)

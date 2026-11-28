@@ -240,7 +240,7 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 	zap.L().Debug("Started handling a new SOCKS5 conn",
 		zap.String("addr", c.RemoteAddr().String()))
 
-	svc := s.svc()
+	svc := s.vCache.GetServiceReadOnly()
 	if svc == nil {
 		zap.L().Warn("Could not get the Service from cache")
 		c.Close()
@@ -306,7 +306,7 @@ func (s *Server) handleConnect(ctx context.Context, writer io.Writer, req *gosoc
 		zap.L().Debug("Could not clear SOCKS5 conn deadline", zap.Error(err))
 	}
 
-	svc := s.svc()
+	svc := s.vCache.GetServiceReadOnly()
 	if svc == nil {
 		gosocks5.SendReply(writer, statute.RepServerFailure, nil)
 		return errors.Errorf("could not get service from cache")

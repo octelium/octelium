@@ -234,7 +234,7 @@ func (s *Server) getHTTPHandler(ctx context.Context) (http.Handler, error) {
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			svc := s.vCache.GetService()
+			svc := s.vCache.GetServiceReadOnly()
 			reqCtx := &middlewares.RequestContext{
 				CreatedAt:     time.Now(),
 				Service:       svc,
@@ -396,7 +396,7 @@ func (s *Server) getOriginHosts() []string {
 
 	var svc *corev1.Service
 	if s.vCache != nil {
-		svc = s.vCache.GetService()
+		svc = s.vCache.GetServiceReadOnly()
 	}
 
 	if svc != nil && svc.Status != nil && svc.Status.NamespaceRef != nil && s.domain != "" {

@@ -39,6 +39,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/octovigilc"
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -567,6 +568,8 @@ func TestServer(t *testing.T) {
 		assert.True(t, found)
 		assert.Equal(t, int64(1), dp.Value)
 	}
+
+	assert.True(t, pbutils.IsEqual(svcV, vCache.GetServiceReadOnly()))
 
 	err = srv.Close()
 	assert.Nil(t, err)

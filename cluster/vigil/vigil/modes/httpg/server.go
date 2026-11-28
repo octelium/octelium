@@ -304,7 +304,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 
 	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			svc := s.vCache.GetService()
+			svc := s.vCache.GetServiceReadOnly()
 			reqCtx := &middlewares.RequestContext{
 				CreatedAt:     time.Now(),
 				Service:       svc,

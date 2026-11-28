@@ -45,6 +45,7 @@ import (
 	"github.com/octelium/octelium/cluster/vigil/vigil/secretman"
 	"github.com/octelium/octelium/cluster/vigil/vigil/vcache"
 	"github.com/octelium/octelium/pkg/apiutils/ucorev1"
+	"github.com/octelium/octelium/pkg/common/pbutils"
 	utils_cert "github.com/octelium/octelium/pkg/utils/cert"
 	"github.com/octelium/octelium/pkg/utils/utilrand"
 	"github.com/stretchr/testify/assert"
@@ -402,6 +403,8 @@ func TestServer(t *testing.T) {
 		receivedDP := findSumDataPoint(t, &rm, "req.bytes_received")
 		assert.Equal(t, int64(len(msg)), receivedDP.Value)
 	}
+
+	assert.True(t, pbutils.IsEqual(svcV, vCache.GetServiceReadOnly()))
 
 	err = srv.Close()
 	assert.Nil(t, err)
