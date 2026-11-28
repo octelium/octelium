@@ -147,6 +147,10 @@ func detectStreamKind(req *http.Request, reqCtx *middlewares.RequestContext) str
 func (m *middleware) serveNonStreaming(w http.ResponseWriter, req *http.Request,
 	reqCtx *middlewares.RequestContext) {
 	crw := newResponseWriter(w, streamKindNone)
+	crw.isBodyLogged = func() bool {
+		visibilityCfg := getVisibilityConfig(reqCtx)
+		return visibilityCfg.GetEnableResponseBody() || visibilityCfg.GetEnableResponseBodyMap()
+	}
 	m.next.ServeHTTP(crw, req)
 
 	if reqCtx.DownstreamInfo == nil {
@@ -593,6 +597,7 @@ type responseWriter struct {
 	onFirstByte    func()
 	onSSEEvent     func([]byte)
 	onEventMessage func([]byte)
+	isBodyLogged   func() bool
 	sseLineBuf     []byte
 	sseMu          sync.Mutex
 	sseEventCnt    atomic.Int64
@@ -602,6 +607,8 @@ type responseWriter struct {
 	isEventStream bool
 	jsonResolved  bool
 	isJSONArray   bool
+	bodyResolved  bool
+	skipBody      bool
 	maxSSEEvent   int
 	maxBody       int
 	sseDiscarding bool
@@ -618,6 +625,15 @@ func (rw *responseWriter) resolveSSEKind() {
 	mediaType := strings.TrimSpace(strings.Split(ct, ";")[0])
 	rw.isSSE = strings.EqualFold(mediaType, "text/event-stream")
 	rw.isEventStream = strings.EqualFold(mediaType, httputils.LLMEventStreamMediaType)
+}
+
+func (rw *responseWriter) resolveSkipBody() {
+	if rw.bodyResolved {
+		return
+	}
+	rw.bodyResolved = true
+
+	rw.skipBody = rw.isBodyLogged != nil && !rw.isBodyLogged()
 }
 
 func (rw *responseWriter) isStreaming() bool {
@@ -667,7 +683,10 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 
 		switch rw.kind {
 		case streamKindNone:
-			rw.bufferBody(b[:n])
+			rw.resolveSkipBody()
+			if !rw.skipBody {
+				rw.bufferBody(b[:n])
+			}
 		case streamKindSSE:
 			rw.parseSSEEvents(b[:n])
 		case streamKindMCP, streamKindLLM:
