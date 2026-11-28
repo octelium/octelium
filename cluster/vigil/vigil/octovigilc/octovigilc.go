@@ -41,7 +41,8 @@ type Client struct {
 	vCache      *vcache.Cache
 	svcUID      string
 
-	remoteC octovigilc.ClientInterface
+	remoteC    octovigilc.ClientInterface
+	identities identityCache
 }
 
 type Opts struct {
@@ -118,13 +119,22 @@ func (c *Client) AuthenticateAndAuthorize(ctx context.Context, req *Authenticate
 		body := unsetRequestBody(req.Request.GetRequest())
 		defer setRequestBody(req.Request.GetRequest(), body)
 
+		identityKey := getIdentityCacheKey(req.Request)
+		cached := c.identities.get(identityKey, time.Now())
+
 		resp, err := c.remoteC.InternalC().AuthenticateAndAuthorize(ctx, &coctovigilv1.AuthenticateAndAuthorizeRequest{
 			ServiceUID:             c.svcUID,
 			Request:                req.Request,
 			OmitRequest:            true,
 			ServiceResourceVersion: req.Service.GetMetadata().GetResourceVersion(),
+			OmitUnchangedIdentity:  true,
+			IdentityFingerprint:    cached.getFingerprint(),
 		})
 		if err != nil {
+			return nil, err
+		}
+
+		if err := c.setIdentity(identityKey, cached, resp); err != nil {
 			return nil, err
 		}
 

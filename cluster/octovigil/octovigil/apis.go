@@ -17,11 +17,16 @@
 package octovigil
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"time"
 
 	"github.com/octelium/octelium/apis/cluster/coctovigilv1"
+	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
@@ -89,6 +94,19 @@ func (s *internalService) AuthenticateAndAuthorize(
 			req.ServiceResourceVersion == svc.GetMetadata().GetResourceVersion() {
 			resp.RequestContext.Service = nil
 		}
+
+		if req.OmitUnchangedIdentity {
+			resp.IdentityFingerprint = getIdentityFingerprint(resp.RequestContext)
+			if len(resp.IdentityFingerprint) > 0 &&
+				bytes.Equal(resp.IdentityFingerprint, req.IdentityFingerprint) {
+				resp.RequestContext.Session = nil
+				resp.RequestContext.User = nil
+				resp.RequestContext.Groups = nil
+				resp.RequestContext.Device = nil
+				resp.RequestContext.Namespace = nil
+				resp.IsIdentityOmitted = true
+			}
+		}
 	}
 
 	/*
@@ -96,6 +114,81 @@ func (s *internalService) AuthenticateAndAuthorize(
 			zap.Float32("time", float32(time.Since(startedAt).Nanoseconds())/1000000))
 	*/
 	return resp, nil
+}
+
+const identityFingerprintVersion = 1
+
+func getIdentityFingerprint(reqCtx *corev1.RequestContext) []byte {
+	if reqCtx.GetSession() == nil {
+		return nil
+	}
+
+	ret := []byte{identityFingerprintVersion}
+
+	var ok bool
+	if ret, ok = appendIdentityMetadata(ret, reqCtx.Session.Metadata); !ok {
+		return nil
+	}
+
+	if reqCtx.User == nil {
+		ret = append(ret, 0)
+	} else if ret, ok = appendIdentityMetadata(ret, reqCtx.User.Metadata); !ok {
+		return nil
+	}
+
+	ret = binary.AppendUvarint(ret, uint64(len(reqCtx.Groups)))
+	for _, grp := range reqCtx.Groups {
+		if grp == nil {
+			return nil
+		}
+		if ret, ok = appendIdentityMetadata(ret, grp.Metadata); !ok {
+			return nil
+		}
+	}
+
+	if reqCtx.Device == nil {
+		ret = append(ret, 0)
+	} else {
+		if ret, ok = appendIdentityMetadata(ret, reqCtx.Device.Metadata); !ok {
+			return nil
+		}
+
+		status := reqCtx.Device.Status
+		ret = append(ret,
+			getIdentityFingerprintBool(status.GetPosture() != nil),
+			getIdentityFingerprintBool(status.GetProbeAttempt() != nil))
+		ret = binary.AppendUvarint(ret, uint64(status.GetBinding().GetAssurance()))
+	}
+
+	if reqCtx.Namespace == nil {
+		ret = append(ret, 0)
+	} else if ret, ok = appendIdentityMetadata(ret, reqCtx.Namespace.Metadata); !ok {
+		return nil
+	}
+
+	sum := sha256.Sum256(ret)
+	return sum[:]
+}
+
+func appendIdentityMetadata(b []byte, md *metav1.Metadata) ([]byte, bool) {
+	if md.GetUid() == "" || md.GetResourceVersion() == "" {
+		return nil, false
+	}
+
+	b = append(b, 1)
+	b = binary.AppendUvarint(b, uint64(len(md.Uid)))
+	b = append(b, md.Uid...)
+	b = binary.AppendUvarint(b, uint64(len(md.ResourceVersion)))
+	b = append(b, md.ResourceVersion...)
+
+	return b, true
+}
+
+func getIdentityFingerprintBool(v bool) byte {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func (s *internalService) GetDownstreamFromSessionUID(
