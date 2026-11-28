@@ -19,7 +19,9 @@ package celengine
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/octelium/octelium/cluster/common/cache"
@@ -27,6 +29,7 @@ import (
 	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/open-policy-agent/opa/v1/topdown"
+	"github.com/open-policy-agent/opa/v1/util"
 	"github.com/pkg/errors"
 )
 
@@ -136,8 +139,14 @@ func (e *opaEngine) doEvalPolicy(ctx context.Context,
 		return nil, err
 	}
 
+	evalInput, release, err := getOPAEvalInput(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	rs, err := pq.Eval(ctx,
-		rego.EvalInput(input),
+		evalInput,
 		rego.EvalHTTPRoundTripper(opaRoundTripper))
 	if err != nil {
 		return nil, err
@@ -152,6 +161,122 @@ func (e *opaEngine) doEvalPolicy(ctx context.Context,
 	}
 
 	return rs[0].Expressions[0].Value, nil
+}
+
+type opaInputCacheCtxKey struct{}
+
+type opaInputCache struct {
+	mu   sync.Mutex
+	vals map[uintptr]*opaInputCacheEntry
+}
+
+type opaInputCacheEntry struct {
+	m     map[string]any
+	val   ast.Value
+	inUse bool
+}
+
+func WithOPAInputCache(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(opaInputCacheCtxKey{}).(*opaInputCache); ok {
+		return ctx
+	}
+
+	return context.WithValue(ctx, opaInputCacheCtxKey{}, &opaInputCache{})
+}
+
+func getOPAEvalInput(ctx context.Context, input map[string]any) (rego.EvalOption, func(), error) {
+	c, ok := ctx.Value(opaInputCacheCtxKey{}).(*opaInputCache)
+	if !ok {
+		return rego.EvalInput(input), func() {}, nil
+	}
+
+	val, release, err := c.getInput(input)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return rego.EvalParsedInput(val), release, nil
+}
+
+func (c *opaInputCache) getInput(input map[string]any) (ast.Value, func(), error) {
+	if input == nil {
+		val, err := toOPAValue(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return val, func() {}, nil
+	}
+
+	var entries []*opaInputCacheEntry
+	release := func() {
+		c.mu.Lock()
+		for _, entry := range entries {
+			entry.inUse = false
+		}
+		c.mu.Unlock()
+	}
+
+	items := make([][2]*ast.Term, 0, len(input))
+	for k, v := range input {
+		val, entry, err := c.getValue(v)
+		if err != nil {
+			release()
+			return nil, nil, err
+		}
+		if entry != nil {
+			entries = append(entries, entry)
+		}
+		items = append(items, ast.Item(ast.StringTerm(k), ast.NewTerm(val)))
+	}
+
+	return ast.NewObject(items...), release, nil
+}
+
+func (c *opaInputCache) getValue(arg any) (ast.Value, *opaInputCacheEntry, error) {
+	m, ok := arg.(map[string]any)
+	if !ok || m == nil {
+		val, err := toOPAValue(arg)
+		return val, nil, err
+	}
+
+	key := reflect.ValueOf(m).Pointer()
+
+	c.mu.Lock()
+	entry, ok := c.vals[key]
+	if ok && !entry.inUse {
+		entry.inUse = true
+		c.mu.Unlock()
+		return entry.val, entry, nil
+	}
+	c.mu.Unlock()
+
+	val, err := toOPAValue(m)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, ok := c.vals[key]; ok {
+		return val, nil, nil
+	}
+
+	if c.vals == nil {
+		c.vals = make(map[uintptr]*opaInputCacheEntry)
+	}
+	entry = &opaInputCacheEntry{m: m, val: val, inUse: true}
+	c.vals[key] = entry
+
+	return val, entry, nil
+}
+
+func toOPAValue(arg any) (ast.Value, error) {
+	if err := util.RoundTripFast(&arg); err != nil {
+		return nil, err
+	}
+
+	return ast.InterfaceToValue(arg)
 }
 
 var opaAllowedBuiltins = map[string]struct{}{

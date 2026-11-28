@@ -571,6 +571,8 @@ func (s *Server) setServiceConfig(ctx context.Context, resp *coctovigilv1.Authen
 		return nil
 	}
 
+	ctx = celengine.WithOPAInputCache(ctx)
+
 	reqCtxMap, err := s.getReqCtxMap(reqCtx)
 	if err != nil {
 		return err

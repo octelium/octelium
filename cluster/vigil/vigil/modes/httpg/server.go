@@ -311,7 +311,7 @@ func (s *Server) getHTTPHandler(ctx context.Context, svc *corev1.Service) (http.
 				ServiceConfig: svc.Spec.Config,
 			}
 
-			ctx := context.WithValue(r.Context(), middlewares.CtxRequestContext, reqCtx)
+			ctx := context.WithValue(celengine.WithOPAInputCache(r.Context()), middlewares.CtxRequestContext, reqCtx)
 			defer reqCtx.RunOnResponse()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		}), nil

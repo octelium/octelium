@@ -28,6 +28,7 @@ import (
 	"github.com/octelium/octelium/apis/main/corev1"
 	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/apis/rsc/rmetav1"
+	"github.com/octelium/octelium/cluster/common/celengine"
 	"github.com/octelium/octelium/cluster/common/grpcutils"
 	"github.com/octelium/octelium/cluster/octovigil/octovigil/acache"
 	"github.com/octelium/octelium/pkg/common/pbutils"
@@ -278,6 +279,8 @@ func (s *internalService) Evaluate(
 			return nil, grpcutils.InvalidArg("Invalid inlinePolicy")
 		}
 	}
+	ctx = celengine.WithOPAInputCache(ctx)
+
 	reqCtxMap, err := pbutils.ConvertToMap(req.Ctx)
 	if err != nil {
 		return nil, grpcutils.InternalWithErr(err)

@@ -18,15 +18,21 @@ package celengine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/octelium/octelium/apis/main/corev1"
+	"github.com/octelium/octelium/apis/main/metav1"
 	"github.com/octelium/octelium/cluster/common/tests"
 	"github.com/octelium/octelium/pkg/common/pbutils"
+	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/stretchr/testify/assert"
 )
@@ -380,4 +386,480 @@ eval := {"result": input.ctx.value}`
 			wg.Wait()
 		})
 	}
+}
+
+func TestOPAInputCache(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	reqCtxMap := pbutils.MustConvertToMap(&corev1.RequestContext{
+		User: &corev1.User{
+			Metadata: &metav1.Metadata{Name: "usr-1", Uid: "uid-1"},
+			Spec:     &corev1.User_Spec{Type: corev1.User_Spec_HUMAN},
+		},
+		Groups: []*corev1.Group{
+			{Metadata: &metav1.Metadata{Name: "grp-1"}},
+			{Metadata: &metav1.Metadata{Name: "grp-2"}},
+		},
+		Request: &corev1.RequestContext_Request{
+			Type: &corev1.RequestContext_Request_Http{
+				Http: &corev1.RequestContext_Request_HTTP{
+					Method:  "GET",
+					Path:    "/api/v1/items",
+					Headers: map[string]string{"x-a": "1", "x-b": "2"},
+				},
+			},
+		},
+	})
+
+	valuesMap := map[string]any{
+		"str":     "value",
+		"float":   1.5,
+		"int":     3,
+		"int64":   int64(1<<53 + 1),
+		"uint32":  uint32(7),
+		"big":     1e21,
+		"neg0":    math.Copysign(0, -1),
+		"nan":     math.NaN(),
+		"inf":     math.Inf(-1),
+		"number":  json.Number("12.50"),
+		"bool":    true,
+		"null":    nil,
+		"nilMap":  map[string]any(nil),
+		"nilList": []any(nil),
+		"list":    []any{"a", 1.0, map[string]any{"k": "v"}},
+		"strs":    []string{"a", "b"},
+		"bytes":   []byte("bytes"),
+		"time":    time.Date(2026, 11, 1, 10, 0, 0, 123456789, time.UTC),
+		"struct": struct {
+			Name string `json:"name"`
+		}{Name: "struct"},
+		"nested": map[string]any{"a": map[string]any{"b": []any{map[string]any{"c": "d"}}}},
+	}
+
+	attrs := map[string]any{"attr1": "val1"}
+
+	inputs := []map[string]any{
+		nil,
+		{},
+		{"ctx": reqCtxMap},
+		{"ctx": reqCtxMap, "attrs": attrs},
+		{"ctx": valuesMap},
+		{"ctx": valuesMap, "attrs": map[string]any(nil)},
+		{"ctx": map[string]any(nil)},
+		{"ctx": "value", "list": []any{reqCtxMap}, "strs": []string{"a"}, "int": 1},
+	}
+
+	conditions := []*corev1.Condition{}
+	for _, script := range []string{
+		`match if { input.ctx.request.http.method == "GET" }`,
+		`match if { startswith(input.ctx.request.http.path, "/api/v1") }`,
+		`match if { input.attrs.attr1 == "val1" }`,
+		`match if { "grp-2" in {g.metadata.name | some g in input.ctx.groups} }`,
+		`match if { input.ctx.request.http.method == "POST" with input.ctx.request.http.method as "POST" }`,
+		`match if { input == null }`,
+		`match if { is_null(input.ctx.null) }`,
+		`match if { input.ctx.big == 1000000000000000000000 }`,
+		`match if { input.ctx.int64 == 9007199254740993 }`,
+		`match if { count(input.ctx) > 3 }`,
+		`match := input.ctx.bool`,
+	} {
+		conditions = append(conditions, &corev1.Condition{
+			Type: &corev1.Condition_Opa{
+				Opa: &corev1.Condition_OPA{
+					Type: &corev1.Condition_OPA_Inline{
+						Inline: "package octelium.condition\n" + script,
+					},
+				},
+			},
+		})
+	}
+	conditions = append(conditions, &corev1.Condition{
+		Type: &corev1.Condition_All_{
+			All: &corev1.Condition_All{
+				Of: []*corev1.Condition{
+					conditions[0],
+					{Type: &corev1.Condition_Match{Match: `ctx.request.http.method == "GET"`}},
+					{
+						Type: &corev1.Condition_Any_{
+							Any: &corev1.Condition_Any{
+								Of: []*corev1.Condition{conditions[2], conditions[3]},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	evals := []string{
+		`result := input`,
+		`result := json.marshal(input)`,
+		`result := {k: type_name(v) | some k, v in input.ctx}`,
+		`result := object.union(input.ctx, {"added": {"k": "v"}})`,
+		`result := object.remove(input.ctx, ["str", "user"])`,
+		`result := json.patch(input, [{"op": "add", "path": "/ctx/patched", "value": 1}])`,
+		`result := json.remove(input, ["ctx/str", "ctx/user"])`,
+		`result := json.filter(input, ["ctx/str", "ctx/request/http"])`,
+		`result := r if { r := input with input.ctx.str as "changed" }`,
+		`result := r if { r := input with input as {"ctx": {"replaced": true}} }`,
+		`result := sprintf("%v", [input])`,
+		`result := [k | some k, _ in input.ctx]`,
+		`result := object.keys(input)`,
+		`result := input.ctx.str`,
+		`result := sprintf("%v %v %v %v %v", [input.ctx.big, input.ctx.neg0, input.ctx.float, input.ctx.nan, input.ctx.inf])`,
+	}
+
+	type evalResult struct {
+		res any
+		err string
+	}
+
+	doEval := func(ctx context.Context, input map[string]any) []evalResult {
+		var ret []evalResult
+		add := func(res any, err error) {
+			r := evalResult{res: res}
+			if err != nil {
+				r.err = err.Error()
+			}
+			ret = append(ret, r)
+		}
+		for _, condition := range conditions {
+			add(srv.EvalCondition(ctx, condition, input))
+		}
+		for _, script := range evals {
+			script = "package octelium.eval\n" + script
+			add(srv.EvalPolicyStringOPA(ctx, script, input))
+			add(srv.OPAEvalPolicyMapStrAny(ctx, script, input))
+		}
+		return ret
+	}
+
+	for i, input := range inputs {
+		want := doEval(ctx, input)
+		assert.Equal(t, want, doEval(ctx, input), "input %d", i)
+
+		cctx := WithOPAInputCache(ctx)
+		c := cctx.Value(opaInputCacheCtxKey{}).(*opaInputCache)
+		assert.Empty(t, c.vals)
+
+		assert.Equal(t, want, doEval(cctx, input), "input %d", i)
+		var cached []map[string]any
+		for _, v := range input {
+			if m, ok := v.(map[string]any); ok && m != nil {
+				cached = append(cached, m)
+			}
+		}
+		assert.Len(t, c.vals, len(cached), "input %d", i)
+
+		vals := maps.Clone(c.vals)
+
+		assert.Equal(t, want, doEval(cctx, input), "input %d", i)
+		assert.Len(t, c.vals, len(vals), "input %d", i)
+		for k, entry := range vals {
+			assert.Same(t, entry, c.vals[k])
+			assert.False(t, entry.inUse)
+		}
+		for _, m := range cached {
+			entry, ok := c.vals[reflect.ValueOf(m).Pointer()]
+			assert.True(t, ok)
+			assert.Equal(t, reflect.ValueOf(m).Pointer(), reflect.ValueOf(entry.m).Pointer())
+			fresh, err := toOPAValue(m)
+			assert.Nil(t, err)
+			assert.Equal(t, 0, entry.val.Compare(fresh), "input %d", i)
+		}
+
+		val, release, err := c.getInput(input)
+		assert.Nil(t, err)
+		for k, v := range input {
+			if m, ok := v.(map[string]any); ok && m != nil {
+				entry := c.vals[reflect.ValueOf(m).Pointer()]
+				assert.True(t, entry.inUse)
+				assert.Same(t, entry.val, val.(ast.Object).Get(ast.StringTerm(k)).Value)
+			}
+		}
+		rs, err := rego.New(rego.Query("input"), rego.Input(input)).Eval(ctx)
+		assert.Nil(t, err)
+		parsed, err := rego.New(rego.Query("input"), rego.ParsedInput(val)).Eval(ctx)
+		assert.Nil(t, err)
+		assert.Equal(t, rs, parsed, "input %d", i)
+		release()
+		for _, entry := range c.vals {
+			assert.False(t, entry.inUse)
+		}
+	}
+}
+
+func TestOPAInputCacheInUse(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	expr := "package octelium.eval\nresult := input.ctx.value"
+	m := map[string]any{"value": "value"}
+	input := map[string]any{"ctx": m}
+	cctx := WithOPAInputCache(ctx)
+	c := cctx.Value(opaInputCacheCtxKey{}).(*opaInputCache)
+
+	val, release, err := c.getInput(input)
+	assert.Nil(t, err)
+	assert.Len(t, c.vals, 1)
+	entry := c.vals[reflect.ValueOf(m).Pointer()]
+	assert.True(t, entry.inUse)
+	assert.Same(t, entry.val, val.(ast.Object).Get(ast.StringTerm("ctx")).Value)
+
+	other, otherRelease, err := c.getInput(input)
+	assert.Nil(t, err)
+	otherVal := other.(ast.Object).Get(ast.StringTerm("ctx")).Value
+	assert.NotSame(t, entry.val, otherVal)
+	assert.Equal(t, 0, entry.val.Compare(otherVal))
+	assert.Len(t, c.vals, 1)
+
+	res, err := srv.EvalPolicyStringOPA(cctx, expr, input)
+	assert.Nil(t, err)
+	assert.Equal(t, "value", res)
+	assert.True(t, entry.inUse)
+	assert.Same(t, entry, c.vals[reflect.ValueOf(m).Pointer()])
+
+	otherRelease()
+	assert.True(t, entry.inUse)
+	release()
+	assert.False(t, entry.inUse)
+
+	res, err = srv.EvalPolicyStringOPA(cctx, expr, input)
+	assert.Nil(t, err)
+	assert.Equal(t, "value", res)
+	assert.False(t, entry.inUse)
+
+	val, release, err = c.getInput(map[string]any{"ctx": m, "attrs": m})
+	assert.Nil(t, err)
+	ctxVal := val.(ast.Object).Get(ast.StringTerm("ctx")).Value
+	attrsVal := val.(ast.Object).Get(ast.StringTerm("attrs")).Value
+	assert.True(t, ctxVal == entry.val || attrsVal == entry.val)
+	assert.False(t, ctxVal == entry.val && attrsVal == entry.val)
+	assert.Equal(t, 0, ctxVal.Compare(attrsVal))
+	assert.True(t, entry.inUse)
+	release()
+	assert.False(t, entry.inUse)
+
+	for range 8 {
+		_, _, err = c.getInput(map[string]any{"ctx": m, "attrs": map[string]any{"value": func() {}}})
+		assert.NotNil(t, err)
+		assert.False(t, entry.inUse)
+		assert.Len(t, c.vals, 1)
+	}
+
+	val, release, err = c.getInput(nil)
+	assert.Nil(t, err)
+	assert.Equal(t, 0, val.Compare(ast.NullValue))
+	release()
+	assert.Len(t, c.vals, 1)
+}
+
+func TestOPAInputCacheMaps(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	expr := "package octelium.eval\nresult := sprintf(\"%s %s\", [input.ctx.value, object.get(input, [\"attrs\", \"value\"], \"\")])"
+	first := map[string]any{"value": "first"}
+	second := map[string]any{"value": "second"}
+	equal := map[string]any{"value": "first"}
+	attrs := map[string]any{"value": "attrs"}
+
+	cctx := WithOPAInputCache(ctx)
+	c := cctx.Value(opaInputCacheCtxKey{}).(*opaInputCache)
+
+	for _, tc := range []struct {
+		input map[string]any
+		want  string
+		len   int
+	}{
+		{map[string]any{"ctx": first}, "first ", 1},
+		{map[string]any{"ctx": second}, "second ", 2},
+		{map[string]any{"ctx": first}, "first ", 2},
+		{map[string]any{"ctx": equal}, "first ", 3},
+		{map[string]any{"ctx": first, "attrs": attrs}, "first attrs", 4},
+		{map[string]any{"ctx": second, "attrs": attrs}, "second attrs", 4},
+		{map[string]any{"ctx": attrs, "attrs": first}, "attrs first", 4},
+	} {
+		res, err := srv.EvalPolicyStringOPA(cctx, expr, tc.input)
+		assert.Nil(t, err)
+		assert.Equal(t, tc.want, res)
+		assert.Len(t, c.vals, tc.len)
+	}
+
+	for _, m := range []map[string]any{first, second, equal, attrs} {
+		entry, ok := c.vals[reflect.ValueOf(m).Pointer()]
+		assert.True(t, ok)
+		fresh, err := toOPAValue(m)
+		assert.Nil(t, err)
+		assert.Equal(t, 0, entry.val.Compare(fresh))
+	}
+
+	res, err := srv.EvalPolicyStringOPA(ctx, expr, map[string]any{"ctx": first})
+	assert.Nil(t, err)
+	assert.Equal(t, "first ", res)
+	assert.Len(t, c.vals, 4)
+
+	other := WithOPAInputCache(ctx)
+	res, err = srv.EvalPolicyStringOPA(other, expr, map[string]any{"ctx": first})
+	assert.Nil(t, err)
+	assert.Equal(t, "first ", res)
+	assert.Len(t, other.Value(opaInputCacheCtxKey{}).(*opaInputCache).vals, 1)
+	assert.Len(t, c.vals, 4)
+}
+
+func TestOPAInputCacheErrors(t *testing.T) {
+	ctx := context.Background()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	expr := "package octelium.eval\nresult := input.ctx.str"
+	for _, value := range []any{
+		func() {},
+		make(chan int),
+		map[string]any{"nested": func() {}},
+		[]any{"valid", make(chan int)},
+	} {
+		input := map[string]any{
+			"ctx":   map[string]any{"str": "value", "value": value},
+			"attrs": map[string]any{"value": "valid"},
+		}
+		_, wantErr := srv.EvalPolicyStringOPA(ctx, expr, input)
+		assert.NotNil(t, wantErr)
+		_, wantCondErr := srv.opaEngine.EvalPolicy(ctx, "package octelium.condition\nmatch := true", input)
+		assert.NotNil(t, wantCondErr)
+
+		cctx := WithOPAInputCache(ctx)
+		c := cctx.Value(opaInputCacheCtxKey{}).(*opaInputCache)
+		for range 2 {
+			res, err := srv.EvalPolicyStringOPA(cctx, expr, input)
+			assert.NotNil(t, err)
+			if err != nil {
+				assert.Equal(t, wantErr.Error(), err.Error())
+			}
+			assert.Empty(t, res)
+			ok, err := srv.opaEngine.EvalPolicy(cctx, "package octelium.condition\nmatch := true", input)
+			assert.NotNil(t, err)
+			if err != nil {
+				assert.Equal(t, wantCondErr.Error(), err.Error())
+			}
+			assert.False(t, ok)
+			_, ok = c.vals[reflect.ValueOf(input["ctx"]).Pointer()]
+			assert.False(t, ok)
+		}
+
+		_, wantErr = srv.EvalPolicyStringOPA(ctx, "invalid", input)
+		assert.NotNil(t, wantErr)
+		other := WithOPAInputCache(ctx)
+		_, err := srv.EvalPolicyStringOPA(other, "invalid", input)
+		assert.NotNil(t, err)
+		if err != nil {
+			assert.Equal(t, wantErr.Error(), err.Error())
+		}
+		assert.Empty(t, other.Value(opaInputCacheCtxKey{}).(*opaInputCache).vals)
+	}
+}
+
+func TestOPAInputCacheContext(t *testing.T) {
+	ctx := context.Background()
+	assert.Nil(t, ctx.Value(opaInputCacheCtxKey{}))
+
+	cctx := WithOPAInputCache(ctx)
+	c, ok := cctx.Value(opaInputCacheCtxKey{}).(*opaInputCache)
+	assert.True(t, ok)
+	assert.True(t, WithOPAInputCache(cctx) == cctx)
+
+	tctx, cancel := context.WithTimeout(cctx, time.Minute)
+	defer cancel()
+	assert.True(t, WithOPAInputCache(tctx) == tctx)
+	assert.Same(t, c, tctx.Value(opaInputCacheCtxKey{}))
+
+	assert.NotSame(t, c, WithOPAInputCache(ctx).Value(opaInputCacheCtxKey{}))
+
+	input := map[string]any{"ctx": map[string]any{"value": "value"}}
+	opt, release, err := getOPAEvalInput(ctx, input)
+	assert.Nil(t, err)
+	evalCtx := &rego.EvalContext{}
+	opt(evalCtx)
+	assert.Equal(t, any(input), *evalCtx.RawInput())
+	assert.Nil(t, evalCtx.ParsedInput())
+	release()
+
+	opt, release, err = getOPAEvalInput(tctx, input)
+	assert.Nil(t, err)
+	evalCtx = &rego.EvalContext{}
+	opt(evalCtx)
+	assert.Nil(t, evalCtx.RawInput())
+	val, err := toOPAValue(input)
+	assert.Nil(t, err)
+	assert.Equal(t, 0, evalCtx.ParsedInput().Compare(val))
+	assert.Len(t, c.vals, 1)
+	for _, entry := range c.vals {
+		assert.True(t, entry.inUse)
+	}
+	release()
+	for _, entry := range c.vals {
+		assert.False(t, entry.inUse)
+	}
+}
+
+func TestOPAInputCacheConcurrent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	srv, err := New(ctx, nil)
+	assert.Nil(t, err)
+
+	const script = `package octelium
+condition := {"match": input.ctx.allowed == input.own.allowed}
+eval := {"result": {"shared": input.ctx.value, "own": input.own.value, "with": x, "keys": object.keys(input.ctx)}} if {
+	x := input.ctx.value with input.ctx.value as "changed"
+}`
+	condition := &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+		Type: &corev1.Condition_OPA_Inline{Inline: script},
+	}}}
+
+	shared := map[string]any{
+		"allowed": true,
+		"value":   "shared",
+		"nested":  map[string]any{"a": "b", "c": []any{"d", "e"}},
+	}
+	keys := []any{"allowed", "nested", "value"}
+
+	cctx := WithOPAInputCache(ctx)
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Go(func() {
+			for j := range 16 {
+				own := map[string]any{
+					"allowed": (i+j)%2 == 0,
+					"value":   fmt.Sprintf("own-%d-%d", i, j),
+				}
+				input := map[string]any{"ctx": shared, "own": own}
+				res, err := srv.EvalCondition(cctx, condition, input)
+				assert.Nil(t, err)
+				assert.Equal(t, own["allowed"], res)
+				obj, err := srv.OPAEvalPolicyMapStrAny(cctx, script, input)
+				assert.Nil(t, err)
+				assert.Equal(t, map[string]any{
+					"shared": "shared",
+					"own":    own["value"],
+					"with":   "changed",
+					"keys":   keys,
+				}, obj)
+			}
+		})
+	}
+	wg.Wait()
+
+	c := cctx.Value(opaInputCacheCtxKey{}).(*opaInputCache)
+	assert.Len(t, c.vals, 1+16*16)
+	for _, entry := range c.vals {
+		assert.False(t, entry.inUse)
+	}
+	fresh, err := toOPAValue(shared)
+	assert.Nil(t, err)
+	assert.Equal(t, 0, c.vals[reflect.ValueOf(shared).Pointer()].val.Compare(fresh))
 }

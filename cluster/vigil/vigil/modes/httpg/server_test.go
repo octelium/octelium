@@ -4916,3 +4916,98 @@ func TestHTTPServiceReadOnly(t *testing.T) {
 	defer srv.transports.cfgHasher.mu.Unlock()
 	assert.Same(t, svc.Spec.Config, srv.transports.cfgHasher.last)
 }
+
+func TestHTTPOPAPluginConditions(t *testing.T) {
+	opa := func(body string) *corev1.Condition {
+		return &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+			Type: &corev1.Condition_OPA_Inline{Inline: "package octelium.condition\n" + body},
+		}}}
+	}
+	_, addr := newTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Upstream-Path", r.URL.Path)
+		w.Header().Set("X-Upstream-Lua", r.Header.Get("X-Opa-Lua"))
+		w.Write([]byte("ok"))
+	}), &corev1.Service_Spec_Config_HTTP{
+		Plugins: []*corev1.Service_Spec_Config_HTTP_Plugin{
+			{
+				Name:      "path",
+				Condition: opa(`match if { startswith(input.ctx.request.http.path, "/p/") }`),
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Path_{
+					Path: &corev1.Service_Spec_Config_HTTP_Plugin_Path{AddPrefix: "/prefixed"},
+				},
+			},
+			{
+				Name:      "direct",
+				Condition: opa(`match if { input.ctx.request.http.path == "/direct" }`),
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
+					Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{
+						StatusCode: http.StatusMultiStatus,
+						Body: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body{
+							Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_Body_Inline{Inline: "direct"},
+						},
+					},
+				},
+			},
+			{
+				Name: "lua",
+				Condition: &corev1.Condition{Type: &corev1.Condition_All_{All: &corev1.Condition_All{Of: []*corev1.Condition{
+					opa(`match if {
+	r := input.ctx.request.http.path with input.ctx.request.http.path as "/changed"
+	r == "/changed"
+	startswith(input.ctx.request.http.path, "/lua")
+}`),
+					{Type: &corev1.Condition_Match{Match: `ctx.request.http.method == "GET"`}},
+				}}}},
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_{
+					Lua: &corev1.Service_Spec_Config_HTTP_Plugin_Lua{
+						Type: &corev1.Service_Spec_Config_HTTP_Plugin_Lua_Inline{
+							Inline: "function onRequest(ctx)\n  octelium.req.setRequestHeader(\"X-Opa-Lua\", ctx.request.http.path)\nend\n",
+						},
+					},
+				},
+			},
+			{
+				Name:      "error",
+				Condition: opa(`match if { input.ctx.request.http.path == "/error"; to_number("invalid") > 1 }`),
+				Type: &corev1.Service_Spec_Config_HTTP_Plugin_Direct_{
+					Direct: &corev1.Service_Spec_Config_HTTP_Plugin_Direct{StatusCode: http.StatusTeapot},
+				},
+			},
+		},
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	var wg sync.WaitGroup
+	for i := range 32 {
+		wg.Go(func() {
+			for _, tc := range []struct {
+				path     string
+				code     int
+				body     string
+				upstream string
+				lua      string
+			}{
+				{"/p/a", http.StatusOK, "ok", "/prefixed/p/a", ""},
+				{"/direct", http.StatusMultiStatus, "direct", "", ""},
+				{"/lua/a", http.StatusOK, "ok", "/lua/a", "/lua/a"},
+				{"/error", http.StatusInternalServerError, "", "", ""},
+				{"/other", http.StatusOK, "ok", "/other", ""},
+			}[i%5:] {
+				resp, err := client.Get(addr + tc.path)
+				if !assert.Nil(t, err) {
+					return
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				assert.Nil(t, err)
+				assert.Equal(t, tc.code, resp.StatusCode, tc.path)
+				if tc.body != "" {
+					assert.Equal(t, tc.body, string(body), tc.path)
+				}
+				assert.Equal(t, tc.upstream, resp.Header.Get("X-Upstream-Path"), tc.path)
+				assert.Equal(t, tc.lua, resp.Header.Get("X-Upstream-Lua"), tc.path)
+			}
+		})
+	}
+	wg.Wait()
+}

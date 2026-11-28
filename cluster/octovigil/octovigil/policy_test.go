@@ -2959,6 +2959,199 @@ func TestPolicyPriorityRange(t *testing.T) {
 	}
 }
 
+func TestPolicyOPAConditions(t *testing.T) {
+	srv, coreC := newAuthorizationService(t)
+	opa := func(body string) *corev1.Condition {
+		return &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+			Type: &corev1.Condition_OPA_Inline{Inline: "package octelium.condition\n" + body},
+		}}}
+	}
+	attrs, err := structpb.NewStruct(map[string]any{"blocked": []any{"/blocked"}, "groups": 2})
+	assert.Nil(t, err)
+
+	svc := proto.Clone(coreC.service).(*corev1.Service)
+	svc.Spec.Authorization = &corev1.Service_Spec_Authorization{InlinePolicies: []*corev1.InlinePolicy{{
+		Name: "opa",
+		Spec: &corev1.Policy_Spec{
+			Attrs: attrs,
+			EnforcementRules: []*corev1.Policy_Spec_EnforcementRule{
+				{Effect: corev1.Policy_Spec_EnforcementRule_ENFORCE, Condition: opa(`match if {
+	input.ctx.service.metadata.name == "service.namespace"
+	not startswith(input.ctx.request.http.path, "/ignored")
+}`)},
+				{Effect: corev1.Policy_Spec_EnforcementRule_IGNORE, Condition: opa(`match if { startswith(input.ctx.request.http.path, "/ignored") }`)},
+			},
+			Rules: []*corev1.Policy_Spec_Rule{
+				{Name: "deny-blocked", Effect: corev1.Policy_Spec_Rule_DENY, Condition: opa(`match if { input.ctx.request.http.path in input.attrs.blocked }`)},
+				{Name: "deny-with", Effect: corev1.Policy_Spec_Rule_DENY, Condition: opa(`match if {
+	r := input.ctx.request.http.method with input.ctx.request.http.method as "DELETE"
+	r == "DELETE"
+	input.ctx.request.http.path == "/with"
+}`)},
+				{Name: "deny-admin", Effect: corev1.Policy_Spec_Rule_DENY, Priority: 1, Condition: &corev1.Condition{Type: &corev1.Condition_All_{
+					All: &corev1.Condition_All{Of: []*corev1.Condition{
+						opa(`match if { input.ctx.request.http.method == "POST" }`),
+						{Type: &corev1.Condition_Match{Match: `ctx.request.http.path.startsWith("/admin")`}},
+					}},
+				}}},
+				{Name: "allow", Effect: corev1.Policy_Spec_Rule_ALLOW, Priority: 2, Condition: opa(`match if {
+	input.ctx.user.metadata.name == "user"
+	count(input.ctx.groups) == input.attrs.groups
+}`)},
+			},
+		},
+	}}}
+	svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{Rules: []*corev1.Service_Spec_DynamicConfig_Rule{{
+		Condition: opa(`match if { startswith(input.ctx.request.http.path, "/cfg") }`),
+		Type: &corev1.Service_Spec_DynamicConfig_Rule_Opa{
+			Opa: "package octelium.eval\nresult := {\"upstream\": {\"url\": sprintf(\"http://127.0.0.1:%d\", [9000 + count(input.ctx.groups)])}}",
+		},
+	}}}
+	assert.Nil(t, srv.s.cache.SetService(svc))
+	coreC.service = svc
+
+	assert.Nil(t, srv.s.policyTriggerCtl.SetPolicyTrigger(&corev1.PolicyTrigger{
+		Metadata: &metav1.Metadata{Uid: "trigger", Name: "trigger"},
+		Status: &corev1.PolicyTrigger_Status{
+			PreCondition: &corev1.PolicyTrigger_Status_PreCondition{Type: &corev1.PolicyTrigger_Status_PreCondition_Condition{
+				Condition: opa(`match if { startswith(input.ctx.request.http.path, "/trigger") }`),
+			}},
+			InlinePolicies: []*corev1.InlinePolicy{{Name: "trigger", Spec: &corev1.Policy_Spec{Rules: []*corev1.Policy_Spec_Rule{{
+				Name: "deny-trigger", Effect: corev1.Policy_Spec_Rule_DENY, Priority: -1,
+				Condition: opa(`match if { input.ctx.request.http.path == "/trigger/deny" }`),
+			}}}}},
+		},
+	}))
+
+	for _, tc := range []struct {
+		method     string
+		path       string
+		authorized bool
+		upstream   string
+	}{
+		{"GET", "/", true, ""},
+		{"GET", "/blocked", false, ""},
+		{"GET", "/with", false, ""},
+		{"GET", "/without", true, ""},
+		{"POST", "/admin/users", false, ""},
+		{"POST", "/users", true, ""},
+		{"GET", "/ignored/a", false, ""},
+		{"GET", "/trigger/deny", false, ""},
+		{"GET", "/trigger/allow", true, ""},
+		{"GET", "/cfg/a", true, "http://127.0.0.1:9002"},
+	} {
+		for range 2 {
+			resp, err := srv.AuthenticateAndAuthorize(t.Context(), &coctovigilv1.AuthenticateAndAuthorizeRequest{
+				ServiceUID: "service",
+				Request: &coctovigilv1.DownstreamRequest{
+					Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"},
+					Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+						Http: &corev1.RequestContext_Request_HTTP{Path: tc.path, Method: tc.method},
+					}},
+				},
+			})
+			if assert.Nil(t, err, "%s %s", tc.method, tc.path) && assert.NotNil(t, resp) {
+				assert.Equal(t, tc.authorized, resp.IsAuthorized, "%s %s", tc.method, tc.path)
+				assert.Equal(t, tc.upstream, resp.Config.GetUpstream().GetUrl(), "%s %s", tc.method, tc.path)
+			}
+		}
+	}
+}
+
+func TestPolicyOPAInputAllocs(t *testing.T) {
+	srv, coreC := newAuthorizationService(t)
+	cond := &corev1.Condition{Type: &corev1.Condition_Opa{Opa: &corev1.Condition_OPA{
+		Type: &corev1.Condition_OPA_Inline{Inline: "package octelium.condition\nmatch if { input.ctx.request.http.path == \"/never\" }"},
+	}}}
+	getRules := func(n int) []*corev1.Policy_Spec_Rule {
+		ret := []*corev1.Policy_Spec_Rule{{Name: "allow", Effect: corev1.Policy_Spec_Rule_ALLOW, Priority: 1,
+			Condition: &corev1.Condition{Type: &corev1.Condition_MatchAny{MatchAny: true}}}}
+		for i := range n {
+			ret = append(ret, &corev1.Policy_Spec_Rule{Name: fmt.Sprintf("deny-%d", i), Effect: corev1.Policy_Spec_Rule_DENY, Condition: cond})
+		}
+		return ret
+	}
+	req := &coctovigilv1.AuthenticateAndAuthorizeRequest{
+		ServiceUID: "service",
+		Request: &coctovigilv1.DownstreamRequest{
+			Source: &coctovigilv1.DownstreamRequest_Source{Address: "100.64.0.2"},
+			Request: &corev1.RequestContext_Request{Type: &corev1.RequestContext_Request_Http{
+				Http: &corev1.RequestContext_Request_HTTP{Path: "/", Method: "GET"},
+			}},
+		},
+	}
+
+	var resp *coctovigilv1.AuthenticateAndAuthorizeResponse
+	var err error
+	authzAllocs := func(rules, dynamicRules int) float64 {
+		svc := proto.Clone(coreC.service).(*corev1.Service)
+		svc.Spec.Authorization = &corev1.Service_Spec_Authorization{InlinePolicies: []*corev1.InlinePolicy{{
+			Name: "opa", Spec: &corev1.Policy_Spec{Rules: getRules(rules)},
+		}}}
+		svc.Spec.DynamicConfig = &corev1.Service_Spec_DynamicConfig{}
+		for range dynamicRules {
+			svc.Spec.DynamicConfig.Rules = append(svc.Spec.DynamicConfig.Rules, &corev1.Service_Spec_DynamicConfig_Rule{
+				Condition: cond,
+				Type:      &corev1.Service_Spec_DynamicConfig_Rule_ConfigName{ConfigName: "never"},
+			})
+		}
+		assert.Nil(t, srv.s.cache.SetService(svc))
+		coreC.service = svc
+		return testing.AllocsPerRun(20, func() {
+			resp, err = srv.AuthenticateAndAuthorize(t.Context(), req)
+		})
+	}
+
+	di, err := srv.s.GetDownstreamInfo(t.Context(), "100.64.0.2")
+	assert.Nil(t, err)
+	reqCtx := srv.s.getReqCtx(di, nil, coreC.service)
+	reqCtx.Request = req.Request.Request
+	reqCtxMap, err := srv.s.getReqCtxMap(reqCtx)
+	assert.Nil(t, err)
+
+	var decision *getDecisionResp
+	decisionAllocs := func(n int) float64 {
+		var rules []*policyRule
+		for _, rule := range getRules(n) {
+			rules = append(rules, &policyRule{rule: rule})
+		}
+		return testing.AllocsPerRun(20, func() {
+			decision, err = srv.s.doGetDecision(t.Context(), reqCtxMap, rules, false)
+		})
+	}
+
+	evalCtx, err := structpb.NewStruct(reqCtxMap)
+	assert.Nil(t, err)
+	var evaluation *coctovigilv1.EvaluateResponse
+	evaluateAllocs := func(n int) float64 {
+		evalReq := &coctovigilv1.EvaluateRequest{
+			Ctx: evalCtx,
+			InlinePolicies: []*coctovigilv1.EvaluateRequest_InlinePolicy{
+				{Policy: &corev1.InlinePolicy{Name: "opa", Spec: &corev1.Policy_Spec{Rules: getRules(n)}}},
+			},
+		}
+		return testing.AllocsPerRun(20, func() {
+			evaluation, err = srv.Evaluate(t.Context(), evalReq)
+		})
+	}
+
+	perRule := (decisionAllocs(17) - decisionAllocs(1)) / 16
+	assert.Nil(t, err)
+	assert.Equal(t, corev1.Policy_Spec_Rule_ALLOW, decision.effect)
+
+	assert.Less(t, (authzAllocs(17, 0)-authzAllocs(1, 0))/16, perRule/3)
+	assert.Nil(t, err)
+	assert.True(t, resp.IsAuthorized)
+
+	assert.Less(t, (authzAllocs(1, 17)-authzAllocs(1, 1))/16, perRule/3)
+	assert.Nil(t, err)
+	assert.True(t, resp.IsAuthorized)
+
+	assert.Less(t, (evaluateAllocs(17)-evaluateAllocs(1))/16, perRule/3)
+	assert.Nil(t, err)
+	assert.Equal(t, corev1.Policy_Spec_Rule_ALLOW, evaluation.Effect)
+}
+
 func TestPolicyCollectionAcrossResources(t *testing.T) {
 	srv, coreC := newAuthorizationService(t)
 	inline := coreC.service.Spec.Authorization.InlinePolicies[0]

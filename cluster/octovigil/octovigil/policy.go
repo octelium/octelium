@@ -63,6 +63,8 @@ type policyRuleInline struct {
 }
 
 func (s *Server) getDecision(ctx context.Context, req *getDecisionReq) (*getDecisionResp, error) {
+	ctx = celengine.WithOPAInputCache(ctx)
+
 	reqCtxMap, err := s.getReqCtxMap(req.i)
 	if err != nil {
 		return nil, err
